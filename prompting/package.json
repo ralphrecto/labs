@@ -1,0 +1,17 @@
+{
+  "name": "prompting",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "openai": "^3.3.0",
+    "typescript": "^5.1.3"
+  },
+  "scripts": {
+    "exec": "ts-node"
+  },
+  "devDependencies": {
+    "@types/node": "^20.3.1",
+    "ts-node": "^10.9.1"
+  }
+}
