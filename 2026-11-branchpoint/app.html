@@ -1,0 +1,977 @@
+<title>Branchpoint</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=Oswald:wght@500;700&family=Playfair+Display:wght@700;900&family=UnifrakturMaguntia&display=swap">
+<style>
+/* Layout: three working columns — timeline tree | current moment + choices | dispatches from that world. Stacks on narrow screens. */
+:root {
+  --bg: #eceef3;
+  --surface: #f8f9fc;
+  --raised: #ffffff;
+  --ink: #141824;
+  --muted: #5a6274;
+  --line: #d3d8e2;
+  --accent: #2f45e8;
+  --accent-soft: #e2e6ff;
+  --diverge: #d9530b;
+  --up: #1f7a45;
+  --down: #c0352b;
+  --paper: #f2efe6;
+  --paper-ink: #1b1a17;
+  --paper-rule: #2a2824;
+  --tv: #0d1426;
+  --tv-ink: #ffffff;
+  --tv-red: #d42a2a;
+  --memo: #fbfaf5;
+  --memo-ink: #23262d;
+  --stamp: #b3261e;
+  --scrim: rgba(12, 15, 24, .45);
+
+  --f-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --f-black: "UnifrakturMaguntia", "Old English Text MT", Georgia, serif;
+  --f-news: "Libre Caslon Text", Georgia, "Times New Roman", serif;
+  --f-newshead: "Playfair Display", Georgia, serif;
+  --f-tv: "Oswald", "Arial Narrow", Impact, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1118; --surface: #151922; --raised: #1b202b; --ink: #e5e8f0; --muted: #8b93a6;
+    --line: #2a3140; --accent: #8695ff; --accent-soft: #232a4d; --diverge: #ff8a3d;
+    --up: #4cc27f; --down: #ff6b5e; --paper: #dcd8cc; --paper-ink: #1b1a17; --paper-rule: #2a2824;
+    --memo: #e4e2da; --memo-ink: #1f2228; --stamp: #a3221b; --scrim: rgba(0,0,0,.6);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1118; --surface: #151922; --raised: #1b202b; --ink: #e5e8f0; --muted: #8b93a6;
+  --line: #2a3140; --accent: #8695ff; --accent-soft: #232a4d; --diverge: #ff8a3d;
+  --up: #4cc27f; --down: #ff6b5e; --paper: #dcd8cc; --paper-ink: #1b1a17; --paper-rule: #2a2824;
+  --memo: #e4e2da; --memo-ink: #1f2228; --stamp: #a3221b; --scrim: rgba(0,0,0,.6);
+  color-scheme: dark;
+}
+
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 15px/1.55 var(--f-body);
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+/* Header */
+.top {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding-block: 12px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.brand h1 {
+  margin: 0; font: 800 22px/1 var(--f-display); letter-spacing: -.02em;
+}
+.brand h1 span { color: var(--diverge); }
+.premise {
+  flex: 1 1 260px; min-width: 0;
+  color: var(--muted); font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.premise b { color: var(--ink); font-weight: 500; }
+.top-actions { display: flex; gap: 8px; align-items: center; }
+.engine {
+  font: 500 11px/1 var(--f-mono); letter-spacing: .06em; text-transform: uppercase;
+  padding: 7px 10px; border-radius: 999px; border: 1px solid var(--line);
+  background: transparent; color: var(--muted); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.engine i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.engine[data-live="true"] i { background: var(--up); }
+.btn {
+  border: 1px solid var(--ink); background: var(--ink); color: var(--bg);
+  padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px;
+}
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Columns */
+.cols {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(250px, 300px) minmax(0, 1fr) minmax(340px, 440px);
+}
+.col { min-height: 0; overflow: auto; }
+.col-tree { border-right: 1px solid var(--line); background: var(--surface); padding: 18px 14px 24px 16px; }
+.col-scene { padding: 28px clamp(16px, 4vw, 48px) 48px; }
+.col-feed { border-left: 1px solid var(--line); background: var(--surface); padding: 18px 18px 40px; }
+
+.label {
+  font: 500 11px/1.2 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  margin: 0 0 12px;
+}
+
+/* Tree */
+.tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+.tree ul { margin-left: 9px; padding-left: 12px; border-left: 1px solid var(--line); }
+.tree li { position: relative; }
+.tree ul > li::before {
+  content: ""; position: absolute; left: -12px; top: 17px; width: 10px; border-top: 1px solid var(--line);
+}
+.tree li.on-path > ul { border-left-color: var(--accent); }
+.tree ul > li.on-path::before { border-top-color: var(--accent); }
+.t-node {
+  display: grid; grid-template-columns: 12px minmax(0, 1fr); column-gap: 8px; align-items: start;
+  width: 100%; text-align: left; background: none; border: 0; padding: 7px 6px; border-radius: 6px; cursor: pointer;
+}
+.t-node:hover { background: var(--accent-soft); }
+.t-dot { width: 10px; height: 10px; margin-top: 5px; border-radius: 50%; border: 2px solid var(--muted); background: var(--surface); }
+.on-path > .t-node .t-dot { border-color: var(--accent); }
+.current > .t-node { background: var(--accent-soft); }
+.current > .t-node .t-dot { background: var(--accent); border-color: var(--accent); }
+.t-title { font-size: 13.5px; font-weight: 500; line-height: 1.3; }
+.current > .t-node .t-title { font-weight: 600; }
+.t-meta { grid-column: 2; font: 11px/1.4 var(--f-mono); color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
+.t-more { color: var(--diverge); }
+.t-ghost {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  background: none; border: 1px dashed var(--line); border-radius: 6px;
+  padding: 6px 8px; margin: 3px 0; font-size: 12.5px; color: var(--muted); line-height: 1.35;
+}
+.t-ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); }
+.t-ghost:disabled { cursor: not-allowed; }
+.t-ghost.pending { border-style: solid; border-color: var(--diverge); color: var(--ink); }
+.tree-legend { margin-top: 18px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+/* Scene */
+.scene { max-width: 680px; margin: 0 auto; display: grid; gap: 22px; }
+.eyebrow { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font: 500 12px/1.2 var(--f-mono); color: var(--muted); letter-spacing: .04em; }
+.addr { color: var(--accent); }
+.decision {
+  margin: 0; font-size: 14px; color: var(--muted);
+}
+.decision q { color: var(--ink); font-style: italic; quotes: "\201C" "\201D"; }
+.scene h2 {
+  margin: 0; font: 700 clamp(28px, 4.2vw, 44px)/1.05 var(--f-display); letter-spacing: -.025em; text-wrap: balance;
+}
+.meter { display: grid; gap: 6px; }
+.meter-row { display: flex; justify-content: space-between; font: 500 11px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.meter-row b { color: var(--diverge); font-weight: 500; font-variant-numeric: tabular-nums; }
+.meter-bar { position: relative; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter-bar span { position: absolute; inset: 0 auto 0 0; background: var(--diverge); border-radius: 3px; transition: width .5s ease; }
+.meter-ticks { display: flex; justify-content: space-between; font: 10px/1 var(--f-mono); color: var(--muted); }
+.story p { margin: 0 0 1em; font-size: 16.5px; line-height: 1.65; max-width: 65ch; }
+.story p:last-child { margin-bottom: 0; }
+
+.choices { display: grid; gap: 10px; }
+.choice {
+  display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 12px; align-items: start;
+  text-align: left; width: 100%; cursor: pointer;
+  background: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
+  transition: border-color .15s, transform .15s;
+}
+.choice:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
+.choice:disabled { cursor: not-allowed; opacity: .6; }
+.choice-k { font: 500 12px/24px var(--f-mono); color: var(--accent); text-align: center; border: 1px solid var(--line); border-radius: 6px; }
+.choice-l { font-weight: 600; font-size: 15px; line-height: 1.35; }
+.choice-h { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; font-weight: 400; }
+.choice-s { font: 500 11px/24px var(--f-mono); color: var(--muted); white-space: nowrap; letter-spacing: .04em; }
+.choice.explored .choice-s { color: var(--accent); }
+.choice.pending { border-color: var(--diverge); }
+.choice.pending .choice-s { color: var(--diverge); }
+
+.own { display: flex; gap: 8px; flex-wrap: wrap; }
+.own input {
+  flex: 1 1 240px; min-width: 0; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--raised); color: var(--ink); font: inherit; font-size: 14px;
+}
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+.note.err { color: var(--down); }
+.back { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font-size: 13px; justify-self: start; }
+
+/* Feed */
+.feed { display: grid; gap: 22px; }
+.feed-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.feed-head .label { margin: 0; }
+.feed-date { font: 12px var(--f-mono); color: var(--muted); }
+.disp { display: grid; gap: 7px; min-width: 0; }
+.disp-kind { font: 500 10.5px/1 var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+
+/* Newspaper */
+.paper { background: var(--paper); color: var(--paper-ink); padding: 14px 16px 16px; box-shadow: 0 1px 0 rgba(0,0,0,.08), 0 8px 24px -14px rgba(0,0,0,.35); }
+.paper-top { display: flex; justify-content: space-between; gap: 8px; font: 10px/1.2 var(--f-news); text-transform: uppercase; letter-spacing: .08em; border-bottom: 1px solid var(--paper-rule); padding-bottom: 5px; }
+.masthead { margin: 6px 0 4px; text-align: center; font: 400 clamp(26px, 3.2vw, 34px)/1.05 var(--f-black); }
+.paper-rule { border-top: 3px double var(--paper-rule); margin-bottom: 10px; }
+.paper-head { margin: 0 0 6px; font: 900 25px/1.05 var(--f-newshead); text-wrap: balance; }
+.paper-sub { margin: 0 0 10px; font: italic 14px/1.35 var(--f-news); }
+.paper-body { column-count: 2; column-gap: 16px; column-rule: 1px solid rgba(0,0,0,.25); font: 12.5px/1.5 var(--f-news); text-align: justify; hyphens: auto; }
+.paper-body p { margin: 0 0 .6em; }
+.paper-byline { font-weight: 700; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; text-align: left; }
+.paper-side { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--paper-rule); display: grid; gap: 4px; }
+.paper-side b { font: 700 14px/1.2 var(--f-newshead); }
+.paper-side span { font: 12px/1.45 var(--f-news); }
+@media (max-width: 420px) { .paper-body { column-count: 1; } }
+
+/* Headlines */
+.wire { background: var(--raised); border: 1px solid var(--line); border-radius: 10px; }
+.wire ol { list-style: none; margin: 0; padding: 0; }
+.wire li { padding: 11px 14px; border-top: 1px solid var(--line); display: grid; gap: 3px; }
+.wire li:first-child { border-top: 0; }
+.wire-src { font: 500 10.5px/1.2 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.wire-txt { font-weight: 600; font-size: 14.5px; line-height: 1.35; }
+
+/* Posts */
+.posts { display: grid; gap: 0; background: var(--raised); border: 1px solid var(--line); border-radius: 10px; }
+.post { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); }
+.post:first-child { border-top: 0; }
+.ava { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; color: #fff; font: 600 14px/1 var(--f-body); }
+.post-h { display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; font-size: 13.5px; }
+.post-h b { font-weight: 600; }
+.post-h span { color: var(--muted); }
+.post-t { margin: 2px 0 6px; font-size: 14.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.post-m { display: flex; gap: 18px; font: 12px var(--f-mono); color: var(--muted); }
+
+/* Chyron */
+.tv { background: var(--tv); color: var(--tv-ink); border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 7; max-width: 100%; display: grid; grid-template-rows: 1fr auto auto; }
+.tv-screen { position: relative; background:
+  radial-gradient(120% 90% at 70% 10%, rgba(80,110,200,.45), transparent 60%),
+  repeating-linear-gradient(0deg, rgba(255,255,255,.035) 0 1px, transparent 1px 3px), var(--tv); }
+.tv-bug { position: absolute; top: 10px; right: 12px; font: 700 12px/1 var(--f-tv); letter-spacing: .1em; opacity: .85; }
+.tv-live { position: absolute; top: 10px; left: 12px; font: 700 11px/1 var(--f-tv); letter-spacing: .1em; background: var(--tv-red); padding: 3px 6px; }
+.tv-bar { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: stretch; }
+.tv-tag { background: var(--tv-red); font: 700 13px/1 var(--f-tv); letter-spacing: .06em; padding: 10px 10px; display: grid; place-items: center; text-transform: uppercase; }
+.tv-text { background: #fff; color: #0d1426; font: 700 clamp(14px, 1.7vw, 17px)/1.15 var(--f-tv); text-transform: uppercase; padding: 8px 12px; }
+.tv-ticker { background: #000; overflow: hidden; white-space: nowrap; font: 500 12px/24px var(--f-tv); letter-spacing: .04em; color: #f4d35e; }
+.tv-ticker span { display: inline-block; padding-left: 100%; animation: tick 28s linear infinite; }
+@keyframes tick { to { transform: translateX(-100%); } }
+@media (prefers-reduced-motion: reduce) { .tv-ticker span { animation: none; padding-left: 12px; } .meter-bar span { transition: none; } }
+
+/* Memo */
+.memo { background: var(--memo); color: var(--memo-ink); padding: 16px 18px; font: 12.5px/1.55 var(--f-mono); position: relative; box-shadow: 0 8px 24px -16px rgba(0,0,0,.4); }
+.memo-stamp { position: absolute; top: 12px; right: 12px; border: 2px solid var(--stamp); color: var(--stamp); font: 600 11px/1 var(--f-mono); letter-spacing: .12em; padding: 5px 7px; transform: rotate(4deg); text-transform: uppercase; }
+.memo dl { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 2px 10px; margin: 0 0 12px; padding-right: 100px; }
+.memo dt { font-weight: 500; }
+.memo dd { margin: 0; overflow-wrap: anywhere; }
+.memo-body { border-top: 1px solid currentColor; padding-top: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.redact { background: var(--memo-ink); color: transparent; border-radius: 1px; user-select: none; }
+
+/* Markets */
+.mkt { background: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.mkt h4 { margin: 0 0 8px; font: 600 13px/1.3 var(--f-body); }
+.mkt table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.mkt td { padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.mkt td:nth-child(2), .mkt td:nth-child(3) { text-align: right; font-family: var(--f-mono); font-size: 12.5px; white-space: nowrap; padding-left: 10px; }
+.mkt .up { color: var(--up); } .mkt .down { color: var(--down); }
+
+/* Working state */
+.sim { border: 1px dashed var(--diverge); border-radius: 10px; padding: 18px; display: grid; gap: 10px; }
+.sim-line { height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--line), var(--accent-soft), var(--line)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .sim-line { animation: none; } }
+
+/* Modal */
+.modal { position: fixed; inset: 0; background: var(--scrim); display: grid; place-items: center; z-index: 20;
+  padding-block: 16px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.sheet { width: min(560px, 100%); max-height: 100%; overflow: auto; background: var(--raised); border-radius: 14px; padding: 22px; display: grid; gap: 14px; border: 1px solid var(--line); }
+.sheet h3 { margin: 0; font: 700 24px/1.1 var(--f-display); letter-spacing: -.02em; }
+.sheet textarea, .sheet input[type="password"] {
+  width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; resize: vertical;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 6px 11px; font-size: 12.5px; cursor: pointer; text-align: left; }
+.chip:hover { border-color: var(--accent); }
+.sheet-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.sheet .note a { color: var(--accent); }
+
+/* Responsive */
+@media (max-width: 1180px) {
+  .cols { grid-template-columns: minmax(0, 1fr) minmax(320px, 400px); grid-template-rows: auto 1fr; }
+  .col-tree { grid-column: 1; grid-row: 1; border-right: 0; border-bottom: 1px solid var(--line); max-height: 240px; }
+  .col-scene { grid-column: 1; grid-row: 2; }
+  .col-feed { grid-column: 2; grid-row: 1 / span 2; }
+}
+@media (max-width: 760px) {
+  html, body { height: auto; }
+  .app { height: auto; display: block; }
+  .cols { display: block; }
+  .col { overflow: visible; }
+  .col-tree { max-height: none; border-bottom: 1px solid var(--line); }
+  .col-feed { border-left: 0; border-top: 1px solid var(--line); }
+  .col-tree, .col-scene, .col-feed { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .premise { white-space: normal; }
+}
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand"><h1>Branch<span>point</span></h1></div>
+    <div class="premise" id="premise"></div>
+    <div class="top-actions">
+      <button class="engine" id="engineBtn" type="button"><i></i><span id="engineLabel">Offline demo</span></button>
+      <button class="btn" id="newBtn" type="button">New world</button>
+    </div>
+  </header>
+  <div class="cols">
+    <nav class="col col-tree" aria-label="Timeline tree">
+      <p class="label">Timeline tree</p>
+      <ul class="tree" id="tree"></ul>
+      <p class="tree-legend">Solid dots are moments you've simulated. Dashed rows under the current moment are branches you haven't taken yet.</p>
+    </nav>
+    <main class="col col-scene" id="scene"></main>
+    <aside class="col col-feed" aria-label="Dispatches">
+      <div class="feed" id="feed"></div>
+    </aside>
+  </div>
+</div>
+
+<div class="modal" id="newModal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="newTitle">
+    <h3 id="newTitle">Start a new world</h3>
+    <p class="note">Describe the point where history diverges. Branchpoint simulates the opening state, then you steer it.</p>
+    <textarea id="premiseInput" rows="3" placeholder="What if…"></textarea>
+    <div class="chips" id="chips"></div>
+    <div id="keyBox" hidden>
+      <p class="label" style="margin:4px 0 6px">Anthropic API key</p>
+      <input type="password" id="apiKey" placeholder="sk-ant-…" autocomplete="off">
+      <p class="note" style="margin-top:6px">Stored only in this browser and sent only to api.anthropic.com.</p>
+    </div>
+    <p class="note" id="newNote"></p>
+    <div class="sheet-actions">
+      <button class="btn ghost" id="demoBtn" type="button">Load demo world</button>
+      <button class="btn ghost" id="cancelBtn" type="button">Cancel</button>
+      <button class="btn" id="startBtn" type="button">Simulate</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ---------- Demo world (works with no model at all) ---------- */
+const DEMO = {
+  premise: "June 2027: a small Ohio lab confirms a room-temperature superconductor made from cheap, common materials.",
+  demo: true,
+  rootId: "n0",
+  nodes: {
+    n0: {
+      id: "n0", parentId: null, addr: "Ω", decision: null,
+      title: "The Dayton Sample Holds", date: "June 2027", divergence: 8,
+      summary: [
+        "For three weeks the physics world assumed it was another false alarm. Then eleven independent labs reproduced it. Dayton-7, a copper-doped lead apatite variant cooked by a four-person team at Miami Valley Polytechnic, carries current with zero resistance at 24°C and atmospheric pressure. Its ingredients cost less per kilogram than good coffee.",
+        "Lead author Dr. Ines Abara has been sleeping in her office to dodge reporters. The university's tech-transfer office has received 1,400 licensing inquiries. Utility, chipmaker and defense stocks are swinging 10% a day on rumors, and nobody has decided who owns the future yet."
+      ],
+      choices: [
+        { label: "The lab publishes the full recipe, free for anyone", hint: "Maximum diffusion, zero control", childId: "n1" },
+        { label: "Washington classifies Dayton-7 as a strategic technology", hint: "Security first, science second", childId: "n2" },
+        { label: "A trillion-dollar tech firm buys the lab outright", hint: "One company holds the keys" }
+      ],
+      artifacts: [
+        { type: "newspaper", masthead: "The Dayton Courier-Ledger", edition: "Late City Edition", price: "$2.50",
+          headline: "IT'S REAL", subhead: "Eleven labs confirm Miami Valley Poly's 'impossible' wire; markets reel as experts call it the biggest find since the transistor",
+          byline: "By Teresa Wolcott, Science Desk",
+          body: "DAYTON — The material that physicists spent a century chasing was found in a converted machine shop on the east side of town. Independent teams in Zurich, Seoul and Pasadena confirmed Friday that Dayton-7 loses all electrical resistance at room temperature.\n\nMiami Valley Polytechnic officials declined to say whether the recipe would be patented. 'We are taking a breath,' said provost Gerald Huang. 'Then we are taking advice.'",
+          sidebar: { headline: "What it could mean for your bill", text: "Up to 8% of grid power is lost in transmission. Analysts say that number could approach zero within a decade." } },
+        { type: "posts", items: [
+          { name: "Priya Raman", handle: "@priya_condensed", text: "I have refereed 30 superconductor claims. I was ready to dunk on this one. I have reproduced it in my own lab. I need to lie down.", time: "2h", replies: 2100, reposts: 18400, likes: 96000 },
+          { name: "Midwest Energy Watch", handle: "@mw_energy", text: "Every utility executive in America is in a room right now and not one of them is having a good meeting.", time: "5h", replies: 830, reposts: 12200, likes: 51000 },
+          { name: "dan", handle: "@dan_builds_stuff", text: "ok how hard is it to make lead apatite in a garage. asking for me", time: "6h", replies: 4400, reposts: 3100, likes: 40200 }
+        ] },
+        { type: "market", title: "Market close, Friday", items: [
+          { name: "Copper, per tonne", value: "$8,912", change: "-11.4%" },
+          { name: "Grid-storage index", value: "412.7", change: "-18.2%" },
+          { name: "Lead, per tonne", value: "$3,880", change: "+22.9%" },
+          { name: "MVP spinout rumors (prediction mkt)", value: "71¢", change: "+40¢" }
+        ] },
+        { type: "headlines", items: [
+          { outlet: "Continental Wire", text: "Pentagon 'monitoring' Dayton discovery, spokesperson says" },
+          { outlet: "Northgate Business Review", text: "Who owns a miracle? Inside the licensing scramble at a tiny Ohio college" },
+          { outlet: "Meridian Daily", text: "Lead apatite shortage hits lab suppliers within 48 hours" }
+        ] }
+      ]
+    },
+    n1: {
+      id: "n1", parentId: "n0", addr: "Ω·1", decision: "The lab publishes the full recipe, free for anyone",
+      title: "Recipe in the Wild", date: "September 2027", divergence: 34,
+      summary: [
+        "Abara posted the synthesis protocol at 3 a.m. with a two-line note: 'This belongs to everyone. Please be careful with the lead.' By sunrise it had been translated into nineteen languages.",
+        "Within six weeks, hobbyist chemists, university labs and at least three national governments are making Dayton-7 by the kilogram. Quality is wildly uneven. A rash of lead-poisoning cases in improvised garage labs prompts emergency guidance, while the first startups promise lossless home wiring by Christmas."
+      ],
+      choices: [
+        { label: "Shenzhen fabs start mass production within months", hint: "Scale beats invention", childId: "n3" },
+        { label: "US utilities lobby Congress to slow grid adoption", hint: "Incumbents fight back" },
+        { label: "Hobbyists build maglev skateboards and a craze begins", hint: "Culture moves first", childId: "n4" }
+      ],
+      artifacts: [
+        { type: "headlines", items: [
+          { outlet: "Continental Wire", text: "Dayton-7 recipe downloaded 40 million times in first week" },
+          { outlet: "Public Health Bulletin", text: "CDC-equivalent warning: home synthesis linked to 212 lead exposures" },
+          { outlet: "Northgate Business Review", text: "'Open-sourced a trillion dollars': Wall Street can't decide if Abara is a saint or an arsonist" },
+          { outlet: "Meridian Daily", text: "Patent offices on three continents reject Dayton-7 filings as 'prior art published'" }
+        ] },
+        { type: "posts", items: [
+          { name: "Dr. Ines Abara", handle: "@ines_abara_mvp", text: "To everyone asking: no, I will not take it down. Yes, please wear a respirator. No, I do not want a yacht.", time: "1d", replies: 9800, reposts: 61000, likes: 410000 },
+          { name: "Garage Physics Club", handle: "@garagephys", text: "Batch #14 finally levitated a magnet. Batch #13 levitated nothing and set off the smoke alarm. Science.", time: "3h", replies: 340, reposts: 2800, likes: 22000 }
+        ] },
+        { type: "memo", classification: "Internal — Not for distribution", from: "Office of Grid Strategy, Allegheny Power Cooperative", to: "Board of Directors", subject: "Exposure to lossless transmission",
+          body: "Our 30-year transmission buildout assumes 6.5% line loss. If Dayton-7 cable reaches commercial volumes by ██████, roughly $█.█ billion of planned capacity becomes stranded.\n\nRecommend: (1) pause new long-haul contracts; (2) open talks with ███████████ on a pilot; (3) prepare public messaging emphasizing safety and reliability." }
+      ]
+    },
+    n2: {
+      id: "n2", parentId: "n0", addr: "Ω·2", decision: "Washington classifies Dayton-7 as a strategic technology",
+      title: "The Dayton Directive", date: "August 2027", divergence: 22,
+      summary: [
+        "Federal agents arrived at Miami Valley Polytechnic on a Tuesday with a court order and a moving truck. Under a rarely used invention-secrecy order, Dayton-7 became a classified material. The original samples, notebooks and three of the four researchers now work out of a national lab in New Mexico.",
+        "The fourth, postdoc Kwame Osei, refused the clearance and is under a gag order. Eleven foreign labs already hold the material from the replication round, so the secret is partly out, and allied capitals are demanding to know whether 'partly' is good enough."
+      ],
+      choices: [
+        { label: "Osei leaks the full recipe to a foreign journal", hint: "One person breaks the dam" },
+        { label: "Allies demand access and threaten to make their own", hint: "A rift inside the alliance" },
+        { label: "Congress holds open hearings on scientific secrecy", hint: "The fight goes public" }
+      ],
+      artifacts: [
+        { type: "chyron", network: "WNX NEWS", tag: "Breaking", text: "Feds seize Ohio superconductor lab under secrecy order", ticker: [
+          "University calls seizure 'unprecedented'", "Zurich lab: 'We will not destroy our samples'", "Copper rebounds 6% on secrecy news", "Senator demands closed-door briefing" ] },
+        { type: "memo", classification: "Secret // Noforn", from: "Office of Science & Technology Security", to: "National Security Council principals", subject: "DAYTON-7 containment posture",
+          body: "Containment of the synthesis route is no longer achievable. Material and partial protocols are held by at least ██ foreign institutions, including ███████ and ██████.\n\nAssessment: lead time for adversary mass production is 9–18 months. Recommend shifting objective from denial to acceleration of domestic production under program name ██████████." },
+        { type: "posts", items: [
+          { name: "Kwame Osei", handle: "@kosei_phys", text: "I can't talk about my work. I can say that I'm fine, that I love my colleagues, and that science that can't be shared isn't really science.", time: "4h", replies: 12000, reposts: 88000, likes: 302000 },
+          { name: "Liberty & Lattice", handle: "@libertylattice", text: "They classified a rock you can make with a hotplate. Let that sink in.", time: "9h", replies: 2900, reposts: 15000, likes: 67000 }
+        ] }
+      ]
+    },
+    n3: {
+      id: "n3", parentId: "n1", addr: "Ω·1·1", decision: "Shenzhen fabs start mass production within months",
+      title: "The Wire Glut", date: "March 2028", divergence: 58,
+      summary: [
+        "The breakthrough was American; the factories are not. A consortium of Pearl River Delta manufacturers retooled cable lines in eleven weeks and now ships Dayton-7 tape at $4 a meter. It is lumpy, brittle and good enough.",
+        "Copper is the first casualty. Prices have halved, mining towns from Chile to Zambia are in crisis, and the copper-backed bonds of two mid-sized economies are trading like junk. Meanwhile data centers are swapping power rails and seeing 30% cuts in cooling load, and the first lossless intercity line is being strung across the Gobi."
+      ],
+      choices: [
+        { label: "Copper exporters form an emergency cartel", hint: "The old economy fights for its life" },
+        { label: "Europe launches a continental lossless supergrid", hint: "Sun from the Sahara, wind from the North Sea" },
+        { label: "The rare dopant in Dayton-7 becomes the new oil", hint: "A new chokepoint" }
+      ],
+      artifacts: [
+        { type: "newspaper", masthead: "The Meridian Daily", edition: "International Edition", price: "€3.20",
+          headline: "Copper's Long Goodbye", subhead: "As cheap superconducting tape floods global markets, mining nations face a reckoning",
+          byline: "By Lucía Ferrante and Sam Oduya",
+          body: "ANTOFAGASTA — The trucks still run, but nobody here is sure for how long. Spot copper fell below $5,000 a tonne this week for the first time since 2003.\n\n'We built a country on a wire,' said a union organizer at the port. 'Now someone has built a better wire.'",
+          sidebar: { headline: "Data centers go cold", text: "Hyperscale operators report the steepest drop in cooling costs in the industry's history." } },
+        { type: "market", title: "Weekly snapshot", items: [
+          { name: "Copper, per tonne", value: "$4,960", change: "-44.3%" },
+          { name: "D7 tape, per meter", value: "$4.02", change: "-61.0%" },
+          { name: "Shenzhen Cable Consortium", value: "¥88.10", change: "+312%" },
+          { name: "Mining-nation bond spread", value: "+940 bp", change: "+510 bp" }
+        ] },
+        { type: "chyron", network: "PAN-ASIA 24", tag: "Developing", text: "First lossless intercity line energized across Gobi", ticker: [
+          "Copper slides for 9th straight week", "Union calls general strike at northern ports", "Data center power bills fall 30%", "Ohio town renames main street 'Abara Avenue'" ] }
+      ]
+    },
+    n4: {
+      id: "n4", parentId: "n1", addr: "Ω·1·3", decision: "Hobbyists build maglev skateboards and a craze begins",
+      title: "Summer of Float", date: "July 2028", divergence: 41,
+      summary: [
+        "It started with a video: a sixteen-year-old in Tucson gliding two centimeters above a strip of magnetized sidewalk tape. By July, 'float lanes' of DIY magnet track have appeared in parks on four continents, mostly without permission.",
+        "City councils can't decide whether to ban it or build it. ER doctors coin the term 'float wrist'. A national skate brand is sued for selling boards that work only on rival brands' tape, and an unexpected lobby is born: kids who want their infrastructure to levitate."
+      ],
+      choices: [
+        { label: "A city bans float boards after a stampede", hint: "The backlash arrives" },
+        { label: "A teenager's garage maglev cart design goes viral", hint: "From toys to transport" },
+        { label: "Toy companies race to patent 'float' standards", hint: "The format war" }
+      ],
+      artifacts: [
+        { type: "posts", items: [
+          { name: "Rosa ✦ floats", handle: "@rosafloats", text: "laid 40 meters of tape behind the library last night. by 9am there were 60 kids and one very confused librarian", time: "20m", replies: 1200, reposts: 9100, likes: 88000 },
+          { name: "Dr. Aaron Pike", handle: "@er_doc_pike", text: "Day 9 of float wrist season. Please. Wear. Wrist guards.", time: "2h", replies: 640, reposts: 7300, likes: 52000 },
+          { name: "City of Larkfield", handle: "@larkfieldcity", text: "Reminder: unpermitted magnetic track on public property will be removed. We hear you. We are forming a committee.", time: "5h", replies: 9900, reposts: 2200, likes: 3100 }
+        ] },
+        { type: "newspaper", masthead: "Lakeshore Tribune", edition: "Weekend", price: "$3.00",
+          headline: "The Kids Who Learned to Float", subhead: "A summer craze turns a physics breakthrough into the first technology teenagers adopted before their parents",
+          byline: "By Mara Lindqvist",
+          body: "Nobody planned the float lanes. They grew the way paths grow across a lawn: one person, then two, then everyone.\n\nThe tape costs $6 a meter at hardware stores that can keep it in stock. Boards are cheaper. Parents are split between pride and panic." },
+        { type: "headlines", items: [
+          { outlet: "Continental Wire", text: "Float-lane injuries up 300%, but so is teen outdoor time, study finds" },
+          { outlet: "Northgate Business Review", text: "The format war nobody saw coming: whose tape will win the sidewalk?" },
+          { outlet: "Meridian Daily", text: "Amsterdam quietly paints its first official float lane" }
+        ] }
+      ]
+    }
+  }
+};
+
+const EXAMPLES = [
+  "1962: the Cuban crisis ends with a secret US–Soviet pact to build a joint Moon base",
+  "2031: a verified, repeating signal arrives from Proxima Centauri",
+  "Every human wakes up able to understand what dogs are saying",
+  "The printing press is never invented in Europe; China's movable type spreads west instead",
+  "2029: a city of 2 million votes to abolish cars entirely, effective in one year"
+];
+
+/* ---------- Utilities ---------- */
+const $ = (id) => document.getElementById(id);
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "style") el.setAttribute("style", v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+  return el;
+}
+const str = (v, max = 4000) => (v == null ? "" : String(v)).slice(0, max);
+const arr = (v) => Array.isArray(v) ? v : [];
+function fmtCount(n) {
+  n = Number(n) || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "K";
+  return String(Math.round(n));
+}
+function hue(s) { let x = 0; for (const c of String(s)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x % 360; }
+const ls = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} }
+};
+const SAVE_KEY = "branchpoint.world.v1";
+const KEY_KEY = "branchpoint.apikey";
+
+/* ---------- State ---------- */
+let world = null;
+let currentId = null;
+const pending = new Map();   // "parentId:choiceIndex" -> {ctl, chars}
+let sceneError = "";
+let engine = { kind: "none" };
+
+function save() { if (world) ls.set(SAVE_KEY, JSON.stringify({ world, currentId })); }
+function load() {
+  const hot = window.claude?.hot?.data;
+  if (hot?.world) { world = hot.world; currentId = hot.currentId; return; }
+  try {
+    const raw = ls.get(SAVE_KEY);
+    if (raw) { const s = JSON.parse(raw); if (s?.world?.nodes) { world = s.world; currentId = s.currentId; return; } }
+  } catch {}
+  world = structuredClone(DEMO); currentId = "n0";
+}
+window.claude?.hot?.snapshot?.(() => ({ world, currentId }));
+
+/* ---------- Engine ---------- */
+async function detectEngine() {
+  if (window.claude?.use) {
+    setEngineLabel("Connecting…", false);
+    try {
+      const s = await window.claude.use("sample");
+      if (s) { engine = { kind: "claude", sample: s }; }
+    } catch {}
+  } else {
+    const key = ls.get(KEY_KEY);
+    if (key) engine = { kind: "apikey", key };
+  }
+  render();
+}
+function setEngineLabel(t, live) { $("engineLabel").textContent = t; $("engineBtn").dataset.live = live ? "true" : "false"; }
+const canGenerate = () => engine.kind !== "none";
+
+function buildPrompt(parent, decision) {
+  const path = [];
+  for (let n = parent; n; n = n.parentId ? world.nodes[n.parentId] : null) path.unshift(n);
+  const history = path.map((n, i) => {
+    const sum = arr(n.summary).join(" ").slice(0, 600);
+    return `${i + 1}. [${n.date}] ${n.title}${n.decision ? ` (after: "${n.decision}")` : ""}\n   ${sum}`;
+  }).join("\n");
+  const opening = !parent;
+  return `You are the simulation engine of "Branchpoint", a counterfactual world simulator. The reader steers an alternate timeline one decision at a time; you report what the world looks like afterwards.
+
+PREMISE (the point of divergence): ${world.premise}
+
+${opening ? "TASK: Simulate the OPENING STATE of this world, shortly after the point of divergence." : `TIMELINE SO FAR (oldest first):\n${history}\n\nNEW DECISION / EVENT: "${decision}"\n\nTASK: Simulate the state of the world after this decision. Move time forward plausibly (weeks to a few years) from ${parent.date}.`}
+
+Guidelines:
+- Consequences must be specific, concrete and surprising but plausible, with second-order effects (economic, cultural, political, personal). Name places, numbers, dates.
+- Keep continuity with the timeline so far.
+- Use FICTIONAL people, companies and news outlets for every quote, post and byline. Never quote or impersonate real living people or real news organizations. Real countries, places, institutions and historical figures may be referenced.
+- Match artifacts to the era: before the internet, "posts" become letters, telegrams, pamphlets or radio call-ins (use the "posts" type with period-appropriate names in "handle", and omit counts by setting them to 0); before television, skip "chyron".
+- Offer exactly 3 next choices that pull the world in clearly different directions. Each label is at most 70 characters.
+- "divergence" is 0-100: how far this world has drifted from our real history.
+- Produce 3 or 4 artifacts of different types. Include one "newspaper" unless the era has none.
+
+Reply with only a JSON object in exactly this shape:
+{
+  "title": "3-6 word name for this moment",
+  "date": "Month Year",
+  "divergence": 0,
+  "summary": ["paragraph 1 (2-4 sentences)", "paragraph 2 (2-4 sentences)"],
+  "choices": [{"label": "what happens or what someone decides next", "hint": "2-6 word stakes"}],
+  "artifacts": [
+    {"type": "newspaper", "masthead": "", "edition": "", "price": "", "headline": "", "subhead": "", "byline": "", "body": "2 short paragraphs separated by \\n\\n", "sidebar": {"headline": "", "text": ""}},
+    {"type": "headlines", "items": [{"outlet": "", "text": ""}]},
+    {"type": "posts", "items": [{"name": "", "handle": "@...", "text": "", "time": "2h", "replies": 0, "reposts": 0, "likes": 0}]},
+    {"type": "chyron", "network": "", "tag": "Breaking", "text": "", "ticker": ["", ""]},
+    {"type": "memo", "classification": "", "from": "", "to": "", "subject": "", "body": "use █████ for redactions"},
+    {"type": "market", "title": "", "items": [{"name": "", "value": "", "change": "+1.2%"}]}
+  ]
+}
+(The artifacts list above shows every allowed type; pick 3 or 4 of them.)`;
+}
+
+async function generate(prompt, onChars, signal) {
+  if (engine.kind === "claude") {
+    return engine.sample.json(prompt, { signal, cache: false, onText: ({ text }) => onChars(text.length) });
+  }
+  if (engine.kind === "apikey") {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST", signal,
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": engine.key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({ model: "claude-sonnet-5-5", max_tokens: 4096, messages: [{ role: "user", content: prompt }] })
+    });
+    if (!res.ok) {
+      let msg = `API error ${res.status}`;
+      try { const j = await res.json(); if (j?.error?.message) msg += `: ${j.error.message}`; } catch {}
+      throw { code: res.status === 401 ? "bad_key" : "upstream_error", message: msg };
+    }
+    const j = await res.json();
+    const text = arr(j.content).filter(b => b.type === "text").map(b => b.text).join("");
+    onChars(text.length);
+    const a = text.indexOf("{"), b = text.lastIndexOf("}");
+    if (a < 0 || b < a) throw { code: "invalid_json", message: "No JSON in reply" };
+    try { return JSON.parse(text.slice(a, b + 1)); } catch { throw { code: "invalid_json", message: "Reply was not valid JSON" }; }
+  }
+  throw { code: "no_engine", message: "No engine" };
+}
+
+function errorCopy(e) {
+  switch (e?.code) {
+    case "cancelled": return "";
+    case "not_granted": return "Claude access wasn't allowed for this page, so new branches can't be simulated. You can still explore the demo world.";
+    case "sampling_disabled": return "Claude isn't available on this account, so new branches can't be simulated.";
+    case "rate_limited": return "Too many simulations at once or a usage limit was reached. Wait a moment, then try again.";
+    case "refused": return "Claude declined to simulate that branch. Try wording the decision differently.";
+    case "invalid_json": return "The simulation came back garbled. Try again.";
+    case "bad_key": return "The API key was rejected. Check it under the engine button.";
+    case "session_expired": return "Your Claude session expired. Sign in again, then retry.";
+    default: return "The simulation failed (" + (e?.message || "unknown error") + "). Try again.";
+  }
+}
+
+function normalize(raw, parentId, addr, decision) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  const summary = Array.isArray(r.summary) ? r.summary.map(s => str(s, 1200)).filter(Boolean) : str(r.summary, 2400).split(/\n\n+/).filter(Boolean);
+  return {
+    id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    parentId, addr, decision,
+    title: str(r.title, 90) || "Untitled moment",
+    date: str(r.date, 40) || "Later",
+    divergence: Math.max(0, Math.min(100, Math.round(Number(r.divergence) || 0))),
+    summary: summary.length ? summary : ["(The simulation returned no summary.)"],
+    choices: arr(r.choices).slice(0, 4).map(c => ({ label: str(c?.label, 120), hint: str(c?.hint, 80) })).filter(c => c.label),
+    artifacts: arr(r.artifacts).slice(0, 5).filter(a => a && typeof a === "object" && typeof a.type === "string")
+  };
+}
+
+function lostEngine(e) {
+  if (["not_granted", "sampling_disabled", "not_declared", "capability_disabled", "capability_removed"].includes(e?.code)) engine = { kind: "none" };
+}
+
+async function choose(parentId, idx) {
+  const parent = world.nodes[parentId];
+  const choice = parent?.choices[idx];
+  if (!choice) return;
+  if (choice.childId) return go(choice.childId);
+  const key = parentId + ":" + idx;
+  if (pending.has(key) || !canGenerate()) return;
+  const ctl = new AbortController();
+  const job = { ctl, chars: 0 };
+  pending.set(key, job);
+  sceneError = "";
+  render();
+  try {
+    const raw = await generate(buildPrompt(parent, choice.label), (n) => { job.chars = n; renderFeed(); }, ctl.signal);
+    const node = normalize(raw, parentId, parent.addr + "·" + (idx + 1), choice.label);
+    world.nodes[node.id] = node;
+    choice.childId = node.id;
+    pending.delete(key);
+    if (currentId === parentId) currentId = node.id;
+    save();
+  } catch (e) {
+    pending.delete(key);
+    lostEngine(e);
+    if (currentId === parentId) sceneError = errorCopy(e);
+  }
+  render();
+}
+
+function addOwnChoice(parentId, text) {
+  const parent = world.nodes[parentId];
+  const label = text.trim().slice(0, 120);
+  if (!parent || !label) return;
+  parent.choices.push({ label, hint: "Your intervention", custom: true });
+  save();
+  choose(parentId, parent.choices.length - 1);
+}
+
+async function startWorld(premise) {
+  const note = $("newNote");
+  note.className = "note"; note.textContent = "Simulating the opening state… this can take up to a minute.";
+  $("startBtn").disabled = true;
+  const prevWorld = world, prevCurrent = currentId;
+  world = { premise, demo: false, rootId: null, nodes: {} };
+  try {
+    const raw = await generate(buildPrompt(null, null), (n) => { note.textContent = `Simulating the opening state… ${n.toLocaleString()} characters written.`; }, new AbortController().signal);
+    const node = normalize(raw, null, "Ω", null);
+    world.rootId = node.id; world.nodes[node.id] = node; currentId = node.id;
+    save(); closeModal();
+  } catch (e) {
+    world = prevWorld; currentId = prevCurrent;
+    lostEngine(e);
+    note.className = "note err"; note.textContent = errorCopy(e);
+  }
+  $("startBtn").disabled = false;
+  render();
+}
+
+function go(id) { if (world.nodes[id]) { currentId = id; sceneError = ""; save(); render(); $("scene").scrollTop = 0; } }
+
+/* ---------- Rendering ---------- */
+function pathIds() {
+  const s = new Set();
+  for (let n = world.nodes[currentId]; n; n = n.parentId ? world.nodes[n.parentId] : null) s.add(n.id);
+  return s;
+}
+
+function render() {
+  if (!world.nodes[currentId]) currentId = world.rootId;
+  const live = engine.kind !== "none";
+  setEngineLabel(engine.kind === "claude" ? "Claude engine" : engine.kind === "apikey" ? "API key engine" : (window.claude?.use ? "Demo only" : "Offline demo"), live);
+  const pr = $("premise"); pr.textContent = "";
+  pr.append(h("b", null, world.demo ? "Demo world · " : "Premise · "), world.premise);
+  pr.title = world.premise;
+  renderTree(); renderScene(); renderFeed();
+}
+
+function renderTree() {
+  const onPath = pathIds();
+  const tree = $("tree"); tree.textContent = "";
+  const build = (node) => {
+    const unexplored = node.choices.filter(c => !c.childId).length;
+    const isCur = node.id === currentId;
+    const li = h("li", { class: [onPath.has(node.id) && "on-path", isCur && "current"].filter(Boolean).join(" ") },
+      h("button", { class: "t-node", type: "button", onclick: () => go(node.id), "aria-current": isCur ? "step" : null, title: node.decision || world.premise },
+        h("span", { class: "t-dot" }),
+        h("span", { class: "t-title" }, node.title),
+        h("span", { class: "t-meta" }, h("span", null, node.addr), h("span", null, node.date), (!isCur && unexplored) ? h("span", { class: "t-more" }, `+${unexplored} untaken`) : null)
+      )
+    );
+    const kids = [];
+    node.choices.forEach((c, i) => {
+      if (c.childId && world.nodes[c.childId]) kids.push(build(world.nodes[c.childId]));
+      else if (isCur || pending.has(node.id + ":" + i)) {
+        const p = pending.has(node.id + ":" + i);
+        kids.push(h("li", null, h("button", { class: "t-ghost" + (p ? " pending" : ""), type: "button", disabled: !canGenerate() && !p, onclick: () => choose(node.id, i) }, (p ? "Simulating… " : "+ ") + c.label)));
+      }
+    });
+    if (kids.length) li.append(h("ul", null, kids));
+    return li;
+  };
+  tree.append(build(world.nodes[world.rootId]));
+}
+
+function renderScene() {
+  const n = world.nodes[currentId];
+  const scene = $("scene"); scene.textContent = "";
+  const wrap = h("article", { class: "scene" });
+  if (n.parentId) wrap.append(h("button", { class: "back", type: "button", onclick: () => go(n.parentId) }, "← Previous moment"));
+  wrap.append(h("div", { class: "eyebrow" }, h("span", { class: "addr" }, "Branch " + n.addr), h("span", null, "·"), h("span", null, n.date)));
+  if (n.decision) wrap.append(h("p", { class: "decision" }, "After ", h("q", null, n.decision)));
+  else wrap.append(h("p", { class: "decision" }, "Point of divergence"));
+  wrap.append(h("h2", null, n.title));
+  wrap.append(h("div", { class: "meter", role: "img", "aria-label": `Divergence from our history: ${n.divergence} of 100` },
+    h("div", { class: "meter-row" }, h("span", null, "Divergence from our history"), h("b", null, `Δ ${n.divergence}`)),
+    h("div", { class: "meter-bar" }, h("span", { style: `width:${n.divergence}%` })),
+    h("div", { class: "meter-ticks" }, h("span", null, "Our timeline"), h("span", null, "Unrecognizable"))
+  ));
+  wrap.append(h("div", { class: "story" }, n.summary.map(p => h("p", null, p))));
+
+  wrap.append(h("p", { class: "label", style: "margin:8px 0 0" }, "What happens next?"));
+  const ch = h("div", { class: "choices" });
+  n.choices.forEach((c, i) => {
+    const p = pending.has(n.id + ":" + i);
+    const explored = !!c.childId;
+    const status = explored ? "Explored →" : p ? "Simulating…" : canGenerate() ? "Simulate" : "Needs engine";
+    ch.append(h("button", { class: "choice" + (explored ? " explored" : "") + (p ? " pending" : ""), type: "button", disabled: !explored && !p && !canGenerate(), onclick: () => choose(n.id, i) },
+      h("span", { class: "choice-k" }, String.fromCharCode(65 + i)),
+      h("span", { class: "choice-l" }, c.label, c.hint ? h("span", { class: "choice-h" }, c.hint) : null),
+      h("span", { class: "choice-s" }, status)
+    ));
+  });
+  wrap.append(ch);
+
+  if (canGenerate()) {
+    const input = h("input", { id: "ownInput", type: "text", placeholder: "Or intervene yourself: “A general strike begins in…”", maxlength: "120" });
+    const submit = () => { const v = input.value; input.value = ""; addOwnChoice(n.id, v); };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+    wrap.append(h("div", { class: "own" }, input, h("button", { class: "btn", type: "button", onclick: submit }, "Simulate")));
+  } else {
+    wrap.append(h("p", { class: "note" }, window.claude?.use
+      ? "New branches are simulated with Claude. Allow Claude access for this page to explore untaken branches; the demo branches work without it."
+      : "Add an Anthropic API key (engine button, top right) to simulate untaken branches. The demo branches work without one."));
+  }
+  if (sceneError) wrap.append(h("p", { class: "note err", role: "alert" }, sceneError));
+  scene.append(wrap);
+}
+
+function renderFeed() {
+  const n = world.nodes[currentId];
+  const feed = $("feed"); feed.textContent = "";
+  feed.append(h("div", { class: "feed-head" }, h("p", { class: "label" }, "Dispatches from this timeline"), h("span", { class: "feed-date" }, n.date)));
+  const jobs = [...pending.entries()].filter(([k]) => k.startsWith(n.id + ":"));
+  for (const [k, job] of jobs) {
+    const idx = Number(k.split(":")[1]);
+    feed.append(h("div", { class: "sim", "aria-live": "polite" },
+      h("div", { class: "disp-kind" }, "Simulating branch " + n.addr + "·" + (idx + 1)),
+      h("div", null, n.choices[idx]?.label),
+      h("div", { class: "sim-line" }), h("div", { class: "sim-line", style: "width:70%" }),
+      h("div", { class: "note" }, job.chars ? `${job.chars.toLocaleString()} characters written` : "Thinking… first words can take up to a minute."),
+      h("button", { class: "btn ghost", type: "button", style: "justify-self:start", onclick: () => job.ctl.abort() }, "Stop")
+    ));
+  }
+  n.artifacts.forEach(a => { const el = renderArtifact(a); if (el) feed.append(el); });
+}
+
+const KIND = { newspaper: "Front page", headlines: "News wire", posts: "Social", chyron: "Broadcast", memo: "Leaked document", market: "Markets" };
+
+function renderArtifact(a) {
+  let body = null;
+  try {
+    switch (a.type) {
+      case "newspaper": body = paper(a); break;
+      case "headlines": body = wire(a); break;
+      case "posts": body = posts(a); break;
+      case "chyron": body = chyron(a); break;
+      case "memo": body = memo(a); break;
+      case "market": body = market(a); break;
+      default: return null;
+    }
+  } catch { return null; }
+  return h("section", { class: "disp" }, h("div", { class: "disp-kind" }, KIND[a.type]), body);
+}
+
+function paper(a) {
+  const paras = str(a.body, 3000).split(/\n\n+/).filter(Boolean);
+  const side = a.sidebar && (a.sidebar.headline || a.sidebar.text);
+  return h("article", { class: "paper" },
+    h("div", { class: "paper-top" }, h("span", null, str(a.edition, 40) || "Morning Edition"), h("span", null, world.nodes[currentId].date), h("span", null, str(a.price, 12))),
+    h("h3", { class: "masthead" }, str(a.masthead, 60) || "The Daily Record"),
+    h("div", { class: "paper-rule" }),
+    h("h4", { class: "paper-head" }, str(a.headline, 140)),
+    a.subhead ? h("p", { class: "paper-sub" }, str(a.subhead, 300)) : null,
+    h("div", { class: "paper-body" },
+      a.byline ? h("p", { class: "paper-byline" }, str(a.byline, 80)) : null,
+      paras.map(p => h("p", null, p))),
+    side ? h("div", { class: "paper-side" }, h("b", null, str(a.sidebar.headline, 120)), h("span", null, str(a.sidebar.text, 400))) : null
+  );
+}
+function wire(a) {
+  return h("div", { class: "wire" }, h("ol", null, arr(a.items).slice(0, 6).map(it =>
+    h("li", null, h("span", { class: "wire-src" }, str(it?.outlet, 50)), h("span", { class: "wire-txt" }, str(it?.text, 200))))));
+}
+function posts(a) {
+  return h("div", { class: "posts" }, arr(a.items).slice(0, 5).map(p => {
+    const name = str(p?.name, 50) || "Anonymous";
+    const initials = name.split(/\s+/).map(w => w[0]).join("").replace(/[^\p{L}\p{N}]/gu, "").slice(0, 2).toUpperCase() || "?";
+    const counts = [["↩", p?.replies], ["⇄", p?.reposts], ["♥", p?.likes]].filter(([, v]) => Number(v) > 0);
+    return h("div", { class: "post" },
+      h("div", { class: "ava", style: `background:hsl(${hue(p?.handle || name)} 45% 42%)`, "aria-hidden": "true" }, initials),
+      h("div", { style: "min-width:0" },
+        h("div", { class: "post-h" }, h("b", null, name), h("span", null, str(p?.handle, 40)), p?.time ? h("span", null, "· " + str(p.time, 20)) : null),
+        h("p", { class: "post-t" }, str(p?.text, 600)),
+        counts.length ? h("div", { class: "post-m" }, counts.map(([s, v]) => h("span", null, s + " " + fmtCount(v)))) : null));
+  }));
+}
+function chyron(a) {
+  const ticker = arr(a.ticker).map(t => str(t, 120)).filter(Boolean).join("   ◆   ");
+  return h("div", { class: "tv", role: "img", "aria-label": `TV news: ${str(a.text, 160)}` },
+    h("div", { class: "tv-screen" }, h("span", { class: "tv-live" }, "LIVE"), h("span", { class: "tv-bug" }, str(a.network, 24) || "NEWS")),
+    h("div", { class: "tv-bar" }, h("div", { class: "tv-tag" }, str(a.tag, 16) || "Breaking"), h("div", { class: "tv-text" }, str(a.text, 160))),
+    ticker ? h("div", { class: "tv-ticker" }, h("span", null, ticker)) : null);
+}
+function memo(a) {
+  const body = h("div", { class: "memo-body" });
+  str(a.body, 3000).split(/(█+|\[REDACTED\])/).forEach(part => {
+    if (!part) return;
+    if (/^(█+|\[REDACTED\])$/.test(part)) body.append(h("span", { class: "redact", "aria-label": "redacted" }, part.startsWith("[") ? "████████" : part));
+    else body.append(part);
+  });
+  return h("div", { class: "memo" },
+    a.classification ? h("span", { class: "memo-stamp" }, str(a.classification, 40)) : null,
+    h("dl", null,
+      h("dt", null, "FROM:"), h("dd", null, str(a.from, 120)),
+      h("dt", null, "TO:"), h("dd", null, str(a.to, 120)),
+      h("dt", null, "RE:"), h("dd", null, str(a.subject, 160))),
+    body);
+}
+function market(a) {
+  return h("div", { class: "mkt" }, h("h4", null, str(a.title, 80) || "Markets"),
+    h("table", null, h("tbody", null, arr(a.items).slice(0, 6).map(it => {
+      const ch = str(it?.change, 20);
+      const dir = /^\s*[-−]/.test(ch) ? "down" : /^\s*\+/.test(ch) ? "up" : "";
+      return h("tr", null, h("td", null, str(it?.name, 80)), h("td", null, str(it?.value, 24)), h("td", { class: dir }, (dir === "up" ? "▲ " : dir === "down" ? "▼ " : "") + ch));
+    }))));
+}
+
+/* ---------- New-world modal ---------- */
+function openModal() {
+  $("newModal").hidden = false;
+  $("keyBox").hidden = !!window.claude?.use;
+  $("apiKey").value = engine.kind === "apikey" ? engine.key : (ls.get(KEY_KEY) || "");
+  const note = $("newNote"); note.className = "note";
+  note.textContent = engine.kind === "claude" ? "Simulations run on your Claude account."
+    : window.claude?.use ? "This page needs Claude access to simulate new worlds. You can still load the demo world."
+    : "";
+  $("premiseInput").focus();
+}
+function closeModal() { $("newModal").hidden = true; }
+function applyKey() {
+  if (window.claude?.use) return;
+  const k = $("apiKey").value.trim();
+  if (k) { ls.set(KEY_KEY, k); engine = { kind: "apikey", key: k }; }
+  else { ls.del(KEY_KEY); engine = { kind: "none" }; }
+}
+$("chips").append(...EXAMPLES.map(t => h("button", { class: "chip", type: "button", onclick: () => { $("premiseInput").value = t; } }, t)));
+$("newBtn").addEventListener("click", openModal);
+$("engineBtn").addEventListener("click", openModal);
+$("cancelBtn").addEventListener("click", () => { applyKey(); closeModal(); render(); });
+$("demoBtn").addEventListener("click", () => { world = structuredClone(DEMO); currentId = "n0"; sceneError = ""; save(); closeModal(); render(); });
+$("startBtn").addEventListener("click", () => {
+  applyKey();
+  const p = $("premiseInput").value.trim();
+  const note = $("newNote");
+  if (!p) { note.className = "note err"; note.textContent = "Describe the point of divergence first."; return; }
+  if (!canGenerate()) { note.className = "note err"; note.textContent = window.claude?.use ? "Claude access isn't available on this page, so only the demo world can be loaded." : "Add an Anthropic API key above to simulate a new world."; return; }
+  startWorld(p.slice(0, 500));
+});
+$("newModal").addEventListener("click", (e) => { if (e.target === $("newModal")) closeModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("newModal").hidden) closeModal(); });
+
+load();
+render();
+detectEngine();
+})();
+</script>
