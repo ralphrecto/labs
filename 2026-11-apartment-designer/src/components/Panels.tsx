@@ -7,6 +7,7 @@ import type { Item } from '../model/types'
 import { formatLength } from '../model/units'
 import { activeLayout, useStore } from '../store'
 import { LengthField, NumberField, TextField } from './fields'
+import { ScanInspector } from './ScanImport'
 
 // ---------------------------------------------------------------- left: catalog, library, layouts
 
@@ -155,6 +156,7 @@ export function Inspector() {
     const room = doc.rooms.find((r) => r.id === selection.id)
     return room ? <RoomInspector id={room.id} /> : null
   }
+  if (selection.kind === 'scan') return <ScanInspector id={selection.id} />
   return <OpeningInspector roomId={selection.roomId} id={selection.id} />
 }
 

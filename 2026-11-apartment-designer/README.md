@@ -1,16 +1,18 @@
 # Apartment designer
 
-A browser app for planning an apartment's furniture at true size. This is Milestone 1 of the
-[implementation plan](https://claude.ai/artifact/TWePZZMNEX1EkTwRPEe4Yf): a furniture playground on a
-floor plan you enter by hand. Later milestones add video capture (Gaussian splats), furniture
-detection, and adding items from links and photos.
+A browser app for planning an apartment's furniture at true size, following the
+[implementation plan](https://claude.ai/artifact/TWePZZMNEX1EkTwRPEe4Yf). Milestone 1 is a furniture
+playground on a floor plan you enter by hand. Milestone 2 imports a phone scan (Scaniverse Gaussian
+splat or mesh) as a backdrop to trace the floor plan from. Later milestones add furniture detection
+and adding items from links and photos.
 
 ## Run it
 
 ```sh
 npm install
 npm run dev      # http://localhost:5173
-npm test         # unit tests for geometry, units, snapping and checks
+npm test         # unit tests for geometry, units, snapping, checks and scan alignment
+node scripts/check-scan-flow.cjs   # with `npm run dev` running: imports the sample scan, calibrates, traces
 npm run build    # static build in dist/ (relative paths, host anywhere)
 ```
 
@@ -41,6 +43,40 @@ npm run build    # static build in dist/ (relative paths, host anywhere)
   project as JSON. Everything also autosaves in the browser.
 - **Units.** Stored in meters; shown in cm/m or ft/in. Inputs accept `350`, `3.5m`, `11'6"`, `138in`.
 
+## Importing a scan (Milestone 2)
+
+Scan the room with [Scaniverse](https://scaniverse.com) (no LiDAR needed: it builds a Gaussian splat
+from the camera alone), then export it and drop the file on the **Scans** panel.
+
+- **Formats.** Splats: PLY (the standard 3DGS layout, also compressed PLY), SPZ, `.splat`, `.ksplat`,
+  `.sog`. Meshes: GLB/glTF, OBJ, PLY with faces. Point clouds: PLY. Splats render with
+  [Spark](https://sparkjs.dev); meshes and point clouds with three.js. **Try a sample** imports a
+  synthetic splat of an L-shaped room (deliberately 4% too small and turned 17°) to try the tools.
+- **Automatic first alignment.** On import the app finds which axis is up (the floor is the biggest
+  flat surface; Y up gets a head start, since ARKit scans are Y up), the floor and ceiling heights (peaks
+  in the height histogram), and turns the scan so its walls run along the plan axes (the rotation that
+  makes the wall points' x/y histograms sharpest). Each can be redone or adjusted in the Scan panel:
+  up axis, *Square up*, *Along a wall* (click two points on a wall), 90° turns, *Move*, floor nudge.
+- **Scale from a tape measure.** Without LiDAR, the scan's scale is only approximate. Mark 2 or 3
+  tape-measured lengths on the scan (whole walls, wall to wall, are best; ends snap to the scan's
+  walls). The scale is the median of what each length implies, and each length shows how far it is
+  from the others, with a warning above 2% so one bad measurement stands out instead of skewing
+  the plan. References are stored in scan coordinates, so they survive re-scaling and re-aligning.
+- **Wall tracing.** *Trace a room* is the normal room drawing tool, but corners snap to walls seen in
+  the scan: along a wall to that wall, at a corner to both. A traced room takes the scan's ceiling
+  height when one was found. On the sample, traced walls come out within about 1 cm of the truth.
+- **Plan underlay.** *Wall outline* draws the points in a height band (default 1 to 2 m above the
+  floor, above most furniture), which stack up into crisp lines where walls are. *Top view* is a
+  colour image from above with everything over the cut height removed.
+- **3D backdrop.** The 3D view shows the scan aligned with the model (*With model*, *Scan only*, or
+  hidden). From above, the scan is cut at the cut height so you can see in; at eye level it's whole.
+- **Storage.** Scan files live in IndexedDB (`apartment-designer-scan-files`); the project only holds
+  each scan's alignment and references. Opening a project JSON on another computer asks for the scan
+  file again.
+- **For furniture detection.** `toScanData(ref, points)` in `src/scan/align.ts` returns the scan in
+  the app's world frame (meters, Y up, floor at 0, plan (x, y) = world (x, z)), downsampled to under
+  a million points, in the `ScanData` shape from `src/scan/types.ts`.
+
 ## Code map
 
 | Path | What |
@@ -53,7 +89,13 @@ npm run build    # static build in dist/ (relative paths, host anywhere)
 | `src/store.ts` | Zustand store: document, undo/redo history, UI state, all edit actions |
 | `src/storage.ts` | Local persistence and JSON import/export (swap for a server later) |
 | `src/components/PlanView.tsx` | SVG plan editor |
-| `src/three/` | react-three-fiber scene and procedural furniture models |
+| `src/three/` | react-three-fiber scene and procedural furniture models; `ScanBackdrop.tsx` draws scans |
+| `src/scan/align.ts` | Scan math: up axis, floor and ceiling, straightening, calibration, underlays, wall snapping |
+| `src/scan/readPly.ts` | Small PLY reader (binary and ASCII; splat, mesh and point PLYs) |
+| `src/scan/importers.ts` | Loads scan files into points plus something to draw (Spark splats, three.js meshes) |
+| `src/scan/runtime.ts` | Scans loaded in this session: import, IndexedDB reload, cached underlays |
+| `src/scan/sampleScan.ts` | Synthetic splat room used by *Try a sample* and the tests |
+| `src/components/ScanImport.tsx` | Scans panel and the scan inspector (align, scale, trace, display) |
 
 Conventions: meters everywhere. Plan x is right and plan y is down; 3D world is Y up with plan
 (x, y) at world (x, 0, y). An item's front is its local +y; rotation is clockwise on the plan.
