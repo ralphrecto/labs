@@ -25,6 +25,9 @@ import { snapDrawPoint, snapPlacement, type SnapGuide } from '../model/snapping'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 import { formatLength, parseLength } from '../model/units'
 import { activeLayout, useStore } from '../store'
+import { PlanScanLayer } from './ScanPanels'
+import { placementShift } from '../scan/apply'
+import { reviewChoice, useScanUI } from '../scan/scanUi'
 
 const COLORS = {
   paper: '#fbfaf7',
@@ -96,8 +99,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     return () => ro.disconnect()
   }, [])
 
+  const review = useScanUI((s) => (readOnly ? null : s.review))
   const fit = () => {
     const pts = doc.rooms.flatMap((r) => r.polygon)
+    // Include a scan waiting for review, which lands beside the rooms.
+    const rv = useScanUI.getState().review
+    const shift = rv && !readOnly ? placementShift(doc, rv.estimate, reviewChoice(rv)) : null
+    if (rv && shift) for (const p of rv.estimate.room?.polygon ?? rv.estimate.objects) pts.push(v(p.x + shift.x, p.y + shift.y))
     if (!pts.length) {
       setView({ cx: 3, cy: 2, k: Math.min(size.w / 8, size.h / 6) })
       return
@@ -122,6 +130,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     if (fitted.current) fit()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aptId])
+
+  // Re-fit when a scan review starts or ends, so the scan (or the room it added) is in view.
+  const reviewId = review?.estimate
+  useEffect(() => {
+    if (fitted.current) fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewId])
 
   useEffect(() => {
     if (mode !== 'draw-room') {
@@ -413,6 +428,9 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
             </g>
           )
         })}
+
+        {/* Scan point clouds, and detections waiting for review */}
+        {!readOnly && <PlanScanLayer px={px} fs={fs} />}
 
         {/* Openings drawn over walls */}
         {doc.rooms.map((room) =>
