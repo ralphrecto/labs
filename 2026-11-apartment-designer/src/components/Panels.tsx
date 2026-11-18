@@ -6,15 +6,28 @@ import { dist, polygonArea, wallSegments } from '../model/geometry'
 import type { Item } from '../model/types'
 import { formatLength } from '../model/units'
 import { activeLayout, useStore } from '../store'
+import { CatalogBrowser, ImportDialog, Photo } from './AddDialogs'
 import { LengthField, NumberField, TextField } from './fields'
 
 // ---------------------------------------------------------------- left: catalog, library, layouts
 
 export function CatalogPanel() {
   const add = useStore((s) => s.addItemFromCatalog)
+  const [dialog, setDialog] = useState<'catalog' | 'import' | null>(null)
   return (
     <section className="panel">
       <h3>Add furniture</h3>
+      <div className="add-actions">
+        <button className="primary" onClick={() => setDialog('catalog')} title="Browse generic furniture at typical sizes">
+          Browse catalog
+        </button>
+        <button onClick={() => setDialog('import')} title="Add a real product from a store link, a photo, or pasted dimensions">
+          From link or photo
+        </button>
+      </div>
+      {dialog === 'catalog' && <CatalogBrowser onClose={() => setDialog(null)} />}
+      {dialog === 'import' && <ImportDialog onClose={() => setDialog(null)} />}
+      <p className="small muted">Or add a basic shape and set its size:</p>
       <div className="catalog-grid">
         {CATALOG.map((e) => (
           <button key={e.category} className="catalog-btn" onClick={() => add(e)} title={`Add a ${e.name.toLowerCase()}`}>
@@ -47,8 +60,11 @@ export function LibraryPanel() {
           <ul className="list">
             {unplaced.map((i) => (
               <li key={i.id}>
-                <span>
-                  {i.name} <span className="muted">· {formatLength(i.width, units)} × {formatLength(i.depth, units)}</span>
+                <span className="lib-item">
+                  {i.imageUrl && <Photo className="mini-thumb" src={i.imageUrl} />}
+                  <span>
+                    {i.name} <span className="muted">· {formatLength(i.width, units)} × {formatLength(i.depth, units)}</span>
+                  </span>
                 </span>
                 <button className="link" onClick={() => placeItem(i.id)}>
                   Place
@@ -197,6 +213,7 @@ function PlacementInspector({ id }: { id: string }) {
   return (
     <section className="panel">
       <h3>{item.name}</h3>
+      {item.imageUrl && <Photo className="inspector-photo" src={item.imageUrl} />}
       <TextField label="Name" value={item.name} onChange={(name) => upd({ name })} />
       <label className="field">
         <span>Type</span>
@@ -218,10 +235,15 @@ function PlacementInspector({ id }: { id: string }) {
         </div>
       )}
       <div className="grid3">
-        <LengthField label="Width" value={item.width} units={units} onChange={(width) => upd({ width })} min={0.01} />
-        <LengthField label="Depth" value={item.depth} units={units} onChange={(depth) => upd({ depth })} min={0.01} />
-        <LengthField label="Height" value={item.height} units={units} onChange={(height) => upd({ height })} min={0.005} />
+        <LengthField label="Width" value={item.width} units={units} onChange={(width) => upd({ width, sizeEstimated: undefined })} min={0.01} />
+        <LengthField label="Depth" value={item.depth} units={units} onChange={(depth) => upd({ depth, sizeEstimated: undefined })} min={0.01} />
+        <LengthField label="Height" value={item.height} units={units} onChange={(height) => upd({ height, sizeEstimated: undefined })} min={0.005} />
       </div>
+      {item.sizeEstimated && (
+        <p className="small">
+          <span className="badge warning">Estimated size</span> Measure the real piece and type its size here.
+        </p>
+      )}
       <div className="grid2">
         <label className="field">
           <span>Rotation</span>

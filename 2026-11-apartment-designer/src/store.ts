@@ -66,6 +66,8 @@ interface State extends UIState {
   deleteOpening: (roomId: string, id: string) => void
 
   addItemFromCatalog: (entry: CatalogEntry, at?: Vec2) => void
+  /** Add a new item to the library and place it in the active layout. */
+  addItem: (item: Item, at?: Vec2) => void
   placeItem: (itemId: string, at?: Vec2) => void
   updateItem: (id: string, patch: Partial<Item>) => void
   deleteItem: (id: string) => void
@@ -243,8 +245,8 @@ export const useStore = create<State>((set, get) => ({
     set({ selection: null })
   },
 
-  addItemFromCatalog: (entry, at) => {
-    const item = itemFromCatalog(entry, uid())
+  addItemFromCatalog: (entry, at) => get().addItem(itemFromCatalog(entry, uid()), at),
+  addItem: (item, at) => {
     const pid = uid()
     get().update((d) => {
       const p = at ?? defaultDrop(d)

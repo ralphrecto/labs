@@ -367,7 +367,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
         <rect x={vb.x} y={vb.y} width={vb.w} height={vb.h} fill={COLORS.paper} onPointerDown={onBackgroundDown} />
         <g pointerEvents="none">
           {gridLines.map((l, i) => (
-            <line key={i} {...l} stroke={l.major ? COLORS.gridMajor : COLORS.grid} strokeWidth={px} />
+            <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.major ? COLORS.gridMajor : COLORS.grid} strokeWidth={px} />
           ))}
         </g>
 
