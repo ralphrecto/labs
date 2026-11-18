@@ -1,6 +1,6 @@
 import { OrbitControls } from '@react-three/drei'
-import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber'
-import { useMemo, useRef, useState } from 'react'
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useAnalysis } from '../analysis'
@@ -248,6 +248,7 @@ function Scene({ wallMode, eye }: { wallMode: WallMode; eye: [number, number, nu
           <PlacedItem key={p.id} item={item} p={p} selected={selection?.kind === 'placement' && selection.id === p.id} flag={analysis.flagged.get(p.id)} onGrab={onGrab} />
         ))}
       </group>
+      {!eye && <FitCamera target={target} />}
       {eye ? (
         <OrbitControls ref={controls} makeDefault target={[eye[0], eye[1], eye[2] - 0.01]} enableZoom={false} enablePan={false} rotateSpeed={-0.4} />
       ) : (
@@ -255,6 +256,29 @@ function Scene({ wallMode, eye }: { wallMode: WallMode; eye: [number, number, nu
       )}
     </>
   )
+}
+
+/** Place the overview camera so the whole apartment fits the pane, whatever its aspect ratio. */
+function FitCamera({ target }: { target: THREE.Vector3 }) {
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
+  const size = useThree((s) => s.size)
+  const rooms = useStore((s) => s.doc.rooms)
+  const done = useRef(false)
+  useLayoutEffect(() => {
+    if (done.current || size.width < 10) return
+    done.current = true
+    const pts = rooms.flatMap((r) => r.polygon)
+    if (!pts.length) return
+    const b = bounds(pts)
+    const radius = Math.hypot(b.maxX - b.minX, b.maxY - b.minY) / 2 + 0.3
+    const vfov = (camera.fov * Math.PI) / 180
+    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * (size.width / size.height))
+    const d = radius / Math.sin(Math.min(vfov, hfov) / 2)
+    const dir = new THREE.Vector3(0.15, 1.0, 0.75).normalize()
+    camera.position.copy(target).addScaledVector(dir, d)
+    camera.lookAt(target)
+  }, [camera, size, rooms, target])
+  return null
 }
 
 export function Scene3D() {
@@ -268,7 +292,7 @@ export function Scene3D() {
     if (!pts.length) return [6, 8, 10] as [number, number, number]
     const b = bounds(pts)
     const size = Math.max(b.maxX - b.minX, b.maxY - b.minY)
-    return [(b.minX + b.maxX) / 2 + size * 0.15, size * 1.05, b.maxY + size * 0.55] as [number, number, number]
+    return [(b.minX + b.maxX) / 2 + size * 0.15, size * 1.3, b.maxY + size * 0.8] as [number, number, number]
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camKey, doc.apartment.id])
 

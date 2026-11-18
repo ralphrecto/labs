@@ -23,6 +23,7 @@ interface UIState {
   showClearance: boolean
   showPath: boolean
   compare: [string, string] | null
+  toast: string | null
 }
 
 interface State extends UIState {
@@ -45,6 +46,7 @@ interface State extends UIState {
   select: (s: Selection) => void
   setSnap: (s: Partial<SnapSettings>) => void
   setUI: (s: Partial<UIState>) => void
+  notify: (msg: string) => void
 
   // Document
   replaceDoc: (d: Doc) => void
@@ -80,6 +82,7 @@ interface State extends UIState {
 }
 
 const HISTORY_LIMIT = 200
+let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 export const activeLayout = (d: Doc): Layout => d.layouts.find((l) => l.id === d.activeLayoutId) ?? d.layouts[0]
 
@@ -108,6 +111,7 @@ export const useStore = create<State>((set, get) => ({
   showClearance: true,
   showPath: true,
   compare: null,
+  toast: null,
 
   update: (fn) =>
     set((s) => {
@@ -143,6 +147,11 @@ export const useStore = create<State>((set, get) => ({
   select: (selection) => set({ selection }),
   setSnap: (p) => set((s) => ({ snap: { ...s.snap, ...p } })),
   setUI: (p) => set(p),
+  notify: (msg) => {
+    set({ toast: msg })
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => set({ toast: null }), 4000)
+  },
 
   replaceDoc: (d) => set((s) => ({ doc: d, past: [...s.past, s.doc], future: [], selection: null })),
   setUnits: (units) => get().update((d) => ({ ...d, apartment: { ...d.apartment, units } })),

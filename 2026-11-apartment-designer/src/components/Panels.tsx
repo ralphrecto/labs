@@ -105,7 +105,7 @@ export function LayoutsPanel() {
                 Copy
               </button>
               {doc.layouts.length > 1 && (
-                <button className="link danger" onClick={() => confirmDelete(`Delete layout "${l.name}"?`) && s.deleteLayout(l.id)}>
+                <button className="link danger" onClick={() => notifyDeleted(`Layout "${l.name}"`) && s.deleteLayout(l.id)}>
                   Delete
                 </button>
               )}
@@ -132,9 +132,10 @@ export function LayoutsPanel() {
   )
 }
 
-function confirmDelete(msg: string) {
-  // window.confirm is fine here: it's a deliberate, rare action.
-  return window.confirm(msg)
+// Every delete can be undone, so deletes don't ask first; they say how to undo instead.
+function notifyDeleted(what: string) {
+  useStore.getState().notify(`${what} deleted. Press Ctrl+Z to undo.`)
+  return true
 }
 
 // ---------------------------------------------------------------- right: inspector + issues
@@ -192,6 +193,7 @@ function PlacementInspector({ id }: { id: string }) {
   const upd = (patch: Partial<Item>) => s.updateItem(item.id, patch)
   const entry = catalogEntry(item.category)
   const usedIn = doc.layouts.filter((l) => l.placements.some((x) => x.itemId === item.id)).length
+  const otherLayouts = usedIn - 1
   return (
     <section className="panel">
       <h3>{item.name}</h3>
@@ -265,11 +267,14 @@ function PlacementInspector({ id }: { id: string }) {
       </div>
       <div className="btn-row">
         <button onClick={() => s.deletePlacement(p.id)}>Remove from layout</button>
-        <button className="danger" onClick={() => confirmDelete(`Delete "${item.name}" from your library? It's used in ${usedIn} layout${usedIn === 1 ? '' : 's'}.`) && s.deleteItem(item.id)}>
+        <button className="danger" onClick={() => notifyDeleted(`"${item.name}"`) && s.deleteItem(item.id)}>
           Delete item
         </button>
       </div>
-      <p className="small muted">Size and clearance belong to the item, so they're shared by every layout that uses it.</p>
+      <p className="small muted">
+        Size and clearance belong to the item, so they're shared by every layout that uses it
+        {otherLayouts > 0 ? ` (${otherLayouts} other layout${otherLayouts > 1 ? 's' : ''} here). Delete item removes it from all of them.` : '.'}
+      </p>
     </section>
   )
 }
@@ -313,7 +318,7 @@ function RoomInspector({ id }: { id: string }) {
         <button onClick={() => s.setMode('window')}>Add window</button>
       </div>
       <div className="btn-row">
-        <button className="danger" onClick={() => confirmDelete(`Delete room "${room.name}"?`) && s.deleteRoom(room.id)}>
+        <button className="danger" onClick={() => notifyDeleted(`Room "${room.name}"`) && s.deleteRoom(room.id)}>
           Delete room
         </button>
       </div>

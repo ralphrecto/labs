@@ -149,3 +149,16 @@ aside { overflow-y: auto; background: var(--bg); padding: 10px; display: flex; f
   .main { display: block; background: none; }
   .plan-pane { position: relative; height: 90vh; }
 }
+
+.popover-anchor { position: relative; }
+.popover {
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: 260px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+}
+.menu-note { margin: 6px 8px 2px; max-width: 220px; }
+.toast {
+  position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 50;
+  background: #2c2b28; color: #fff; padding: 8px 14px; border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+}
+.toolbar .popover label.field { flex-direction: column; align-items: stretch; white-space: normal; gap: 2px; }
+.popover input { width: 100%; }

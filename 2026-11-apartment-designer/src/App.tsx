@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAnalysis } from './analysis'
 import { CatalogPanel, Inspector, IssuesPanel, LayoutsPanel, LibraryPanel } from './components/Panels'
 import { PlanView } from './components/PlanView'
@@ -6,7 +6,68 @@ import { exportPlanPNG } from './exporting'
 import { Scene3D } from './three/Scene3D'
 import { activeLayout, loadSample, newEmptyDoc, useStore, type Mode, type View } from './store'
 import { downloadJSON, parseDoc } from './storage'
-import { parseLength } from './model/units'
+import { parseLength, unitLabel } from './model/units'
+
+/** Set when built for an embedded preview where printing and downloads are unavailable. */
+const EMBEDDED = import.meta.env.VITE_EMBED === '1'
+
+function RoomSizeForm({ onDone }: { onDone: () => void }) {
+  const units = useStore((s) => s.doc.apartment.units)
+  const [name, setName] = useState(`Room ${useStore.getState().doc.rooms.length + 1}`)
+  const [w, setW] = useState(units === 'metric' ? '350' : `12'`)
+  const [d, setD] = useState(units === 'metric' ? '300' : `10'`)
+  const pw = parseLength(w, units)
+  const pd = parseLength(d, units)
+  const ok = !!pw && !!pd && pw > 0.3 && pd > 0.3
+  return (
+    <form
+      className="popover"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (!ok) return
+        useStore.getState().addRect(name || 'Room', pw!, pd!)
+        onDone()
+      }}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Escape') onDone()
+      }}
+    >
+      <label className="field">
+        <span>Name</span>
+        <input id="room-name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+      </label>
+      <div className="grid2">
+        <label className="field">
+          <span>Width {unitLabel(units) && `(${unitLabel(units)})`}</span>
+          <input id="room-width" className={pw ? undefined : 'bad'} value={w} onChange={(e) => setW(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Depth {unitLabel(units) && `(${unitLabel(units)})`}</span>
+          <input id="room-depth" className={pd ? undefined : 'bad'} value={d} onChange={(e) => setD(e.target.value)} />
+        </label>
+      </div>
+      <p className="small muted">Inside measurements, wall to wall. It goes to the right of your other rooms; drag its walls to move it.</p>
+      <div className="btn-row">
+        <button type="submit" className="primary" disabled={!ok}>
+          Add room
+        </button>
+        <button type="button" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function Toast() {
+  const toast = useStore((s) => s.toast)
+  return toast ? (
+    <div className="toast" role="status">
+      {toast}
+    </div>
+  ) : null
+}
 
 function useShortcuts() {
   useEffect(() => {
@@ -72,26 +133,18 @@ function Toolbar({ planRef }: { planRef: React.RefObject<SVGSVGElement | null> }
     </button>
   )
 
-  const addRect = () => {
-    const ask = (q: string, def: string) => {
-      const r = window.prompt(q, def)
-      return r == null ? null : parseLength(r, units)
-    }
-    const w = ask(`Room width (${units === 'metric' ? 'cm, or e.g. 3.5m' : `inches, or e.g. 11'6"`})`, units === 'metric' ? '350' : `12'`)
-    if (!w) return
-    const d = ask('Room depth', units === 'metric' ? '300' : `10'`)
-    if (!d) return
-    s.addRect(`Room ${s.doc.rooms.length + 1}`, w, d)
-  }
-
+  const [roomForm, setRoomForm] = useState(false)
   return (
     <header className="toolbar">
       <div className="brand">Apartment designer</div>
       <div className="group">
         {modeBtn('select', 'Select', 'Select and move (Esc)')}
-        <button onClick={addRect} title="Add a rectangular room by typing its size">
-          + Room
-        </button>
+        <span className="popover-anchor">
+          <button className={roomForm ? 'primary' : undefined} onClick={() => setRoomForm(!roomForm)} title="Add a rectangular room by typing its size">
+            + Room
+          </button>
+          {roomForm && <RoomSizeForm onDone={() => setRoomForm(false)} />}
+        </span>
         {modeBtn('draw-room', 'Draw room', 'Click corners; type lengths')}
         {modeBtn('door', 'Door', 'Click a wall to add a door')}
         {modeBtn('window', 'Window', 'Click a wall to add a window')}
@@ -142,22 +195,41 @@ function Toolbar({ planRef }: { planRef: React.RefObject<SVGSVGElement | null> }
         <details className="menu">
           <summary>File</summary>
           <div className="menu-items">
+            {!EMBEDDED && (
+              <>
             <button
               onClick={() => {
                 const svg = planRef.current
-                if (!svg) return alert('Switch to a view with the plan first.')
+                if (!svg) return s.notify('Switch to a view that shows the plan first.')
                 const d = useStore.getState().doc
                 exportPlanPNG(svg, `${d.apartment.name} · ${activeLayout(d).name}`)
               }}
             >
               Export plan as PNG
             </button>
-            <button onClick={() => window.print()}>Print or save as PDF</button>
-            <button onClick={() => downloadJSON(useStore.getState().doc)}>Download project (JSON)</button>
+                <button onClick={() => window.print()}>Print or save as PDF</button>
+                <button onClick={() => downloadJSON(useStore.getState().doc)}>Download project (JSON)</button>
+              </>
+            )}
             <button onClick={() => fileRef.current?.click()}>Open project (JSON)…</button>
             <hr />
-            <button onClick={() => window.confirm('Start a new, empty apartment? You can undo this.') && newEmptyDoc()}>New empty apartment</button>
-            <button onClick={() => window.confirm('Load the sample apartment? You can undo this.') && loadSample()}>Load sample apartment</button>
+            <button
+              onClick={() => {
+                newEmptyDoc()
+                s.notify('Started a new apartment. Press Ctrl+Z to get the previous one back.')
+              }}
+            >
+              New empty apartment
+            </button>
+            <button
+              onClick={() => {
+                loadSample()
+                s.notify('Loaded the sample apartment. Press Ctrl+Z to go back.')
+              }}
+            >
+              Load sample apartment
+            </button>
+            {EMBEDDED && <p className="small muted menu-note">Exporting PNG, PDF and JSON works when you run the app from the repo. Here, your work is saved in this browser.</p>}
           </div>
         </details>
         <input
@@ -173,7 +245,7 @@ function Toolbar({ planRef }: { planRef: React.RefObject<SVGSVGElement | null> }
               if (!d) throw new Error('bad')
               useStore.getState().replaceDoc(d)
             } catch {
-              alert("That file isn't an apartment designer project.")
+              s.notify("That file isn't an apartment designer project.")
             }
             e.target.value = ''
           }}
@@ -259,6 +331,7 @@ export default function App() {
       <aside className="right">
         <Inspector />
         <IssuesPanel />
+        <Toast />
         <section className="panel help small muted">
           <strong>Shortcuts:</strong> drag to move · R / Shift+R rotate 15° · arrows nudge (Shift = 10 cm) · Ctrl+D duplicate · Delete remove · Ctrl+Z undo · Alt while dragging skips snapping · scroll to zoom, drag empty space to pan.
         </section>
