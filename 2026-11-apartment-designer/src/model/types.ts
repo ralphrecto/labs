@@ -98,4 +98,62 @@ export interface Doc {
   items: Item[]
   layouts: Layout[]
   activeLayoutId: string
+  /** Imported 3D scans (Gaussian splats, meshes, point clouds) used as a backdrop. The files live in IndexedDB. */
+  scans?: ScanRef[]
+}
+
+/** Which axis of the scan file points up. Scaniverse and glTF use +Y; some PLY pipelines use -Y or Z. */
+export type UpAxis = 'y' | '-y' | 'z' | '-z'
+
+export type ScanFormat = 'splat' | 'mesh' | 'points'
+
+/**
+ * A tape-measured length on the scan. The two ends are in the scan's own top-down
+ * coordinates (file units, after the up axis is applied), so the scale can change freely.
+ */
+export interface ScanReference {
+  id: string
+  a: Vec2
+  b: Vec2
+  /** The true length in meters. */
+  length: number
+  label?: string
+}
+
+/**
+ * An imported scan and how it sits on the plan.
+ *
+ * A point p in the file is first turned upright (upAxis), giving (ux, uy, uz) with uy up.
+ * Its plan position is (x, y) + scale * rotate(yaw) * (ux, uz), and its height above the
+ * floor is scale * (uy - floor).
+ */
+export interface ScanRef {
+  id: string
+  name: string
+  fileName: string
+  fileSize: number
+  format: ScanFormat
+  upAxis: UpAxis
+  /** Floor height in upright file units. */
+  floor: number
+  /** The floor height the importer found, when the user has nudged `floor` away from it. */
+  floorDetected?: number
+  /** Ceiling height in upright file units, when one was found. */
+  ceiling?: number
+  /** Meters per file unit. 1 until calibrated, since Scaniverse exports are roughly metric. */
+  scale: number
+  /** Rotation on the plan in radians (same sense as SVG rotate: clockwise on screen). */
+  yaw: number
+  x: number
+  y: number
+  references: ScanReference[]
+  visible: boolean
+  /** What the plan shows under the walls. */
+  underlay: 'walls' | 'top' | 'off'
+  opacity: number
+  /** Height band, in meters above the floor, whose points draw the wall outline. */
+  sliceLow: number
+  sliceHigh: number
+  /** Meters above the floor: the top view and the 3D backdrop hide everything above this. */
+  cutHeight: number
 }

@@ -162,3 +162,24 @@ aside { overflow-y: auto; background: var(--bg); padding: 10px; display: flex; f
 }
 .toolbar .popover label.field { flex-direction: column; align-items: stretch; white-space: normal; gap: 2px; }
 .popover input { width: 100%; }
+
+/* Scans */
+.plan.mode-scan-measure, .plan.mode-scan-straighten { cursor: crosshair; }
+.plan.mode-scan-move { cursor: move; }
+.draw-hint-sub { bottom: 58px; }
+.scan-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.scan-status { font-size: 12px; padding: 6px 8px; border-radius: 6px; background: var(--accent-soft); margin: 6px 0; }
+.scan-status.error { background: #fbe9e9; color: var(--error); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { border: none; border-radius: 0; padding: 3px 8px; font-size: 12px; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--accent); color: #fff; }
+.refs li { font-size: 12px; }
+.refs .dev { font-variant-numeric: tabular-nums; }
+.refs .dev.bad { color: var(--warning); font-weight: 600; }
+.range-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.range-row input[type=range] { flex: 1; }
+.range-row span:first-child { color: var(--muted); min-width: 74px; }
+.range-row output { min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.drop-hint { border: 1px dashed var(--border); border-radius: 6px; padding: 8px; text-align: center; }
+.drop-hint.over { border-color: var(--accent); background: var(--accent-soft); }
