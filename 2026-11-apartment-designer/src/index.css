@@ -162,3 +162,48 @@ aside { overflow-y: auto; background: var(--bg); padding: 10px; display: flex; f
 }
 .toolbar .popover label.field { flex-direction: column; align-items: stretch; white-space: normal; gap: 2px; }
 .popover input { width: 100%; }
+
+/* Adding furniture: catalog browser and import dialog */
+.add-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(30, 28, 24, 0.35); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 16px 16px; overflow-y: auto; }
+.modal { background: var(--panel); border-radius: 12px; width: min(520px, 100%); padding: 14px 16px 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); display: flex; flex-direction: column; gap: 10px; max-height: 88vh; }
+.modal.wide { width: min(860px, 100%); }
+.modal header { display: flex; align-items: center; justify-content: space-between; }
+.modal h2 { margin: 0; font-size: 16px; }
+.modal h4 { margin: 12px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.modal p { margin: 4px 0; }
+.modal textarea { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font: inherit; resize: vertical; box-sizing: border-box; }
+.catalog-search input { width: 100%; padding: 7px 10px; font-size: 14px; box-sizing: border-box; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+button.small { font-size: 12px; padding: 2px 8px; }
+.catalog-results { overflow-y: auto; min-height: 200px; }
+.product-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 4px; }
+button.product { width: 100%; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 8px; text-align: left; padding: 6px 8px; }
+button.product .swatch { grid-row: span 2; align-self: center; }
+button.product .product-name { font-weight: 500; }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+button.tab { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 12px; color: var(--muted); }
+button.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.import-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; overflow-y: auto; }
+.import-source, .import-draft { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.import-draft { border-left: 1px solid var(--border); padding-left: 16px; }
+.modal .row { display: flex; gap: 6px; }
+.modal .row input { flex: 1; padding: 6px 8px; }
+.dropzone { border: 2px dashed var(--border); border-radius: var(--radius); min-height: 140px; display: flex; align-items: center; justify-content: center; color: var(--muted); cursor: pointer; text-align: center; padding: 8px; }
+.dropzone.over, .dropzone:hover { border-color: var(--accent); background: var(--accent-soft); }
+.dropzone img { max-height: 160px; max-width: 100%; border-radius: 6px; }
+.note { background: #f6f3ec; border-radius: 6px; padding: 6px 8px; }
+.error { color: var(--error); }
+.draft { display: flex; flex-direction: column; gap: 8px; }
+.draft-head { display: grid; grid-template-columns: 84px 1fr; gap: 10px; align-items: start; }
+.draft-head > div { display: flex; flex-direction: column; gap: 6px; }
+.thumb { width: 84px; height: 84px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+.swatch-lg { display: block; }
+.draft .badge { display: inline-block; margin: 0; }
+.lib-item { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mini-thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 4px; flex: none; }
+.inspector-photo { width: 100%; max-height: 140px; object-fit: contain; border-radius: 6px; background: #f6f3ec; margin-bottom: 6px; }
+@media (max-width: 700px) {
+  .import-body { grid-template-columns: 1fr; }
+  .import-draft { border-left: none; padding-left: 0; border-top: 1px solid var(--border); padding-top: 12px; }
+}

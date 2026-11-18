@@ -67,6 +67,10 @@ export interface Item {
   link?: string
   /** True for items you already own (as opposed to items you're considering buying). */
   owned?: boolean
+  /** Product photo: a small data URL from an uploaded photo, or the retailer's image URL. */
+  imageUrl?: string
+  /** The size was estimated (from a photo or typical sizes) rather than read from a listing. */
+  sizeEstimated?: boolean
 }
 
 export interface Placement {
