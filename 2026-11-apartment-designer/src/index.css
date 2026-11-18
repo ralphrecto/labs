@@ -162,3 +162,19 @@ aside { overflow-y: auto; background: var(--bg); padding: 10px; display: flex; f
 }
 .toolbar .popover label.field { flex-direction: column; align-items: stretch; white-space: normal; gap: 2px; }
 .popover input { width: 100%; }
+
+/* Scan import and review */
+.scan-busy { color: var(--accent); }
+.scan-text { width: 100%; font: 11px ui-monospace, monospace; resize: vertical; box-sizing: border-box; }
+.scan-review { border-color: var(--accent); }
+.scan-objects { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 360px; overflow: auto; }
+.scan-objects li { padding: 3px 4px; border-radius: 6px; }
+.scan-objects li.focused { background: var(--accent-soft); }
+.scan-objects li.rejected select, .scan-objects li.rejected .scan-size { opacity: 0.5; }
+.scan-row { display: flex; align-items: center; gap: 6px; }
+.scan-row select { flex: 1; min-width: 0; font-size: 12px; }
+.scan-size { white-space: nowrap; font-size: 11px; }
+.scan-sub { padding-left: 22px; gap: 8px; }
+.scan-review .field input:not([type='checkbox']), .scan-review .field select { width: 100%; box-sizing: border-box; min-width: 0; }
+.scan-sub .badge { white-space: nowrap; }
+.scan-sub { flex-wrap: wrap; }

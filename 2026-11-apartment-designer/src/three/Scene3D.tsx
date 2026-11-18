@@ -9,6 +9,7 @@ import { snapPlacement } from '../model/snapping'
 import type { Item, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { ItemModel } from './ItemModel'
+import { ScanPoints } from './ScanPoints'
 
 const FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 
@@ -243,6 +244,7 @@ function Scene({ wallMode, eye }: { wallMode: WallMode; eye: [number, number, nu
       {doc.rooms.map((r) => (
         <RoomMesh key={r.id} room={r} wallMode={eye ? 'full' : wallMode} selected={selection?.kind === 'room' && selection.id === r.id} />
       ))}
+      <ScanPoints />
       <group onPointerMove={onMove} onPointerUp={onUp}>
         {placed.map(({ p, item }) => (
           <PlacedItem key={p.id} item={item} p={p} selected={selection?.kind === 'placement' && selection.id === p.id} flag={analysis.flagged.get(p.id)} onGrab={onGrab} />
