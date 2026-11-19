@@ -2,6 +2,7 @@ import { useGLTF } from '@react-three/drei'
 import { Component, Suspense, useMemo, type ReactNode } from 'react'
 import * as THREE from 'three'
 import type { Item } from '../model/types'
+import { Ink, restyle, Surface, useStyle } from './style'
 
 interface BoxSpec {
   size: [number, number, number]
@@ -112,6 +113,8 @@ function parts(item: Item): BoxSpec[] {
   }
 }
 
+const SOFT = new Set(['sofa', 'armchair', 'bed', 'rug', 'ottoman'])
+
 export function ProceduralItem({ item, highlight }: { item: Item; highlight?: string }) {
   const specs = useMemo(() => parts(item), [item])
   return (
@@ -119,12 +122,8 @@ export function ProceduralItem({ item, highlight }: { item: Item; highlight?: st
       {specs.map((s, i) => (
         <mesh key={i} position={s.pos} castShadow receiveShadow>
           <boxGeometry args={s.size} />
-          <meshStandardMaterial
-            color={s.color ?? (s.shade ? shade(item.color, s.shade) : item.color)}
-            roughness={0.85}
-            emissive={highlight ?? '#000000'}
-            emissiveIntensity={highlight ? 0.35 : 0}
-          />
+          <Surface role={SOFT.has(item.category) ? 'soft' : 'item'} color={s.color ?? (s.shade ? shade(item.color, s.shade) : item.color)} highlight={highlight} />
+          <Ink highlight={highlight} />
         </mesh>
       ))}
     </group>
@@ -133,6 +132,7 @@ export function ProceduralItem({ item, highlight }: { item: Item; highlight?: st
 
 function GLBItem({ item }: { item: Item }) {
   const { scene } = useGLTF(item.glbUrl!)
+  const { style } = useStyle()
   const obj = useMemo(() => {
     // Scale the model so its bounding box matches the item's true size; listed dimensions win.
     const clone = scene.clone(true)
@@ -141,10 +141,10 @@ function GLBItem({ item }: { item: Item }) {
     const center = box.getCenter(new THREE.Vector3())
     clone.position.set(-center.x, -box.min.y, -center.z)
     const g = new THREE.Group()
-    g.add(clone)
+    g.add(restyle(clone, style))
     g.scale.set(item.width / (size.x || 1), item.height / (size.y || 1), item.depth / (size.z || 1))
     return g
-  }, [scene, item.width, item.height, item.depth])
+  }, [scene, item.width, item.height, item.depth, style])
   return <primitive object={obj} />
 }
 

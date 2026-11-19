@@ -1,0 +1,52 @@
+/* Rendering style picker ("map layers"). */
+.sty { position: relative; }
+.sty-btn {
+  width: 46px; height: 46px; border-radius: 14px; border: 3px solid var(--g-paper); padding: 0; overflow: hidden; cursor: pointer; position: relative;
+  box-shadow: var(--g-shadow-sm); background: var(--g-paper); transition: transform 0.18s var(--g-ease);
+}
+.sty-btn:hover { transform: translateY(-2px) scale(1.05); }
+.sty-btn:active { transform: scale(0.94); }
+.sty-btn.open { border-color: var(--g-sky); }
+.sty-btn .sty-swatch { width: 100%; height: 100%; display: block; }
+.sty-badge {
+  position: absolute; right: 1px; bottom: 1px; width: 17px; height: 17px; border-radius: 6px; background: var(--g-paper); color: var(--g-ink);
+  display: grid; place-items: center; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.sty-badge svg { width: 12px; height: 12px; }
+
+.sty-pop {
+  position: absolute; right: calc(100% + 10px); top: -6px; display: flex; gap: 8px; padding: 10px; border-radius: 22px; z-index: 40;
+  animation: g-pop 0.22s var(--g-ease); transform-origin: right center;
+}
+.sty-tile {
+  border: none; background: transparent; padding: 0; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 5px;
+  font: 800 12px var(--g-font); color: var(--g-ink-2); animation: sty-in 0.28s var(--g-ease) both;
+}
+.sty-tile-art {
+  width: 62px; height: 62px; border-radius: 16px; overflow: hidden; display: block; border: 3px solid transparent; box-shadow: var(--g-shadow-sm);
+  transition: transform 0.18s var(--g-ease), border-color 0.15s;
+}
+.sty-tile-art .sty-swatch { width: 100%; height: 100%; display: block; }
+.sty-tile:hover:not(:disabled) .sty-tile-art { transform: translateY(-3px) rotate(-2deg); }
+.sty-tile.on .sty-tile-art { border-color: var(--g-sky); }
+.sty-tile.on { color: var(--g-ink); }
+.sty-tile:disabled { opacity: 0.4; cursor: default; }
+@keyframes sty-in { from { opacity: 0; transform: translateX(14px) scale(0.85); } to { opacity: 1; transform: none; } }
+
+.sty-hint {
+  position: absolute; right: calc(100% + 10px); top: 8px; white-space: nowrap; background: var(--g-ink); color: #fff; border-radius: 999px; padding: 7px 14px;
+  font-size: 13px; font-weight: 600; animation: sty-hint 1.8s ease both; pointer-events: none;
+}
+.sty-hint b { font-weight: 900; margin-right: 4px; }
+@keyframes sty-hint { 0% { opacity: 0; transform: translateX(8px); } 12%, 80% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+
+/* Phones: the tiles drop below the button in a scrollable row instead of out to the left. */
+@media (max-width: 640px) {
+  .sty-pop { right: -4px; top: calc(100% + 10px); max-width: calc(100vw - 24px); overflow-x: auto; transform-origin: top right; }
+  .sty-tile-art { width: 54px; height: 54px; }
+  .sty-hint { white-space: normal; width: max-content; max-width: 58vw; }
+}
+
+/* In Look mode the picker sits alone in the top-right corner. */
+.sty-look { position: absolute; right: 16px; top: calc(16px + env(safe-area-inset-top)); z-index: 20; }
+@media (max-width: 640px) { .sty-look { top: calc(74px + env(safe-area-inset-top)); } }

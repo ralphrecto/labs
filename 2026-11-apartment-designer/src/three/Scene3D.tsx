@@ -1,6 +1,6 @@
 import { OrbitControls } from '@react-three/drei'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { lazy, Suspense, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useAnalysis } from '../analysis'
@@ -14,6 +14,9 @@ import { scanCenter, scanCorners, useScanRuntime } from '../scan/runtime'
 // The scan backdrop pulls in the splat renderer, so it loads on first use.
 const ScanBackdrop = lazy(() => import('./ScanBackdrop').then((m) => ({ default: m.ScanBackdrop })))
 import { ScanPoints } from './ScanPoints'
+import { floorTexture, Ink, StyleContext, StyleEnvironment, StyleLights, STYLE_STAGE, Surface, useStyle, woodTexture, type StyleId } from './style'
+import { scanPalette, toonFloor, type ScanPalette } from '../scan/palette'
+import { toScanData } from '../scan/align'
 
 const FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 
@@ -26,6 +29,8 @@ interface WallPieceSpec {
   rotY: number
   y0: number
   y1: number
+  /** Which wall of the room this piece belongs to. */
+  wi: number
   /** Outward normal and a point on the wall's outer face, for cutaway. */
   nx: number
   nz: number
@@ -33,7 +38,7 @@ interface WallPieceSpec {
   oz: number
 }
 
-function WallPiece({ w, mode, color }: { w: WallPieceSpec; mode: WallMode; color: string }) {
+function WallPiece({ w, mode, color, highlight }: { w: WallPieceSpec; mode: WallMode; color: string; highlight?: string }) {
   const ref = useRef<THREE.Mesh>(null)
   useFrame(({ camera }) => {
     const m = ref.current
@@ -59,7 +64,8 @@ function WallPiece({ w, mode, color }: { w: WallPieceSpec; mode: WallMode; color
   return (
     <mesh ref={ref} position={w.pos} rotation={[0, w.rotY, 0]} castShadow receiveShadow>
       <boxGeometry args={w.size} />
-      <meshStandardMaterial color={color} roughness={0.9} />
+      <Surface role="wall" color={color} highlight={highlight} />
+      <Ink highlight={highlight} />
     </mesh>
   )
 }
@@ -87,7 +93,7 @@ function RoomMesh({ room, wallMode, selected }: { room: Room; wallMode: WallMode
         if (s1 - s0 < 1e-4 || y1 - y0 < 1e-4) return
         const mid = add(add(a, scale(dir, (s0 + s1) / 2)), scale(n, -t / 2))
         const outer = add(a, scale(n, -t))
-        out.push({ pos: [mid.x, (y0 + y1) / 2, mid.y], size: [s1 - s0, y1 - y0 + jitter, t], rotY: -angle, y0, y1, nx: -n.x, nz: -n.y, ox: outer.x, oz: outer.y })
+        out.push({ pos: [mid.x, (y0 + y1) / 2, mid.y], size: [s1 - s0, y1 - y0 + jitter, t], rotY: -angle, y0, y1, wi, nx: -n.x, nz: -n.y, ox: outer.x, oz: outer.y })
       }
       // Extend past both ends by the wall thickness so corners are filled.
       const ops = room.openings.filter((o) => o.wall === wi).sort((x, y) => x.offset - y.offset)
@@ -118,22 +124,84 @@ function RoomMesh({ room, wallMode, selected }: { room: Room; wallMode: WallMode
     [room],
   )
 
+  const { style, palette } = useStyle()
+  const floor = useFloorLook(room, floorGeom, style, palette)
+  const wallColors = palette?.walls[room.id]
+  const wallBase = palette?.wallColor[room.id] ?? (style === 'toon' ? '#f6ecdf' : '#f2f0eb')
+  const pick = style === 'toon' || style === 'real'
+  const hl = selected && style !== 'classic' ? '#2f6fde' : undefined
+
   return (
     <group>
-      <mesh geometry={floorGeom} receiveShadow position={[0, 0.001, 0]}>
-        <meshStandardMaterial color={selected ? '#e9e1cf' : '#ddd3bf'} roughness={0.95} />
+      <mesh geometry={floor.geometry} receiveShadow position={[0, 0.001, 0]}>
+        <Surface role="floor" color={floor.color} map={floor.map} highlight={hl} />
+        <Ink />
       </mesh>
       {walls.map((w, i) => (
-        <WallPiece key={i} w={w} mode={wallMode} color={selected ? '#e5ecfa' : '#f2f0eb'} />
+        <WallPiece
+          key={i}
+          w={w}
+          mode={wallMode}
+          highlight={hl}
+          color={style === 'classic' ? (selected ? '#e5ecfa' : '#f2f0eb') : pick ? (wallColors?.[w.wi] ?? wallBase) : '#f2f0eb'}
+        />
       ))}
       {glass.map((g) => (
         <mesh key={g.id} position={g.pos} rotation={[0, g.rotY, 0]}>
           <boxGeometry args={g.size} />
-          <meshStandardMaterial color="#9cc3e6" transparent opacity={0.35} roughness={0.1} />
+          <Surface role="glass" color="#9cc3e6" />
         </mesh>
       ))}
     </group>
   )
+}
+
+/**
+ * What a room's floor looks like in the style: the scanned floor image (posterized for Cartoon),
+ * oak planks for Lifelike without a scan, or a flat color.
+ */
+function useFloorLook(room: Room, base: THREE.BufferGeometry, style: StyleId, palette: ScanPalette | null) {
+  const img = palette?.floor
+  const useScan = !!img && (style === 'toon' || style === 'real')
+  const scanned = useMemo(() => {
+    if (!useScan || !img) return null
+    const look = style === 'toon' ? toonFloor(img) : img
+    const g = base.clone()
+    const pos = g.getAttribute('position')
+    const uv = new Float32Array(pos.count * 2)
+    for (let i = 0; i < pos.count; i++) {
+      uv[i * 2] = (pos.getX(i) - img.x0) / (img.width * img.cell)
+      uv[i * 2 + 1] = (pos.getZ(i) - img.y0) / (img.height * img.cell)
+    }
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+    return { geometry: g, map: floorTexture(look, style === 'toon') }
+  }, [useScan, img, style, base])
+  useEffect(() => () => {
+    scanned?.geometry.dispose()
+    scanned?.map.dispose()
+  }, [scanned])
+  if (scanned) return { geometry: scanned.geometry, map: scanned.map as THREE.Texture | null, color: '#ffffff' }
+  const scannedColor = palette?.floorColor[room.id]
+  if (style === 'real') return { geometry: base, map: scannedColor ? null : woodTexture(), color: scannedColor ?? '#c49a6c' }
+  if (style === 'toon') return { geometry: base, map: null, color: scannedColor ?? '#d9a874' }
+  return { geometry: base, map: null, color: '#ddd3bf' }
+}
+
+/** Colors from the visible scans, for the styles that paint with them. Recomputed when a scan moves. */
+function useScanPalette(style: StyleId): ScanPalette | null {
+  const scans = useStore((s) => s.doc.scans)
+  const rooms = useStore((s) => s.doc.rooms)
+  const entries = useScanRuntime((s) => s.entries)
+  const wants = style === 'toon' || style === 'real'
+  return useMemo(() => {
+    if (!wants) return null
+    const pts = (scans ?? []).flatMap((r) => {
+      const loaded = r.visible ? entries[r.id]?.loaded : undefined
+      return loaded?.points.colors ? [toScanData(r, loaded.points, 400_000).points] : []
+    })
+    if (!pts.length) return null
+    return scanPalette(pts, rooms)
+  }, [wants, scans, rooms, entries])
 }
 
 function PlacedItem({
@@ -164,6 +232,8 @@ function PlacedItem({
 }
 
 function Scene({ wallMode, eye, autoRotate, ground = '#e9e6df' }: { wallMode: WallMode; eye: [number, number, number] | null; autoRotate?: boolean; ground?: string }) {
+  const { style } = useStyle()
+  const stage = STYLE_STAGE[style]
   const doc = useStore((s) => s.doc)
   const selection = useStore((s) => s.selection)
   const snap = useStore((s) => s.snap)
@@ -171,7 +241,11 @@ function Scene({ wallMode, eye, autoRotate, ground = '#e9e6df' }: { wallMode: Wa
   const analysis = useAnalysis(doc, layout)
   const controls = useRef<OrbitControlsImpl>(null)
   const scan3d = useStore((s) => s.scan3d)
-  const scanOnly = scan3d === 'scan-only' && (doc.scans ?? []).some((r) => r.visible)
+  const hasVisibleScan = (doc.scans ?? []).some((r) => r.visible)
+  // The Scan style is the raw scan alone. The painted styles draw the rooms instead, and fall back
+  // to the scan only while there are no rooms yet. The classic editor keeps its own setting.
+  const scanOnly = style === 'classic' ? scan3d === 'scan-only' && hasVisibleScan : style === 'scan' && hasVisibleScan
+  const showScan = style === 'classic' ? scan3d !== 'off' : style === 'scan' || !doc.rooms.length
   const drag = useRef<{ id: string; grab: Vec2; moved: boolean } | null>(null)
 
   const byId = useMemo(() => new Map(doc.items.map((i) => [i.id, i])), [doc.items])
@@ -233,30 +307,21 @@ function Scene({ wallMode, eye, autoRotate, ground = '#e9e6df' }: { wallMode: Wa
 
   return (
     <>
-      <ambientLight intensity={0.8} />
-      <hemisphereLight args={['#ffffff', '#b9a98f', 0.6]} />
-      <directionalLight
-        position={[target.x + 4, 9, target.z + 6]}
-        intensity={1.4}
-        castShadow
-        shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-12}
-        shadow-camera-right={12}
-        shadow-camera-top={12}
-        shadow-camera-bottom={-12}
-      />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[target.x, -0.01, target.z]} receiveShadow onPointerDown={() => useStore.getState().select(null)} visible={!scanOnly}>
+      <StyleLights target={target} />
+      <StyleEnvironment />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[target.x, -0.01, target.z]} receiveShadow onPointerDown={() => useStore.getState().select(null)} visible={!scanOnly && stage.showGround}>
         <planeGeometry args={[200, 200]} />
-        <meshStandardMaterial color={ground} />
+        {style === 'toon' ? <meshToonMaterial color={stage.ground ?? ground} /> : <meshStandardMaterial color={stage.ground ?? ground} roughness={1} />}
       </mesh>
+      {style === 'blueprint' && <gridHelper args={[60, 120, '#7fb0ee', '#3a6fb5']} position={[target.x, -0.005, target.z]} />}
       {!scanOnly &&
         doc.rooms.map((r) => <RoomMesh key={r.id} room={r} wallMode={eye ? 'full' : wallMode} selected={selection?.kind === 'room' && selection.id === r.id} />)}
-      {(doc.scans ?? []).length > 0 && (
+      {(doc.scans ?? []).length > 0 && showScan && (
         <Suspense fallback={null}>
-          <ScanBackdrop eye={!!eye} />
+          <ScanBackdrop eye={!!eye} force={style === 'scan'} />
         </Suspense>
       )}
-      <ScanPoints />
+      {(style === 'classic' || style === 'scan') && <ScanPoints />}
       <group onPointerMove={onMove} onPointerUp={onUp}>
         {placed.map(({ p, item }) => (
           <PlacedItem key={p.id} item={item} p={p} selected={selection?.kind === 'placement' && selection.id === p.id} flag={analysis.flagged.get(p.id)} onGrab={onGrab} />
@@ -314,6 +379,8 @@ export interface SceneControl {
   /** Ground and sky colors. */
   ground?: string
   sky?: string
+  /** Rendering style (map-layer style look). Leave out for the classic editor's plain look. */
+  style?: StyleId
 }
 
 export function Scene3D({ control }: { control?: SceneControl } = {}) {
@@ -323,6 +390,10 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
   const [ownCamKey, setCamKey] = useState(0)
   const [ownEye, setEye] = useState<{ pos: [number, number, number] } | null>(null)
   const wallMode = control?.wallMode ?? ownWallMode
+  const style: StyleId = control?.style ?? 'classic'
+  const palette = useScanPalette(style)
+  const styleEnv = useMemo(() => ({ style, palette }), [style, palette])
+  const stage = STYLE_STAGE[style]
   const eyePos = useMemo(() => {
     const room = doc.rooms[0]
     const scan = (doc.scans ?? []).find((r) => r.visible)
@@ -361,8 +432,10 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
         onPointerMissed={() => useStore.getState().select(null)}
         gl={{ preserveDrawingBuffer: true }}
       >
-        <color attach="background" args={[control?.sky ?? '#f6f4ef']} />
-        <Scene wallMode={wallMode} eye={eye?.pos ?? null} autoRotate={control?.autoRotate && !eye} ground={control?.ground} />
+        <color attach="background" args={[stage.sky ?? control?.sky ?? '#f6f4ef']} />
+        <StyleContext.Provider value={styleEnv}>
+          <Scene wallMode={wallMode} eye={eye?.pos ?? null} autoRotate={control?.autoRotate && !eye} ground={control?.ground} />
+        </StyleContext.Provider>
       </Canvas>
       {!control && (
       <div className="scene-tools">
