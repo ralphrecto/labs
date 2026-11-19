@@ -25,6 +25,12 @@ import { snapDrawPoint, snapPlacement, type SnapGuide } from '../model/snapping'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 import { formatLength, parseLength } from '../model/units'
 import { activeLayout, useStore } from '../store'
+import { planToScan, rotateAbout, scanToPlan, snapAxes, straightenFromLine, svgTransform, underlayAt } from '../scan/align'
+import { scanCenter, scanCorners, underlayOf, useScanRuntime } from '../scan/runtime'
+import type { ScanRef } from '../model/types'
+import { PlanScanLayer } from './ScanPanels'
+import { placementShift } from '../scan/apply'
+import { reviewChoice, useScanUI } from '../scan/scanUi'
 
 const COLORS = {
   paper: '#fbfaf7',
@@ -48,6 +54,7 @@ type Drag =
   | { type: 'room'; roomId: string; last: Vec2 }
   | { type: 'opening'; roomId: string; id: string; grab: number }
   | { type: 'pan'; startScreen: Vec2; startCenter: Vec2 }
+  | { type: 'scan'; id: string; last: Vec2 }
 
 interface ViewState {
   cx: number
@@ -86,6 +93,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
   const cursorRef = useRef<Vec2 | null>(null)
   const [draft, setDraft] = useState<Vec2[]>([])
   const [lengthInput, setLengthInput] = useState('')
+  const [straightenStart, setStraightenStart] = useState<Vec2 | null>(null)
+  useScanRuntime((s) => s.entries) // re-render when scans finish loading
+  const scanDraft = useStore((s) => s.scanDraft)
+  const activeScanId = useStore((s) => s.activeScanId)
+  const scans = doc.scans ?? []
+  const visibleScans = scans.filter((r) => r.visible)
+  const activeScan = scans.find((r) => r.id === activeScanId)
 
   useLayoutEffect(() => {
     const el = wrapRef.current
@@ -96,8 +110,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     return () => ro.disconnect()
   }, [])
 
-  const fit = () => {
-    const pts = doc.rooms.flatMap((r) => r.polygon)
+  const review = useScanUI((s) => (readOnly ? null : s.review))
+  const fit = (focus?: Vec2[]) => {
+    const pts = focus ?? [...doc.rooms.flatMap((r) => r.polygon), ...(doc.scans ?? []).filter((r) => r.visible).flatMap((r) => scanCorners(r) ?? [])]
+    // Include a scan waiting for review, which lands beside the rooms.
+    const rv = useScanUI.getState().review
+    const shift = !focus && rv && !readOnly ? placementShift(doc, rv.estimate, reviewChoice(rv)) : null
+    if (rv && shift) for (const p of rv.estimate.room?.polygon ?? rv.estimate.objects) pts.push(v(p.x + shift.x, p.y + shift.y))
     if (!pts.length) {
       setView({ cx: 3, cy: 2, k: Math.min(size.w / 8, size.h / 6) })
       return
@@ -122,12 +141,33 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     if (fitted.current) fit()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aptId])
+  // Bring a newly imported scan into view.
+  const scanIds = (doc.scans ?? []).map((r) => r.id).join(',')
+  const lastScanIds = useRef(scanIds)
+  const scansReady = useScanRuntime((s) => (doc.scans ?? []).filter((r) => s.entries[r.id]?.status === 'ready').length)
+  useEffect(() => {
+    if (scanIds === lastScanIds.current) return
+    const prev = new Set(lastScanIds.current.split(','))
+    const added = (doc.scans ?? []).find((r) => !prev.has(r.id))
+    const corners = added && scanCorners(added)
+    lastScanIds.current = scanIds
+    if (corners && fitted.current) fit(corners)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanIds, scansReady])
+
+  // Re-fit when a scan review starts or ends, so the scan (or the room it added) is in view.
+  const reviewId = review?.estimate
+  useEffect(() => {
+    if (fitted.current) fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewId])
 
   useEffect(() => {
     if (mode !== 'draw-room') {
       setDraft([])
       setLengthInput('')
     }
+    if (mode !== 'scan-straighten') setStraightenStart(null)
   }, [mode])
 
   const vs = view ?? { cx: 3, cy: 2, k: 80 }
@@ -142,6 +182,40 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
   }
 
   const store = useStore.getState
+
+  /**
+   * Pull a plan point onto walls seen by a visible scan (within ~12 px): onto both walls at a corner,
+   * onto the one wall along a wall. Walls are found along the plan axes, so square the scan up first.
+   */
+  const scanSnap = (p: Vec2, only?: ScanRef): Vec2 | null => {
+    const refs = (only ? [only] : visibleScans).flatMap((ref) => {
+      const img = underlayOf(ref, 'walls')
+      return img ? [{ ref, u: img.underlay }] : []
+    })
+    if (!refs.length) return null
+    const strength = (q: Vec2) => {
+      let m = 0
+      for (const { ref, u } of refs) m = Math.max(m, underlayAt(u, planToScan(ref, q)))
+      return m
+    }
+    const step = Math.max(0.005, Math.min(...refs.map(({ ref, u }) => u.pixel * ref.scale)))
+    const hit = snapAxes(strength, p, Math.min(0.25, Math.max(0.06, 10 * px)), step)
+    if (hit.x == null && hit.y == null) return null
+    return v(hit.x ?? p.x, hit.y ?? p.y)
+  }
+
+  /** Corner placement while tracing: walls from the scan first, then keep walls square to the previous corner. */
+  const traceSnap = (last: Vec2 | null, w: Vec2, free: boolean): Vec2 => {
+    const hit = !free && visibleScans.length ? scanSnap(w) : null
+    if (!hit) return snapDrawPoint(last, w, snap.grid, !free)
+    if (!last) return hit
+    const d = sub(hit, last)
+    // Nearly horizontal or vertical: line it up exactly with the previous corner.
+    if (Math.abs(d.y) < Math.abs(d.x) * Math.tan((3 * Math.PI) / 180)) return v(hit.x, last.y)
+    if (Math.abs(d.x) < Math.abs(d.y) * Math.tan((3 * Math.PI) / 180)) return v(last.x, hit.y)
+    return hit
+  }
+
   const placementsWithItems = useMemo(() => {
     const byId = new Map(doc.items.map((i) => [i.id, i]))
     return layout.placements.flatMap((p) => {
@@ -169,7 +243,28 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     const w = toWorld(e)
     if (mode === 'draw-room') {
       if (draft.length >= 3 && dist(w, draft[0]) < 12 * px) return finishDraft()
-      addDraftPoint(snapDrawPoint(draft[draft.length - 1] ?? null, w, snap.grid, !e.shiftKey))
+      addDraftPoint(traceSnap(draft[draft.length - 1] ?? null, w, e.shiftKey || e.altKey))
+      return
+    }
+    if (mode === 'scan-measure' && activeScan) {
+      const p = (!e.altKey && scanSnap(w, activeScan)) || w
+      const s = store()
+      if (!scanDraft || scanDraft.b || scanDraft.scanId !== activeScan.id) s.setUI({ scanDraft: { scanId: activeScan.id, a: p } })
+      else s.setUI({ scanDraft: { ...scanDraft, b: p } })
+      return
+    }
+    if (mode === 'scan-straighten' && activeScan) {
+      if (!straightenStart) return setStraightenStart(w)
+      if (dist(straightenStart, w) < 0.1) return
+      const mid = scale(add(straightenStart, w), 0.5)
+      store().updateScan(activeScan.id, rotateAbout(activeScan, straightenFromLine(straightenStart, w), mid))
+      setStraightenStart(null)
+      store().setMode('select')
+      store().notify('Scan straightened. Ctrl+Z to undo.')
+      return
+    }
+    if (mode === 'scan-move' && activeScan) {
+      begin({ type: 'scan', id: activeScan.id, last: w }, e)
       return
     }
     if (mode === 'door' || mode === 'window') {
@@ -236,6 +331,12 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
       }
       s.moveRoom(drag.roomId, delta)
       setDrag({ ...drag, last: add(drag.last, delta) })
+    } else if (drag.type === 'scan') {
+      const ref = (doc.scans ?? []).find((r) => r.id === drag.id)
+      if (!ref) return
+      const delta = sub(w, drag.last)
+      s.updateScan(ref.id, { x: ref.x + delta.x, y: ref.y + delta.y })
+      setDrag({ ...drag, last: w })
     } else if (drag.type === 'opening') {
       const room = doc.rooms.find((r) => r.id === drag.roomId)
       const o = room?.openings.find((x) => x.id === drag.id)
@@ -272,12 +373,16 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
   }
   const finishDraft = () => {
     if (draft.length >= 3) {
-      store().addRoom(`Room ${doc.rooms.length + 1}`, draft)
+      const id = store().addRoom(`Room ${doc.rooms.length + 1}`, draft)
+      // Traced over a scan that saw the ceiling: use its height.
+      const c = centroid(draft)
+      const under = visibleScans.find((r) => r.ceiling != null && insideScan(r, c))
+      if (under?.ceiling != null) store().updateRoom(id, { ceilingHeight: Math.round(under.scale * (under.ceiling - under.floor) * 100) / 100 })
       store().setMode('select')
     }
     setDraft([])
   }
-  const draftPreview = draft.length && cursor ? snapDrawPoint(draft[draft.length - 1], cursor, snap.grid, true) : null
+  const draftPreview = draft.length && cursor ? traceSnap(draft[draft.length - 1], cursor, false) : null
   const applyTypedLength = () => {
     const l = parseLength(lengthInput, units)
     if (l == null || l <= 0 || !draft.length) return
@@ -366,10 +471,23 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
       >
         <rect x={vb.x} y={vb.y} width={vb.w} height={vb.h} fill={COLORS.paper} onPointerDown={onBackgroundDown} />
         <g pointerEvents="none">
-          {gridLines.map((l, i) => (
-            <line key={i} {...l} stroke={l.major ? COLORS.gridMajor : COLORS.grid} strokeWidth={px} />
+          {gridLines.map(({ major, ...l }, i) => (
+            <line key={i} {...l} stroke={major ? COLORS.gridMajor : COLORS.grid} strokeWidth={px} />
           ))}
         </g>
+
+        {/* Scan underlays */}
+        {visibleScans.map((ref) => {
+          if (ref.underlay === 'off') return null
+          const img = underlayOf(ref)
+          if (!img) return null
+          const u = img.underlay
+          return (
+            <g key={ref.id} transform={svgTransform(ref)} pointerEvents="none" opacity={ref.opacity}>
+              <image href={img.href} x={u.u0} y={u.v0} width={u.width * u.pixel} height={u.height * u.pixel} preserveAspectRatio="none" style={{ imageRendering: ref.underlay === 'walls' ? 'pixelated' : 'auto' }} />
+            </g>
+          )
+        })}
 
         {/* Rooms: floor, walls, labels */}
         {doc.rooms.map((room) => {
@@ -382,6 +500,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
               <polygon
                 points={room.polygon.map((p) => `${p.x},${p.y}`).join(' ')}
                 fill={COLORS.floor}
+                fillOpacity={visibleScans.some((r) => r.underlay !== 'off') ? 0.35 : 1}
                 onPointerDown={(e) => {
                   if (readOnly) return startPan(e)
                   if (mode !== 'select') return onBackgroundDown(e)
@@ -413,6 +532,9 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
             </g>
           )
         })}
+
+        {/* Scan point clouds, and detections waiting for review */}
+        {!readOnly && <PlanScanLayer px={px} fs={fs} />}
 
         {/* Openings drawn over walls */}
         {doc.rooms.map((room) =>
@@ -661,6 +783,66 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
           </g>
         )}
 
+        {/* Scan reference lengths and the one being drawn */}
+        {scans
+          .filter((r) => r.visible && (r.id === activeScanId || mode === 'scan-measure'))
+          .map((ref) => (
+            <g key={ref.id} pointerEvents="none" fontFamily="system-ui, sans-serif" fontSize={fs * 0.9} fontWeight={600}>
+              {ref.references.map((r) => {
+                const a = scanToPlan(ref, r.a)
+                const b = scanToPlan(ref, r.b)
+                const m = scale(add(a, b), 0.5)
+                const measured = dist(a, b)
+                const off = Math.abs(measured / r.length - 1)
+                const color = off > 0.02 ? COLORS.warning : '#7a3fc2'
+                return (
+                  <g key={r.id}>
+                    <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={color} strokeWidth={2 * px} />
+                    <circle cx={a.x} cy={a.y} r={3.5 * px} fill={color} />
+                    <circle cx={b.x} cy={b.y} r={3.5 * px} fill={color} />
+                    <text x={m.x} y={m.y - 7 * px} textAnchor="middle" fill={color} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
+                      {formatLength(r.length, units)}
+                      {off > 0.005 ? ` (scan ${formatLength(measured, units)})` : ''}
+                    </text>
+                  </g>
+                )
+              })}
+            </g>
+          ))}
+        {scanDraft && (
+          <g pointerEvents="none">
+            {(() => {
+              const b = scanDraft.b ?? (mode === 'scan-measure' && cursor ? ((activeScan && scanSnap(cursor, activeScan)) || cursor) : null)
+              return (
+                <>
+                  {b && <line x1={scanDraft.a.x} y1={scanDraft.a.y} x2={b.x} y2={b.y} stroke="#7a3fc2" strokeWidth={2 * px} strokeDasharray={`${5 * px} ${3 * px}`} />}
+                  <circle cx={scanDraft.a.x} cy={scanDraft.a.y} r={4 * px} fill="#7a3fc2" />
+                  {b && <circle cx={b.x} cy={b.y} r={4 * px} fill="#7a3fc2" />}
+                  {b && (
+                    <text x={(scanDraft.a.x + b.x) / 2} y={(scanDraft.a.y + b.y) / 2 - 7 * px} fontSize={fs * 0.9} textAnchor="middle" fill="#7a3fc2" fontFamily="system-ui, sans-serif" fontWeight={600} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
+                      {formatLength(dist(scanDraft.a, b), units)} on the scan
+                    </text>
+                  )}
+                </>
+              )
+            })()}
+          </g>
+        )}
+        {mode === 'scan-measure' && !scanDraft && cursor && activeScan && (() => {
+          const p = scanSnap(cursor, activeScan)
+          return p ? <circle cx={p.x} cy={p.y} r={4 * px} fill="#7a3fc2" pointerEvents="none" /> : null
+        })()}
+        {mode === 'scan-straighten' && straightenStart && cursor && (
+          <g pointerEvents="none" stroke={COLORS.accent} strokeWidth={2 * px}>
+            <line x1={straightenStart.x} y1={straightenStart.y} x2={cursor.x} y2={cursor.y} strokeDasharray={`${5 * px} ${3 * px}`} />
+            <circle cx={straightenStart.x} cy={straightenStart.y} r={4 * px} fill={COLORS.accent} />
+          </g>
+        )}
+        {mode === 'scan-move' && activeScan && (() => {
+          const c = scanCenter(activeScan)
+          return c ? <circle cx={c.x} cy={c.y} r={6 * px} fill="none" stroke={COLORS.accent} strokeWidth={2 * px} pointerEvents="none" /> : null
+        })()}
+
         {/* Snap guides */}
         <g pointerEvents="none" stroke="#e0457b" strokeWidth={1.2 * px}>
           {guides.map((g, i) => (
@@ -680,7 +862,10 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
                 {formatLength(dist(draft[draft.length - 1], draftPreview), units)}
               </text>
             )}
-            {!draft.length && cursor && <circle cx={snapDrawPoint(null, cursor, snap.grid, false).x} cy={snapDrawPoint(null, cursor, snap.grid, false).y} r={4 * px} fill={COLORS.accent} />}
+            {!draft.length && cursor && (() => {
+              const p = traceSnap(null, cursor, false)
+              return <circle cx={p.x} cy={p.y} r={4 * px} fill={COLORS.accent} />
+            })()}
           </g>
         )}
 
@@ -731,9 +916,18 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
         </div>
       )}
       {!readOnly && (mode === 'door' || mode === 'window') && <div className="draw-hint">Click a wall to add a {mode}. Esc to cancel.</div>}
+      {!readOnly && mode === 'scan-measure' && (
+        <div className="draw-hint">
+          {!scanDraft || scanDraft.b ? 'Click one end of something you measured with a tape (wall to wall works best).' : 'Click the other end.'}
+          <span className="muted"> Points snap to the scan’s walls; hold Alt to place freely. Esc when done.</span>
+        </div>
+      )}
+      {!readOnly && mode === 'scan-straighten' && <div className="draw-hint">{straightenStart ? 'Click further along the same wall.' : 'Click two points along a long, straight wall of the scan.'} Esc to cancel.</div>}
+      {!readOnly && mode === 'scan-move' && <div className="draw-hint">Drag to move the scan. Esc when done.</div>}
+      {!readOnly && mode === 'draw-room' && visibleScans.length > 0 && draft.length === 0 && <div className="draw-hint draw-hint-sub">Corners snap to the scan’s walls. Hold Shift to place freely.</div>}
       {!readOnly && (
         <div className="plan-tools">
-          <button onClick={fit} title="Fit to view">
+          <button onClick={() => fit()} title="Fit to view">
             Fit
           </button>
         </div>
@@ -787,6 +981,15 @@ function ItemGlyph({ category, hw, hd, px }: { category: string; hw: number; hd:
     default:
       return null
   }
+}
+
+/** Whether a plan point is over a scan's footprint. */
+function insideScan(ref: ScanRef, p: Vec2) {
+  const img = underlayOf(ref, 'walls')
+  if (!img) return false
+  const u = img.underlay
+  const q = planToScan(ref, p)
+  return q.x >= u.u0 && q.y >= u.v0 && q.x <= u.u0 + u.width * u.pixel && q.y <= u.v0 + u.height * u.pixel
 }
 
 export type { Doc, Layout }

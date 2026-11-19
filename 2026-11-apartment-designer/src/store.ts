@@ -1,18 +1,20 @@
 import { create } from 'zustand'
 import { catalogEntry, itemFromCatalog, type CatalogEntry } from './model/catalog'
-import { add, dist, norm, scale, sub, v } from './model/geometry'
+import { add, bounds, centroid, closestPointOnSegment, dist, norm, pointInPolygon, scale, sub, v, wallSegments } from './model/geometry'
 import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
-import type { Doc, Item, Layout, Opening, Placement, Room, Units, Vec2 } from './model/types'
+import type { Doc, Item, Layout, Opening, Placement, Room, ScanRef, ScanReference, Units, Vec2 } from './model/types'
+import { calibrate, rescaleAbout } from './scan/align'
 import { loadDoc, saveDoc } from './storage'
 
-export type Mode = 'select' | 'draw-room' | 'door' | 'window'
+export type Mode = 'select' | 'draw-room' | 'door' | 'window' | 'scan-measure' | 'scan-straighten' | 'scan-move'
 export type View = 'split' | 'plan' | '3d' | 'compare'
 
 export type Selection =
   | { kind: 'placement'; id: string }
   | { kind: 'room'; id: string }
   | { kind: 'opening'; roomId: string; id: string }
+  | { kind: 'scan'; id: string }
   | null
 
 interface UIState {
@@ -24,6 +26,12 @@ interface UIState {
   showPath: boolean
   compare: [string, string] | null
   toast: string | null
+  /** The scan that measure / straighten / move modes act on. */
+  activeScanId: string | null
+  /** A reference length being drawn on a scan (plan coordinates), waiting for its true length. */
+  scanDraft: { scanId: string; a: Vec2; b?: Vec2 } | null
+  /** 3D view: how to show scans. */
+  scan3d: 'off' | 'with-model' | 'scan-only'
 }
 
 interface State extends UIState {
@@ -66,6 +74,8 @@ interface State extends UIState {
   deleteOpening: (roomId: string, id: string) => void
 
   addItemFromCatalog: (entry: CatalogEntry, at?: Vec2) => void
+  /** Add a new item to the library and place it in the active layout. */
+  addItem: (item: Item, at?: Vec2) => void
   placeItem: (itemId: string, at?: Vec2) => void
   updateItem: (id: string, patch: Partial<Item>) => void
   deleteItem: (id: string) => void
@@ -79,6 +89,14 @@ interface State extends UIState {
   renameLayout: (id: string, name: string) => void
   deleteLayout: (id: string) => void
   setActiveLayout: (id: string) => void
+
+  addScan: (ref: ScanRef) => void
+  updateScan: (id: string, patch: Partial<ScanRef>) => void
+  deleteScan: (id: string) => void
+  /** Add or remove a reference length and recalibrate the scale, keeping `anchor` fixed on the plan. */
+  addScanReference: (id: string, r: Omit<ScanReference, 'id'>, anchor: Vec2) => void
+  updateScanReference: (id: string, refId: string, patch: Partial<ScanReference>, anchor: Vec2) => void
+  deleteScanReference: (id: string, refId: string, anchor: Vec2) => void
 }
 
 const HISTORY_LIMIT = 200
@@ -89,13 +107,42 @@ export const activeLayout = (d: Doc): Layout => d.layouts.find((l) => l.id === d
 const mapRoom = (d: Doc, id: string, fn: (r: Room) => Room): Doc => ({ ...d, rooms: d.rooms.map((r) => (r.id === id ? fn(r) : r)) })
 const mapLayout = (d: Doc, fn: (l: Layout) => Layout): Doc => ({ ...d, layouts: d.layouts.map((l) => (l.id === d.activeLayoutId ? fn(l) : l)) })
 
-/** Center of the rooms' bounding box, as a default drop point. */
-function defaultDrop(d: Doc): Vec2 {
+/**
+ * Where a new piece lands when it isn't dropped somewhere specific: the open spot inside a room
+ * that is farthest from the furniture already there (rooms in order, so the first room fills first).
+ */
+export function defaultDrop(d: Doc, item?: Pick<Item, 'width' | 'depth'>): Vec2 {
   if (!d.rooms.length) return v(1, 1)
-  const pts = d.rooms[0].polygon
-  const sx = pts.reduce((a, p) => a + p.x, 0) / pts.length
-  const sy = pts.reduce((a, p) => a + p.y, 0) / pts.length
-  return v(sx, sy)
+  const layout = activeLayout(d)
+  const byId = new Map(d.items.map((i) => [i.id, i]))
+  const others = layout.placements.flatMap((p) => {
+    const it = byId.get(p.itemId)
+    return it && !it.floorLevel ? [{ c: v(p.x, p.y), r: Math.hypot(it.width, it.depth) / 2 }] : []
+  })
+  const r0 = item ? Math.hypot(item.width, item.depth) / 2 : 0.4
+  let best: Vec2 | null = null
+  let bestScore = -Infinity
+  d.rooms.forEach((room, ri) => {
+    const b = bounds(room.polygon)
+    const step = 0.25
+    for (let x = b.minX + step; x < b.maxX; x += step)
+      for (let y = b.minY + step; y < b.maxY; y += step) {
+        const p = v(x, y)
+        if (!pointInPolygon(p, room.polygon)) continue
+        // Keep the whole piece inside the room.
+        const wall = Math.min(...wallSegments(room).map(([a, c]) => closestPointOnSegment(p, a, c).distance))
+        if (wall < Math.min(item ? Math.min(item.width, item.depth) / 2 : 0.3, 0.6)) continue
+        const gap = others.length ? Math.min(...others.map((o) => dist(o.c, p) - o.r - r0)) : 3
+        const center = centroid(room.polygon)
+        // Enough room beats more room; then prefer earlier rooms and spots near the middle.
+        const score = Math.min(gap, 0.6) * 10 - ri * 2 - dist(p, center) * 0.3
+        if (score > bestScore) {
+          bestScore = score
+          best = p
+        }
+      }
+  })
+  return best ?? centroid(d.rooms[0].polygon)
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -112,6 +159,9 @@ export const useStore = create<State>((set, get) => ({
   showPath: true,
   compare: null,
   toast: null,
+  activeScanId: null,
+  scanDraft: null,
+  scan3d: 'with-model',
 
   update: (fn) =>
     set((s) => {
@@ -142,7 +192,7 @@ export const useStore = create<State>((set, get) => ({
       return { doc: next, past: [...s.past, s.doc], future: s.future.slice(1), selection: validSelection(next, s.selection) }
     }),
 
-  setMode: (mode) => set({ mode }),
+  setMode: (mode) => set({ mode, scanDraft: null }),
   setView: (view) => set({ view }),
   select: (selection) => set({ selection }),
   setSnap: (p) => set((s) => ({ snap: { ...s.snap, ...p } })),
@@ -243,11 +293,11 @@ export const useStore = create<State>((set, get) => ({
     set({ selection: null })
   },
 
-  addItemFromCatalog: (entry, at) => {
-    const item = itemFromCatalog(entry, uid())
+  addItemFromCatalog: (entry, at) => get().addItem(itemFromCatalog(entry, uid()), at),
+  addItem: (item, at) => {
     const pid = uid()
     get().update((d) => {
-      const p = at ?? defaultDrop(d)
+      const p = at ?? defaultDrop(d, item)
       return mapLayout({ ...d, items: [...d.items, item] }, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: item.id, x: p.x, y: p.y, rotation: 0 }] }))
     })
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
@@ -255,7 +305,7 @@ export const useStore = create<State>((set, get) => ({
   placeItem: (itemId, at) => {
     const pid = uid()
     get().update((d) => {
-      const p = at ?? defaultDrop(d)
+      const p = at ?? defaultDrop(d, d.items.find((i) => i.id === itemId))
       return mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId, x: p.x, y: p.y, rotation: 0 }] }))
     })
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
@@ -325,12 +375,36 @@ export const useStore = create<State>((set, get) => ({
     get().update((d) => ({ ...d, activeLayoutId: id }))
     set({ selection: null })
   },
+
+  addScan: (ref) => {
+    get().update((d) => ({ ...d, scans: [...(d.scans ?? []), ref] }))
+    set({ selection: { kind: 'scan', id: ref.id }, activeScanId: ref.id })
+  },
+  updateScan: (id, patch) => get().update((d) => mapScan(d, id, (r) => ({ ...r, ...patch }))),
+  deleteScan: (id) => {
+    get().update((d) => ({ ...d, scans: (d.scans ?? []).filter((r) => r.id !== id) }))
+    set((s) => ({ selection: null, activeScanId: s.activeScanId === id ? null : s.activeScanId, mode: s.mode.startsWith('scan-') ? 'select' : s.mode }))
+  },
+  addScanReference: (id, r, anchor) => get().update((d) => mapScan(d, id, (s) => recalibrated(s, [...s.references, { ...r, id: uid() }], anchor))),
+  updateScanReference: (id, refId, patch, anchor) =>
+    get().update((d) => mapScan(d, id, (s) => recalibrated(s, s.references.map((r) => (r.id === refId ? { ...r, ...patch } : r)), anchor))),
+  deleteScanReference: (id, refId, anchor) => get().update((d) => mapScan(d, id, (s) => recalibrated(s, s.references.filter((r) => r.id !== refId), anchor))),
 }))
+
+const mapScan = (d: Doc, id: string, fn: (r: ScanRef) => ScanRef): Doc => ({ ...d, scans: (d.scans ?? []).map((r) => (r.id === id ? fn(r) : r)) })
+
+/** New references → new scale (the median of what they imply). With none left, the scale stays. */
+function recalibrated(s: ScanRef, references: ScanReference[], anchor: Vec2): ScanRef {
+  const c = calibrate(references)
+  if (!c) return { ...s, references }
+  return { ...s, references, ...rescaleAbout(s, c.scale, anchor) }
+}
 
 function validSelection(d: Doc, s: Selection): Selection {
   if (!s) return s
   if (s.kind === 'placement') return activeLayout(d).placements.some((p) => p.id === s.id) ? s : null
   if (s.kind === 'room') return d.rooms.some((r) => r.id === s.id) ? s : null
+  if (s.kind === 'scan') return (d.scans ?? []).some((r) => r.id === s.id) ? s : null
   return d.rooms.some((r) => r.id === s.roomId && r.openings.some((o) => o.id === s.id)) ? s : null
 }
 

@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAnalysis } from './analysis'
 import { CatalogPanel, Inspector, IssuesPanel, LayoutsPanel, LibraryPanel } from './components/Panels'
+import { ScansPanel } from './components/ScanImport'
+import { ensureScanLoaded } from './scan/runtime'
+import { pruneScanFiles } from './scan/fileStore'
 import { PlanView } from './components/PlanView'
+import { ScanImportPanel, ScanReviewPanel } from './components/ScanPanels'
+import { useScanUI } from './scan/scanUi'
 import { exportPlanPNG } from './exporting'
 import { Scene3D } from './three/Scene3D'
 import { activeLayout, loadSample, newEmptyDoc, useStore, type Mode, type View } from './store'
@@ -11,7 +16,7 @@ import { parseLength, unitLabel } from './model/units'
 /** Set when built for an embedded preview where printing and downloads are unavailable. */
 const EMBEDDED = import.meta.env.VITE_EMBED === '1'
 
-function RoomSizeForm({ onDone }: { onDone: () => void }) {
+export function RoomSizeForm({ onDone }: { onDone: () => void }) {
   const units = useStore((s) => s.doc.apartment.units)
   const [name, setName] = useState(`Room ${useStore.getState().doc.rooms.length + 1}`)
   const [w, setW] = useState(units === 'metric' ? '350' : `12'`)
@@ -60,7 +65,7 @@ function RoomSizeForm({ onDone }: { onDone: () => void }) {
   )
 }
 
-function Toast() {
+export function Toast() {
   const toast = useStore((s) => s.toast)
   return toast ? (
     <div className="toast" role="status">
@@ -69,7 +74,7 @@ function Toast() {
   ) : null
 }
 
-function useShortcuts() {
+export function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
@@ -108,6 +113,18 @@ function useShortcuts() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+}
+
+/** Show or hide scan point clouds under the plan and in 3D (only when there is a scan). */
+function ScanToggle() {
+  const hasScan = useStore((s) => s.doc.rooms.some((r) => r.scan))
+  const show = useScanUI((s) => s.showUnderlay)
+  if (!hasScan) return null
+  return (
+    <label title="Show the scan's points under the plan and in 3D">
+      <input type="checkbox" checked={show} onChange={(e) => useScanUI.getState().setShowUnderlay(e.target.checked)} /> Scan
+    </label>
+  )
 }
 
 function Toolbar({ planRef }: { planRef: React.RefObject<SVGSVGElement | null> }) {
@@ -186,6 +203,7 @@ function Toolbar({ planRef }: { planRef: React.RefObject<SVGSVGElement | null> }
         <label>
           <input type="checkbox" checked={showPath} onChange={(e) => s.setUI({ showPath: e.target.checked })} /> Paths
         </label>
+        <ScanToggle />
         <select value={units} onChange={(e) => s.setUnits(e.target.value as 'metric' | 'imperial')} title="Display units">
           <option value="metric">cm / m</option>
           <option value="imperial">ft / in</option>
@@ -297,8 +315,20 @@ function CompareSummary({ layoutId }: { layoutId: string }) {
   return <span className={`badge ${n ? 'warning' : 'ok'}`}>{n ? `${n} issue${n > 1 ? 's' : ''}` : 'All clear'}</span>
 }
 
+/** Load the files behind the document's scans, and clean up files no scan uses any more. */
+export function useScanFiles() {
+  const scans = useStore((s) => s.doc.scans)
+  useEffect(() => {
+    for (const r of scans ?? []) void ensureScanLoaded(r)
+  }, [scans])
+  useEffect(() => {
+    void pruneScanFiles((useStore.getState().doc.scans ?? []).map((r) => r.id))
+  }, [])
+}
+
 export default function App() {
   useShortcuts()
+  useScanFiles()
   const view = useStore((s) => s.view)
   const layoutName = useStore((s) => activeLayout(s.doc).name)
   const planRef = useRef<SVGSVGElement>(null)
@@ -307,8 +337,10 @@ export default function App() {
       <Toolbar planRef={planRef} />
       <aside className="left">
         <LayoutsPanel />
+        <ScansPanel />
         <CatalogPanel />
         <LibraryPanel />
+        <ScanImportPanel />
       </aside>
       <main className={`main view-${view}`}>
         {view === 'compare' ? (
@@ -329,6 +361,7 @@ export default function App() {
         )}
       </main>
       <aside className="right">
+        <ScanReviewPanel />
         <Inspector />
         <IssuesPanel />
         <Toast />

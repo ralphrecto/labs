@@ -9,15 +9,20 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "build:single": "tsc -b && VITE_EMBED=1 vite build && node scripts/inline.mjs"
+    "build:single": "tsc -b && VITE_EMBED=1 vite build && node scripts/inline.mjs",
+    "server": "node --disable-warning=ExperimentalWarning server/index.ts",
+    "start": "npm run build && npm run server"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",
+    "@sparkjsdev/spark": "^2.4.0",
     "nanoid": "^6.0.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "three": "^0.187.0",
+    "zod": "^4.6.7",
     "zundo": "^2.3.0",
     "zustand": "^5.1.0"
   },

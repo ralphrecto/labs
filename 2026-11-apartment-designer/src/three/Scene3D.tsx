@@ -1,6 +1,6 @@
 import { OrbitControls } from '@react-three/drei'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useAnalysis } from '../analysis'
@@ -9,6 +9,11 @@ import { snapPlacement } from '../model/snapping'
 import type { Item, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { ItemModel } from './ItemModel'
+import { scanCenter, scanCorners, useScanRuntime } from '../scan/runtime'
+
+// The scan backdrop pulls in the splat renderer, so it loads on first use.
+const ScanBackdrop = lazy(() => import('./ScanBackdrop').then((m) => ({ default: m.ScanBackdrop })))
+import { ScanPoints } from './ScanPoints'
 
 const FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 
@@ -158,13 +163,15 @@ function PlacedItem({
   )
 }
 
-function Scene({ wallMode, eye }: { wallMode: WallMode; eye: [number, number, number] | null }) {
+function Scene({ wallMode, eye, autoRotate, ground = '#e9e6df' }: { wallMode: WallMode; eye: [number, number, number] | null; autoRotate?: boolean; ground?: string }) {
   const doc = useStore((s) => s.doc)
   const selection = useStore((s) => s.selection)
   const snap = useStore((s) => s.snap)
   const layout = activeLayout(doc)
   const analysis = useAnalysis(doc, layout)
   const controls = useRef<OrbitControlsImpl>(null)
+  const scan3d = useStore((s) => s.scan3d)
+  const scanOnly = scan3d === 'scan-only' && (doc.scans ?? []).some((r) => r.visible)
   const drag = useRef<{ id: string; grab: Vec2; moved: boolean } | null>(null)
 
   const byId = useMemo(() => new Map(doc.items.map((i) => [i.id, i])), [doc.items])
@@ -215,12 +222,14 @@ function Scene({ wallMode, eye }: { wallMode: WallMode; eye: [number, number, nu
     if (controls.current) controls.current.enabled = true
   }
 
+  const entries = useScanRuntime((s) => s.entries)
   const target = useMemo(() => {
-    const pts = doc.rooms.flatMap((r) => r.polygon)
+    const pts = sceneFootprint(doc)
     if (!pts.length) return new THREE.Vector3(0, 0, 0)
     const b = bounds(pts)
     return new THREE.Vector3((b.minX + b.maxX) / 2, 0, (b.minY + b.maxY) / 2)
-  }, [doc.rooms])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.rooms, doc.scans, entries])
 
   return (
     <>
@@ -236,23 +245,28 @@ function Scene({ wallMode, eye }: { wallMode: WallMode; eye: [number, number, nu
         shadow-camera-top={12}
         shadow-camera-bottom={-12}
       />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[target.x, -0.01, target.z]} receiveShadow onPointerDown={() => useStore.getState().select(null)}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[target.x, -0.01, target.z]} receiveShadow onPointerDown={() => useStore.getState().select(null)} visible={!scanOnly}>
         <planeGeometry args={[200, 200]} />
-        <meshStandardMaterial color="#e9e6df" />
+        <meshStandardMaterial color={ground} />
       </mesh>
-      {doc.rooms.map((r) => (
-        <RoomMesh key={r.id} room={r} wallMode={eye ? 'full' : wallMode} selected={selection?.kind === 'room' && selection.id === r.id} />
-      ))}
+      {!scanOnly &&
+        doc.rooms.map((r) => <RoomMesh key={r.id} room={r} wallMode={eye ? 'full' : wallMode} selected={selection?.kind === 'room' && selection.id === r.id} />)}
+      {(doc.scans ?? []).length > 0 && (
+        <Suspense fallback={null}>
+          <ScanBackdrop eye={!!eye} />
+        </Suspense>
+      )}
+      <ScanPoints />
       <group onPointerMove={onMove} onPointerUp={onUp}>
         {placed.map(({ p, item }) => (
           <PlacedItem key={p.id} item={item} p={p} selected={selection?.kind === 'placement' && selection.id === p.id} flag={analysis.flagged.get(p.id)} onGrab={onGrab} />
         ))}
       </group>
-      {!eye && <FitCamera target={target} />}
+      {!eye && <FitCamera key={(doc.scans ?? []).length} target={target} />}
       {eye ? (
         <OrbitControls ref={controls} makeDefault target={[eye[0], eye[1], eye[2] - 0.01]} enableZoom={false} enablePan={false} rotateSpeed={-0.4} />
       ) : (
-        <OrbitControls ref={controls} target={target} makeDefault maxPolarAngle={Math.PI / 2 - 0.02} minDistance={0.3} maxDistance={60} />
+        <OrbitControls ref={controls} target={target} makeDefault maxPolarAngle={Math.PI / 2 - 0.02} minDistance={0.3} maxDistance={60} autoRotate={autoRotate} autoRotateSpeed={0.6} />
       )}
     </>
   )
@@ -262,12 +276,12 @@ function Scene({ wallMode, eye }: { wallMode: WallMode; eye: [number, number, nu
 function FitCamera({ target }: { target: THREE.Vector3 }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
-  const rooms = useStore((s) => s.doc.rooms)
+  const doc = useStore((s) => s.doc)
   const done = useRef(false)
   useLayoutEffect(() => {
     if (done.current || size.width < 10) return
     done.current = true
-    const pts = rooms.flatMap((r) => r.polygon)
+    const pts = sceneFootprint(doc)
     if (!pts.length) return
     const b = bounds(pts)
     const radius = Math.hypot(b.maxX - b.minX, b.maxY - b.minY) / 2 + 0.3
@@ -277,18 +291,50 @@ function FitCamera({ target }: { target: THREE.Vector3 }) {
     const dir = new THREE.Vector3(0.15, 1.0, 0.75).normalize()
     camera.position.copy(target).addScaledVector(dir, d)
     camera.lookAt(target)
-  }, [camera, size, rooms, target])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera, size, target])
   return null
 }
 
-export function Scene3D() {
+/** Plan points the 3D view should frame: room corners plus the footprints of visible scans. */
+function sceneFootprint(doc: ReturnType<typeof useStore.getState>['doc']): Vec2[] {
+  const pts = doc.rooms.flatMap((r) => r.polygon)
+  for (const r of doc.scans ?? []) if (r.visible) pts.push(...(scanCorners(r) ?? []))
+  return pts
+}
+
+/** Camera and wall settings driven from outside (the game HUD), replacing the built-in tool strip. */
+export interface SceneControl {
+  /** Stand at eye level in the middle of the first room. */
+  eye: boolean
+  /** Bump to reset the camera to the overview. */
+  resetKey: number
+  autoRotate: boolean
+  wallMode: WallMode
+  /** Ground and sky colors. */
+  ground?: string
+  sky?: string
+}
+
+export function Scene3D({ control }: { control?: SceneControl } = {}) {
   const doc = useStore((s) => s.doc)
-  const [wallMode, setWallMode] = useState<WallMode>('auto')
-  const [camKey, setCamKey] = useState(0)
-  const [eye, setEye] = useState<{ pos: [number, number, number] } | null>(null)
+  const scan3d = useStore((s) => s.scan3d)
+  const [ownWallMode, setWallMode] = useState<WallMode>('auto')
+  const [ownCamKey, setCamKey] = useState(0)
+  const [ownEye, setEye] = useState<{ pos: [number, number, number] } | null>(null)
+  const wallMode = control?.wallMode ?? ownWallMode
+  const eyePos = useMemo(() => {
+    const room = doc.rooms[0]
+    const scan = (doc.scans ?? []).find((r) => r.visible)
+    const c = room ? centroid(room.polygon) : scan ? scanCenter(scan) : null
+    return c ? { pos: [c.x, 1.6, c.y] as [number, number, number] } : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [control?.eye, control?.resetKey, doc.apartment.id])
+  const eye = control ? (control.eye ? eyePos : null) : ownEye
+  const camKey = control ? `${control.resetKey}:${control.eye}` : ownCamKey
 
   const initial = useMemo(() => {
-    const pts = doc.rooms.flatMap((r) => r.polygon)
+    const pts = sceneFootprint(doc)
     if (!pts.length) return [6, 8, 10] as [number, number, number]
     const b = bounds(pts)
     const size = Math.max(b.maxX - b.minX, b.maxY - b.minY)
@@ -298,8 +344,9 @@ export function Scene3D() {
 
   const eyeLevel = () => {
     const room = doc.rooms[0]
-    if (!room) return
-    const c = centroid(room.polygon)
+    const scan = (doc.scans ?? []).find((r) => r.visible)
+    const c = room ? centroid(room.polygon) : scan ? scanCenter(scan) : null
+    if (!c) return
     setEye({ pos: [c.x, 1.6, c.y] })
     setCamKey((k) => k + 1)
   }
@@ -314,9 +361,10 @@ export function Scene3D() {
         onPointerMissed={() => useStore.getState().select(null)}
         gl={{ preserveDrawingBuffer: true }}
       >
-        <color attach="background" args={['#f6f4ef']} />
-        <Scene wallMode={wallMode} eye={eye?.pos ?? null} />
+        <color attach="background" args={[control?.sky ?? '#f6f4ef']} />
+        <Scene wallMode={wallMode} eye={eye?.pos ?? null} autoRotate={control?.autoRotate && !eye} ground={control?.ground} />
       </Canvas>
+      {!control && (
       <div className="scene-tools">
         <button
           onClick={() => {
@@ -327,6 +375,16 @@ export function Scene3D() {
           Overview
         </button>
         <button onClick={eyeLevel}>Eye level</button>
+        {(doc.scans ?? []).length > 0 && (
+          <label title="How to show imported scans">
+            Scan
+            <select value={scan3d} onChange={(e) => useStore.getState().setUI({ scan3d: e.target.value as 'off' | 'with-model' | 'scan-only' })}>
+              <option value="with-model">With model</option>
+              <option value="scan-only">Scan only</option>
+              <option value="off">Hidden</option>
+            </select>
+          </label>
+        )}
         <label title="Walls between you and the room are cut down so you can see in">
           Walls
           <select value={wallMode} onChange={(e) => setWallMode(e.target.value as WallMode)}>
@@ -336,6 +394,7 @@ export function Scene3D() {
           </select>
         </label>
       </div>
+      )}
     </div>
   )
 }

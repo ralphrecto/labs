@@ -1,5 +1,5 @@
 import { useGLTF } from '@react-three/drei'
-import { Suspense, useMemo } from 'react'
+import { Component, Suspense, useMemo, type ReactNode } from 'react'
 import * as THREE from 'three'
 import type { Item } from '../model/types'
 
@@ -54,10 +54,14 @@ function parts(item: Item): BoxSpec[] {
       ]
     }
     case 'coffee-table':
+    case 'side-table':
+    case 'console-table':
+    case 'bench':
     case 'dining-table':
     case 'desk':
       return [{ size: [w, 0.04, d], pos: [0, h - 0.02, 0] }, ...legs(h - 0.04)]
     case 'nightstand':
+    case 'sideboard':
     case 'dresser':
     case 'tv-stand':
     case 'wardrobe':
@@ -85,6 +89,11 @@ function parts(item: Item): BoxSpec[] {
       for (let i = 0; i <= shelves; i++) out.push({ size: [w, 0.02, d], pos: [0, Math.min(h - 0.01, (i * h) / shelves + 0.01), 0] })
       return out
     }
+    case 'ottoman':
+      return [
+        { size: [w, h - 0.06, d], pos: [0, (h - 0.06) / 2 + 0.06, 0] },
+        { size: [w - 0.08, 0.06, d - 0.08], pos: [0, 0.03, 0], shade: 0.5 },
+      ]
     case 'rug':
       return [{ size: [w, Math.max(0.005, h), d], pos: [0, Math.max(0.005, h) / 2, 0] }]
     case 'floor-lamp':
@@ -139,12 +148,30 @@ function GLBItem({ item }: { item: Item }) {
   return <primitive object={obj} />
 }
 
+/** A model URL that fails to load (404, blocked by the store, not a GLB) falls back to the box look. */
+class ModelBoundary extends Component<{ fallback: ReactNode; url: string; children: ReactNode }, { failed: string | null }> {
+  state = { failed: null as string | null }
+  static getDerivedStateFromError() {
+    return { failed: 'yes' }
+  }
+  componentDidCatch(e: unknown) {
+    console.warn(`Couldn't load 3D model ${this.props.url}; showing a box instead.`, e)
+  }
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children
+  }
+}
+
 export function ItemModel({ item, highlight }: { item: Item; highlight?: string }) {
-  if (item.glbUrl)
+  if (item.glbUrl) {
+    const fallback = <ProceduralItem item={item} highlight={highlight} />
     return (
-      <Suspense fallback={<ProceduralItem item={item} highlight={highlight} />}>
-        <GLBItem item={item} />
-      </Suspense>
+      <ModelBoundary key={item.glbUrl} fallback={fallback} url={item.glbUrl}>
+        <Suspense fallback={fallback}>
+          <GLBItem item={item} />
+        </Suspense>
+      </ModelBoundary>
     )
+  }
   return <ProceduralItem item={item} highlight={highlight} />
 }
