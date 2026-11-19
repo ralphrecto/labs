@@ -83,12 +83,12 @@ function setClip(gl: THREE.WebGLRenderer, object: THREE.Object3D, cut: number | 
 }
 
 /** Imported scans in the 3D view, positioned and scaled exactly like their plan underlay. */
-export function ScanBackdrop({ eye }: { eye: boolean }) {
+export function ScanBackdrop({ eye, force }: { eye: boolean; force?: boolean }) {
   const scans = useStore((s) => s.doc.scans)
   const show = useStore((s) => s.scan3d)
   const entries = useScanRuntime((s) => s.entries)
   const visible = (scans ?? []).filter((r) => r.visible)
-  if (show === 'off' || !visible.length) return null
+  if ((show === 'off' && !force) || !visible.length) return null
   const hasSplat = visible.some((r) => entries[r.id]?.loaded?.render.kind === 'splat')
   // From above, cut the ceiling away; at eye level, show the whole room.
   const cutOf = (r: ScanRef) => (eye ? null : r.cutHeight)

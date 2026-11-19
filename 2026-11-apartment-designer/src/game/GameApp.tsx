@@ -20,6 +20,7 @@ import { GoalsSheet, VibeMeter } from './Goals'
 import { useGame, type GameMode } from './gameStore'
 import * as I from './icons'
 import { Onboarding } from './Onboarding'
+import { StylePicker } from './StylePicker'
 import './theme.css'
 import './hud.css'
 import './goals.css'
@@ -71,6 +72,7 @@ function GameApp() {
         <>
           {mode !== 'look' && <TopBar />}
           {mode === 'look' && <LookControls />}
+          {mode === 'look' && <StylePicker className="sty-look" />}
           <CameraControls />
           {showDrawer && <BuyDrawer />}
           {mode === 'build' && !selection && !review && !tool && <BuildTray />}
@@ -139,9 +141,10 @@ function Stage() {
   const phase = useGame((s) => s.phase)
   const mode = useGame((s) => s.mode)
   const cam = useCam()
+  const style = useGame((s) => s.renderStyle)
   const control = useMemo(
-    () => ({ ...cam, ground: GROUND, sky: SKY, autoRotate: mode === 'look' && cam.autoRotate, eye: mode === 'look' && cam.eye }),
-    [cam, mode],
+    () => ({ ...cam, ground: GROUND, sky: SKY, style, autoRotate: mode === 'look' && cam.autoRotate, eye: mode === 'look' && cam.eye }),
+    [cam, mode, style],
   )
   return (
     <div
@@ -255,6 +258,7 @@ function CameraControls() {
           <I.IconHome />
         </button>
       )}
+      {view === '3d' && <StylePicker />}
     </div>
   )
 }

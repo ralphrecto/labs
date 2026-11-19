@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { RenderStyle } from '../three/style'
 
 // Game-level UI state: which phase the player is in and which mode the HUD shows.
 // Document edits still go through `useStore` (src/store.ts); this store never touches the doc.
@@ -24,6 +25,8 @@ interface GameState {
   advanced: boolean
   /** Player chose the old all-panels editor from settings. */
   classic: boolean
+  /** How the 3D view is drawn (Cartoon, Lifelike, Scan, Clay, Blueprint), switched like map layers. */
+  renderStyle: RenderStyle
 
   setPhase: (p: Phase) => void
   setMode: (m: GameMode) => void
@@ -32,10 +35,22 @@ interface GameState {
   setBuyTab: (t: string) => void
   setAdvanced: (a: boolean) => void
   setClassic: (c: boolean) => void
+  setRenderStyle: (s: RenderStyle) => void
 }
 
 const ONBOARDED_KEY = 'apartment-designer:onboarded'
 const CLASSIC_KEY = 'apartment-designer:classic'
+const STYLE_KEY = 'apartment-designer:render-style'
+const STYLE_IDS: RenderStyle[] = ['toon', 'real', 'scan', 'clay', 'blueprint']
+
+function readStyle(): RenderStyle {
+  try {
+    const v = localStorage.getItem(STYLE_KEY) as RenderStyle | null
+    return v && STYLE_IDS.includes(v) ? v : 'toon'
+  } catch {
+    return 'toon'
+  }
+}
 
 function readOnboarded(): boolean {
   try {
@@ -61,6 +76,7 @@ export const useGame = create<GameState>((set) => ({
   sheet: null,
   buyTab: 'living',
   advanced: false,
+  renderStyle: readStyle(),
   classic: (() => {
     try {
       return localStorage.getItem(CLASSIC_KEY) === '1'
@@ -85,5 +101,13 @@ export const useGame = create<GameState>((set) => ({
       // ignore
     }
     set({ classic, sheet: null })
+  },
+  setRenderStyle: (renderStyle) => {
+    try {
+      localStorage.setItem(STYLE_KEY, renderStyle)
+    } catch {
+      // Private mode: the choice lasts for this visit.
+    }
+    set({ renderStyle })
   },
 }))

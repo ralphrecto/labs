@@ -21,6 +21,15 @@ pasted text (M4), all wrapped in a game UI.
 - **Goals and stars** (`src/game/goals.ts`, `Goals.tsx`): interior design rules of thumb (somewhere
   to sleep, clear walkways, a nightstand by the bed, coffee table 35 to 50 cm from the sofa, a rug
   under the seating...) earn stars and level the home up from "Empty shell" to "Dream home".
+- **Styles, like map layers** (`src/game/StylePicker.tsx`, `src/three/style.tsx`): the little
+  picture tile under the camera buttons switches how the 3D view is drawn. **Cartoon** (default)
+  paints the rooms with colors taken from your scan (`src/scan/palette.ts`: each wall's paint
+  color and a top-down image of the floor, posterized into flat bands) with cel shading and ink
+  outlines. **Lifelike** uses the same scanned colors unposterized with soft daylight and
+  reflections (oak planks when there's no scan). **Scan** shows the raw splat or mesh with your
+  furniture as see-through ghosts. **Clay** is a plain white model, **Blueprint** blue with white
+  lines. Every surface draws through `<Surface>` and `<Ink>`, so new geometry picks up all styles.
+  The choice is remembered per browser; the classic editor keeps its plain look.
 - **Settings** (gear): units, overlays, snapping, saved designs, files, and the **Classic editor**
   with every panel and tool from the earlier milestones.
 
