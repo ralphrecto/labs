@@ -10,7 +10,8 @@ const js = assets.filter((f) => f.endsWith('.js')).map((f) => readFileSync(join(
 const css = assets.filter((f) => f.endsWith('.css')).map((f) => readFileSync(join(dist, 'assets', f), 'utf8'))
 if (js.length !== 1) throw new Error(`expected one JS bundle, found ${js.length}`)
 const title = html.match(/<title>.*?<\/title>/)?.[0] ?? '<title>Apartment designer</title>'
-const out = `${title}
+const out = `<meta charset="utf-8">
+${title}
 <style>${css.join('\n')}</style>
 <div id="root"></div>
 <script type="module">${js[0].replace(/<\/script/gi, '<\\/script')}</script>

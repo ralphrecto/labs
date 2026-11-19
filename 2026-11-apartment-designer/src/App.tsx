@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAnalysis } from './analysis'
 import { CatalogPanel, Inspector, IssuesPanel, LayoutsPanel, LibraryPanel } from './components/Panels'
+import { ScansPanel } from './components/ScanImport'
+import { ensureScanLoaded } from './scan/runtime'
+import { pruneScanFiles } from './scan/fileStore'
 import { PlanView } from './components/PlanView'
 import { exportPlanPNG } from './exporting'
 import { Scene3D } from './three/Scene3D'
@@ -297,8 +300,20 @@ function CompareSummary({ layoutId }: { layoutId: string }) {
   return <span className={`badge ${n ? 'warning' : 'ok'}`}>{n ? `${n} issue${n > 1 ? 's' : ''}` : 'All clear'}</span>
 }
 
+/** Load the files behind the document's scans, and clean up files no scan uses any more. */
+function useScanFiles() {
+  const scans = useStore((s) => s.doc.scans)
+  useEffect(() => {
+    for (const r of scans ?? []) void ensureScanLoaded(r)
+  }, [scans])
+  useEffect(() => {
+    void pruneScanFiles((useStore.getState().doc.scans ?? []).map((r) => r.id))
+  }, [])
+}
+
 export default function App() {
   useShortcuts()
+  useScanFiles()
   const view = useStore((s) => s.view)
   const layoutName = useStore((s) => activeLayout(s.doc).name)
   const planRef = useRef<SVGSVGElement>(null)
@@ -307,6 +322,7 @@ export default function App() {
       <Toolbar planRef={planRef} />
       <aside className="left">
         <LayoutsPanel />
+        <ScansPanel />
         <CatalogPanel />
         <LibraryPanel />
       </aside>
