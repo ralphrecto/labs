@@ -22,6 +22,7 @@ import * as I from './icons'
 import { Onboarding } from './Onboarding'
 import './theme.css'
 import './hud.css'
+import './goals.css'
 
 const EMBEDDED = import.meta.env.VITE_EMBED === '1'
 
@@ -72,7 +73,7 @@ function GameApp() {
           {mode === 'look' && <LookControls />}
           <CameraControls />
           {showDrawer && <BuyDrawer />}
-          {mode === 'build' && !selection && !review && <BuildTray />}
+          {mode === 'build' && !selection && !review && !tool && <BuildTray />}
           {tool && <ToolBanner />}
           {selection && !tool && mode !== 'look' && <ContextBar />}
           {review && (
@@ -114,6 +115,8 @@ interface CamState {
   wallMode: WallMode
 }
 let camState: CamState = { resetKey: 0, eye: false, autoRotate: true, wallMode: 'auto' }
+const GROUND = '#fff4e2'
+const SKY = '#f3ece0'
 const camListeners = new Set<() => void>()
 function setCam(p: Partial<CamState>) {
   camState = { ...camState, ...p }
@@ -137,7 +140,7 @@ function Stage() {
   const mode = useGame((s) => s.mode)
   const cam = useCam()
   const control = useMemo(
-    () => ({ ...cam, autoRotate: mode === 'look' && cam.autoRotate, eye: mode === 'look' && cam.eye }),
+    () => ({ ...cam, ground: GROUND, sky: SKY, autoRotate: mode === 'look' && cam.autoRotate, eye: mode === 'look' && cam.eye }),
     [cam, mode],
   )
   return (

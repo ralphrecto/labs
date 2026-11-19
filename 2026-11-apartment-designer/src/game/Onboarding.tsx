@@ -32,7 +32,8 @@ function placeNextToRooms() {
 function finish() {
   const s = useStore.getState()
   if (s.mode !== 'select') s.setMode('select')
-  s.setUI({ scanDraft: null })
+  s.setUI({ scanDraft: null, selection: null })
+  useGame.getState().setMode('buy')
   useGame.getState().setPhase('play')
 }
 

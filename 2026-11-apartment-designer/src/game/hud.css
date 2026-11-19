@@ -194,3 +194,9 @@
   position: fixed; right: 12px; bottom: 12px; z-index: 100; border: none; border-radius: 999px; padding: 10px 18px; background: #ff7a59; color: #fff; font: 800 14px system-ui, sans-serif;
   box-shadow: 0 6px 18px rgba(0,0,0,0.2); cursor: pointer;
 }
+.game button.hud-tool:hover:not(:disabled) { border: none; background: #efe4d3; }
+.game button.hud-mode:hover:not(:disabled), .game button.hud-act:hover:not(:disabled), .game button.hud-home:hover { border: none; }
+.game button.hud-mode:hover:not(:disabled):not(.on) { background: transparent; }
+.game button.hud-act:hover:not(:disabled) { background: var(--g-paper-2); }
+.game button.hud-ctx-done:hover { background: var(--g-sage); border: none; }
+.hud-look .g-chip { white-space: nowrap; }

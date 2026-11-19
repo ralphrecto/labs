@@ -1,10 +1,32 @@
 # Apartment designer
 
-A browser app for planning an apartment's furniture at true size, following the
-[implementation plan](https://claude.ai/artifact/TWePZZMNEX1EkTwRPEe4Yf). Milestone 1 is a furniture
-playground on a floor plan you enter by hand. Milestone 4 adds a starter catalog and adding real
-products from a link, a photo or pasted text. Milestones 2 and 3 (video capture, furniture
-detection) come later.
+A cozy design game about your real apartment: scan your place with your phone, then make it
+beautiful. It follows the [implementation plan](https://claude.ai/artifact/TWePZZMNEX1EkTwRPEe4Yf):
+a furniture playground at true size (M1), Scaniverse scan import with tape-measure scaling (M2),
+room and furniture detection from the scan (M3), and adding real products from a link, a photo or
+pasted text (M4), all wrapped in a game UI.
+
+## The game
+
+- **Move in** (first run, `src/game/Onboarding.tsx`): import a Scaniverse splat or mesh (or the
+  sample scan), tap both ends of something you measured to set the true size, let it find your
+  room and furniture, then start designing. "Try a sample home" and "Start with an empty room" skip
+  the scan.
+- **Three modes** on the bottom dock (`src/game/GameApp.tsx`): **Build** (rooms, walls, doors,
+  windows, scans), **Furnish** (the furniture drawer, `src/game/BuyDrawer.tsx`, with illustrated
+  items in `ItemThumb.tsx` and a "Shop from a link or photo" card), and **Look** (no chrome:
+  dollhouse spin or walk in at eye level).
+- **Contextual controls**: selecting something shows one bar with its actions (rotate, copy,
+  color, details, remove) instead of toolbars. Exact sizes and the fine print live behind Details.
+- **Goals and stars** (`src/game/goals.ts`, `Goals.tsx`): interior design rules of thumb (somewhere
+  to sleep, clear walkways, a nightstand by the bed, coffee table 35 to 50 cm from the sofa, a rug
+  under the seating...) earn stars and level the home up from "Empty shell" to "Dream home".
+- **Settings** (gear): units, overlays, snapping, saved designs, files, and the **Classic editor**
+  with every panel and tool from the earlier milestones.
+
+Game state that isn't part of the document (phase, mode, camera, open sheet) is in
+`src/game/gameStore.ts`. Shared look: `src/game/theme.css` tokens and `.g-*` primitives; each game
+component has its own CSS file with a class prefix (`.hud-`, `.buy-`, `.goal-`, `.onb-`).
 
 ## Run it
 

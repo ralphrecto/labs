@@ -163,7 +163,7 @@ function PlacedItem({
   )
 }
 
-function Scene({ wallMode, eye, autoRotate }: { wallMode: WallMode; eye: [number, number, number] | null; autoRotate?: boolean }) {
+function Scene({ wallMode, eye, autoRotate, ground = '#e9e6df' }: { wallMode: WallMode; eye: [number, number, number] | null; autoRotate?: boolean; ground?: string }) {
   const doc = useStore((s) => s.doc)
   const selection = useStore((s) => s.selection)
   const snap = useStore((s) => s.snap)
@@ -247,7 +247,7 @@ function Scene({ wallMode, eye, autoRotate }: { wallMode: WallMode; eye: [number
       />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[target.x, -0.01, target.z]} receiveShadow onPointerDown={() => useStore.getState().select(null)} visible={!scanOnly}>
         <planeGeometry args={[200, 200]} />
-        <meshStandardMaterial color="#e9e6df" />
+        <meshStandardMaterial color={ground} />
       </mesh>
       {!scanOnly &&
         doc.rooms.map((r) => <RoomMesh key={r.id} room={r} wallMode={eye ? 'full' : wallMode} selected={selection?.kind === 'room' && selection.id === r.id} />)}
@@ -311,6 +311,9 @@ export interface SceneControl {
   resetKey: number
   autoRotate: boolean
   wallMode: WallMode
+  /** Ground and sky colors. */
+  ground?: string
+  sky?: string
 }
 
 export function Scene3D({ control }: { control?: SceneControl } = {}) {
@@ -358,8 +361,8 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
         onPointerMissed={() => useStore.getState().select(null)}
         gl={{ preserveDrawingBuffer: true }}
       >
-        <color attach="background" args={['#f6f4ef']} />
-        <Scene wallMode={wallMode} eye={eye?.pos ?? null} autoRotate={control?.autoRotate && !eye} />
+        <color attach="background" args={[control?.sky ?? '#f6f4ef']} />
+        <Scene wallMode={wallMode} eye={eye?.pos ?? null} autoRotate={control?.autoRotate && !eye} ground={control?.ground} />
       </Canvas>
       {!control && (
       <div className="scene-tools">
