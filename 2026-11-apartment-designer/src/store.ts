@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { catalogEntry, itemFromCatalog, type CatalogEntry } from './model/catalog'
-import { add, dist, norm, scale, sub, v } from './model/geometry'
+import { add, bounds, centroid, closestPointOnSegment, dist, norm, pointInPolygon, scale, sub, v, wallSegments } from './model/geometry'
 import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
 import type { Doc, Item, Layout, Opening, Placement, Room, ScanRef, ScanReference, Units, Vec2 } from './model/types'
@@ -107,13 +107,42 @@ export const activeLayout = (d: Doc): Layout => d.layouts.find((l) => l.id === d
 const mapRoom = (d: Doc, id: string, fn: (r: Room) => Room): Doc => ({ ...d, rooms: d.rooms.map((r) => (r.id === id ? fn(r) : r)) })
 const mapLayout = (d: Doc, fn: (l: Layout) => Layout): Doc => ({ ...d, layouts: d.layouts.map((l) => (l.id === d.activeLayoutId ? fn(l) : l)) })
 
-/** Center of the rooms' bounding box, as a default drop point. */
-function defaultDrop(d: Doc): Vec2 {
+/**
+ * Where a new piece lands when it isn't dropped somewhere specific: the open spot inside a room
+ * that is farthest from the furniture already there (rooms in order, so the first room fills first).
+ */
+export function defaultDrop(d: Doc, item?: Pick<Item, 'width' | 'depth'>): Vec2 {
   if (!d.rooms.length) return v(1, 1)
-  const pts = d.rooms[0].polygon
-  const sx = pts.reduce((a, p) => a + p.x, 0) / pts.length
-  const sy = pts.reduce((a, p) => a + p.y, 0) / pts.length
-  return v(sx, sy)
+  const layout = activeLayout(d)
+  const byId = new Map(d.items.map((i) => [i.id, i]))
+  const others = layout.placements.flatMap((p) => {
+    const it = byId.get(p.itemId)
+    return it && !it.floorLevel ? [{ c: v(p.x, p.y), r: Math.hypot(it.width, it.depth) / 2 }] : []
+  })
+  const r0 = item ? Math.hypot(item.width, item.depth) / 2 : 0.4
+  let best: Vec2 | null = null
+  let bestScore = -Infinity
+  d.rooms.forEach((room, ri) => {
+    const b = bounds(room.polygon)
+    const step = 0.25
+    for (let x = b.minX + step; x < b.maxX; x += step)
+      for (let y = b.minY + step; y < b.maxY; y += step) {
+        const p = v(x, y)
+        if (!pointInPolygon(p, room.polygon)) continue
+        // Keep the whole piece inside the room.
+        const wall = Math.min(...wallSegments(room).map(([a, c]) => closestPointOnSegment(p, a, c).distance))
+        if (wall < Math.min(item ? Math.min(item.width, item.depth) / 2 : 0.3, 0.6)) continue
+        const gap = others.length ? Math.min(...others.map((o) => dist(o.c, p) - o.r - r0)) : 3
+        const center = centroid(room.polygon)
+        // Enough room beats more room; then prefer earlier rooms and spots near the middle.
+        const score = Math.min(gap, 0.6) * 10 - ri * 2 - dist(p, center) * 0.3
+        if (score > bestScore) {
+          bestScore = score
+          best = p
+        }
+      }
+  })
+  return best ?? centroid(d.rooms[0].polygon)
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -268,7 +297,7 @@ export const useStore = create<State>((set, get) => ({
   addItem: (item, at) => {
     const pid = uid()
     get().update((d) => {
-      const p = at ?? defaultDrop(d)
+      const p = at ?? defaultDrop(d, item)
       return mapLayout({ ...d, items: [...d.items, item] }, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: item.id, x: p.x, y: p.y, rotation: 0 }] }))
     })
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
@@ -276,7 +305,7 @@ export const useStore = create<State>((set, get) => ({
   placeItem: (itemId, at) => {
     const pid = uid()
     get().update((d) => {
-      const p = at ?? defaultDrop(d)
+      const p = at ?? defaultDrop(d, d.items.find((i) => i.id === itemId))
       return mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId, x: p.x, y: p.y, rotation: 0 }] }))
     })
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })

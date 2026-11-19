@@ -1,0 +1,210 @@
+/* Buy mode: furniture drawer (.buy-drawer) and the shop sheet (.buy-shop). Uses theme.css tokens. */
+
+.buy-drawer {
+  position: absolute; left: 0; right: 0; bottom: var(--dock-h, 96px); z-index: 20;
+  margin: 0 auto; width: 100%; max-width: 920px; max-height: 42vh;
+  display: flex; flex-direction: column;
+  background: var(--g-paper); border-radius: var(--g-r-lg) var(--g-r-lg) 0 0;
+  box-shadow: 0 -6px 30px rgba(60, 40, 20, 0.14), 0 -1px 4px rgba(60, 40, 20, 0.06);
+  padding: 10px 0 8px;
+  animation: buy-open 0.42s var(--g-ease) both;
+  transform-origin: 50% 100%;
+}
+@media (min-width: 700px) {
+  .buy-drawer { left: 16px; right: 16px; width: auto; border-radius: var(--g-r-lg); max-height: min(46vh, 380px); padding: 12px 0 10px; }
+}
+@keyframes buy-open { from { transform: translateY(70%) scale(0.98); opacity: 0; } 60% { opacity: 1; } }
+
+/* ---------------------------------------------------------------- category tabs */
+
+.buy-tabs {
+  display: flex; gap: 4px; padding: 0 12px 8px; overflow-x: auto; scrollbar-width: none; flex: none;
+  scroll-snap-type: x proximity;
+}
+.buy-tabs::-webkit-scrollbar { display: none; }
+@media (min-width: 700px) { .buy-tabs { justify-content: center; gap: 8px; } }
+
+.buy-tab {
+  flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; scroll-snap-align: start;
+  border: none; background: none; padding: 2px 4px; min-width: 56px; cursor: pointer; color: var(--g-ink-2);
+  font: 800 12px/1 var(--g-font);
+}
+.buy-tab-icon {
+  position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--g-paper-2); transition: transform 0.2s var(--g-ease), background 0.15s, box-shadow 0.15s;
+}
+.buy-tab-icon svg { width: 34px; height: 34px; }
+.buy-tab-icon > svg:not(.item-thumb) { width: 22px; height: 22px; color: var(--g-sun); fill: var(--g-sun); stroke: #d99a1e; }
+.buy-tab:hover .buy-tab-icon { transform: translateY(-2px); }
+.buy-tab:active .buy-tab-icon { transform: scale(0.92); }
+.buy-tab.on { color: var(--g-ink); }
+.buy-tab.on .buy-tab-icon { background: #fff; box-shadow: 0 0 0 3px var(--g-coral), var(--g-shadow-sm); transform: translateY(-1px); }
+.buy-badge {
+  position: absolute; top: -3px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--g-coral); color: #fff; font: 900 11px/18px var(--g-font); text-align: center; box-shadow: 0 0 0 2px var(--g-paper);
+}
+
+/* ---------------------------------------------------------------- item cards */
+
+.buy-grid {
+  display: flex; gap: 10px; padding: 12px 14px 8px; overflow-x: auto; overflow-y: hidden; min-height: 0;
+  scroll-snap-type: x mandatory; scroll-padding: 0 14px; overscroll-behavior-x: contain; scrollbar-width: none;
+}
+.buy-grid::-webkit-scrollbar { display: none; }
+@media (min-width: 700px) {
+  .buy-grid { display: grid; grid-template-columns: repeat(auto-fit, 104px); justify-content: center; gap: 8px; overflow-x: hidden; overflow-y: auto; padding: 12px 14px 8px; scrollbar-width: thin; }
+  .buy-grid .buy-card { width: 104px; }
+  .buy-grid .buy-empty { width: 150px; }
+}
+
+.buy-card {
+  position: relative; flex: none; width: 112px; scroll-snap-align: start;
+  background: #fff; border-radius: var(--g-r); box-shadow: 0 0 0 1.5px var(--g-line), 0 3px 0 rgba(70, 50, 30, 0.08);
+  display: flex; flex-direction: column;
+  animation: buy-card-in 0.38s var(--g-ease) both; animation-delay: calc(var(--i, 0) * 35ms);
+  transition: transform 0.18s var(--g-ease), box-shadow 0.15s;
+}
+.buy-card[draggable='true'] { cursor: grab; }
+.buy-card:hover { transform: translateY(-3px); box-shadow: 0 0 0 2px var(--g-coral), 0 8px 18px rgba(70, 50, 30, 0.14); }
+.buy-card:active { transform: scale(0.96); }
+.buy-card.pop { animation: buy-bounce 0.5s var(--g-ease); }
+@keyframes buy-card-in { from { transform: translateY(18px) scale(0.9); opacity: 0; } }
+@keyframes buy-bounce { 0% { transform: scale(1); } 25% { transform: scale(0.9); } 60% { transform: scale(1.05) translateY(-4px); } 100% { transform: scale(1); } }
+
+.buy-hit {
+  border: none; background: none; padding: 8px 8px 10px; margin: 0; cursor: inherit; color: inherit; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; font: inherit; flex: 1; border-radius: inherit;
+}
+.buy-hit:focus-visible { outline: 3px solid var(--g-sky); outline-offset: 2px; }
+.buy-thumb {
+  position: relative; width: 100%; height: 84px; border-radius: 14px; display: grid; place-items: center; overflow: hidden;
+  background: radial-gradient(circle at 50% 35%, #fffdf8 0, var(--g-paper-2) 75%);
+  margin-bottom: 4px;
+}
+.buy-card:hover .item-thumb { animation: g-bounce 0.6s var(--g-ease); }
+.buy-photo { width: 100%; height: 100%; object-fit: cover; }
+.buy-name { font: 800 13.5px/1.15 var(--g-font); color: var(--g-ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.buy-size { font: 700 11.5px/1.2 var(--g-font); color: var(--g-ink-2); white-space: nowrap; }
+.buy-count { position: absolute; right: 5px; top: 5px; padding: 2px 6px; border-radius: 99px; background: var(--g-sage); color: #fff; font: 900 10px/1.4 var(--g-font); }
+.buy-tag {
+  position: absolute; left: 5px; bottom: 5px; padding: 2px 7px; border-radius: 99px; background: rgba(255, 255, 255, 0.92);
+  font: 900 10px/1.4 var(--g-font); color: var(--g-ink-2); box-shadow: 0 1px 3px rgba(60, 40, 20, 0.15);
+}
+
+/* Bed sizes as tiny chips inside the card. */
+.buy-presets { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; padding: 0 6px 8px; margin-top: -4px; }
+.buy-preset {
+  border: none; border-radius: 99px; padding: 3px 7px; background: var(--g-paper-2); color: var(--g-ink);
+  font: 800 10.5px/1 var(--g-font); cursor: pointer; transition: transform 0.15s var(--g-ease), background 0.15s;
+}
+.buy-preset:hover { background: var(--g-sky); color: #fff; transform: translateY(-1px); }
+.buy-preset:active { transform: scale(0.9); }
+
+/* "+1" that floats up from a tapped card. */
+.buy-plus {
+  position: absolute; top: 4px; right: 6px; pointer-events: none; padding: 3px 8px; border-radius: 99px;
+  background: var(--g-sage); color: #fff; font: 900 12px/1 var(--g-font); box-shadow: var(--g-shadow-sm);
+  animation: buy-plus 0.9s ease-out forwards;
+}
+@keyframes buy-plus { 0% { transform: translateY(6px) scale(0.5); opacity: 0; } 25% { transform: translateY(-4px) scale(1.15); opacity: 1; } 70% { opacity: 1; } 100% { transform: translateY(-22px) scale(1); opacity: 0; } }
+
+/* The shop card: a dashed coral invitation. */
+.buy-shopcard { background: #fff6f1; box-shadow: inset 0 0 0 2px rgba(255, 122, 89, 0.45); }
+.buy-shopcard:hover { box-shadow: inset 0 0 0 2px var(--g-coral), 0 8px 18px rgba(232, 96, 63, 0.2); }
+.buy-shopcard .buy-thumb { background: radial-gradient(circle at 50% 40%, #ffe3d8 0, #ffd1c0 80%); }
+.buy-shopcard .buy-name { color: var(--g-coral-dk); }
+.buy-shop-icons { display: flex; gap: 6px; }
+.buy-shop-icons svg {
+  width: 38px; height: 38px; padding: 8px; border-radius: 50%; background: var(--g-coral); color: #fff;
+  box-shadow: 0 3px 0 var(--g-coral-dk);
+}
+.buy-shop-icons svg:last-child { transform: rotate(8deg) translateY(4px); background: var(--g-sun); box-shadow: 0 3px 0 #e0a52c; color: var(--g-ink); }
+
+.buy-empty { justify-content: center; align-items: center; text-align: center; padding: 10px; width: 150px; background: var(--g-paper-2); box-shadow: none; cursor: default; }
+.buy-empty:hover { transform: none; box-shadow: none; }
+.buy-empty svg { width: 26px; height: 26px; color: var(--g-sun); fill: var(--g-sun); stroke: #d99a1e; }
+.buy-empty p { margin: 6px 0 0; font: 700 12.5px/1.3 var(--g-font); color: var(--g-ink-2); }
+
+/* ---------------------------------------------------------------- shop sheet: the import dialog in game clothes */
+
+.buy-shop .modal-backdrop {
+  z-index: 60; background: rgba(45, 38, 32, 0.32); backdrop-filter: blur(2px); padding: 0;
+  align-items: flex-end; overflow: hidden; animation: g-fade 0.2s ease-out;
+}
+.buy-shop .modal {
+  width: min(760px, 100%); max-height: 88vh; overflow-y: auto; gap: 14px;
+  background: var(--g-paper); color: var(--g-ink); font-family: var(--g-font); font-size: 15px;
+  border-radius: var(--g-r-lg) var(--g-r-lg) 0 0; padding: 20px 20px calc(22px + env(safe-area-inset-bottom));
+  box-shadow: var(--g-shadow); animation: g-rise 0.36s var(--g-ease);
+}
+.buy-shop .modal.wide { width: min(760px, 100%); }
+@media (min-width: 700px) {
+  .buy-shop .modal-backdrop { align-items: center; padding: 24px; }
+  .buy-shop .modal { border-radius: var(--g-r-lg); padding: 24px 26px 26px; }
+}
+.buy-shop .modal header { align-items: flex-start; gap: 12px; }
+.buy-shop .modal h2 { font: 900 22px/1.2 var(--g-font); }
+.buy-shop .modal header button.link {
+  flex: none; border-radius: 999px; padding: 8px 14px; background: var(--g-paper-2); color: var(--g-ink-2);
+  font: 800 13px/1 var(--g-font); text-decoration: none;
+}
+.buy-shop .modal header button.link:hover { background: #fff; color: var(--g-ink); box-shadow: var(--g-shadow-sm); }
+.buy-shop .modal p { line-height: 1.4; }
+.buy-shop .muted { color: var(--g-ink-2); }
+.buy-shop .small { font-size: 13px; }
+
+/* Tabs as a segmented pill. */
+.buy-shop .tabs { border: none; background: var(--g-paper-2); border-radius: 999px; padding: 4px; gap: 4px; align-self: flex-start; }
+.buy-shop button.tab {
+  border: none; border-radius: 999px; padding: 9px 16px; color: var(--g-ink-2); font: 800 14px/1 var(--g-font); background: none;
+  transition: background 0.15s, color 0.15s, transform 0.15s var(--g-ease);
+}
+.buy-shop button.tab:hover:not(.active) { background: rgba(255, 255, 255, 0.6); }
+.buy-shop button.tab.active { background: #fff; color: var(--g-ink); box-shadow: var(--g-shadow-sm); border: none; font-weight: 900; }
+
+.buy-shop .import-body { gap: 20px; overflow: visible; }
+.buy-shop .import-draft { border-left: 2px dashed var(--g-line); padding-left: 20px; }
+@media (max-width: 700px) { .buy-shop .import-draft { border-left: none; padding-left: 0; border-top: 2px dashed var(--g-line); padding-top: 14px; } }
+
+/* Fields and inputs. */
+.buy-shop .field { font: 700 13px/1.2 var(--g-font); gap: 5px; margin: 6px 0; }
+.buy-shop .field > span:first-child { color: var(--g-ink-2); }
+.buy-shop .field.checkbox { font-size: 14px; }
+.buy-shop .field.checkbox > span { color: var(--g-ink); }
+.buy-shop input:not([type='checkbox']):not([type='color']), .buy-shop select, .buy-shop textarea, .buy-shop .modal textarea {
+  font: 600 16px/1.3 var(--g-font); color: var(--g-ink); border: 2px solid var(--g-line); border-radius: 12px;
+  padding: 10px 12px; background: #fff; outline: none; min-width: 0;
+}
+.buy-shop input:focus, .buy-shop select:focus, .buy-shop textarea:focus { border-color: var(--g-sky); }
+.buy-shop input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--g-sage); }
+.buy-shop input[type='color'] { height: 44px; border: 2px solid var(--g-line); border-radius: 12px; padding: 3px; background: #fff; }
+.buy-shop .field-input em { font: 700 12px var(--g-font); color: var(--g-ink-2); }
+.buy-shop .modal .row { gap: 8px; }
+.buy-shop .modal .row input { padding: 10px 12px; }
+
+.buy-shop .field input:not([type='checkbox']), .buy-shop .field select, .buy-shop .field textarea { width: 100%; box-sizing: border-box; }
+.buy-shop .draft-head > div, .buy-shop .grid2 > *, .buy-shop .grid3 > * { min-width: 0; }
+
+/* Buttons become chunky pills. */
+.buy-shop .modal button:not(.tab):not(.link) {
+  border: none; border-radius: 999px; padding: 11px 18px; font: 800 14px/1 var(--g-font); background: var(--g-paper-2); color: var(--g-ink);
+  box-shadow: 0 3px 0 rgba(70, 50, 30, 0.12); transition: transform 0.18s var(--g-ease);
+}
+.buy-shop .modal button:not(.tab):not(.link):hover:not(:disabled) { transform: translateY(-2px); }
+
+.buy-shop .modal button.primary:not(.tab):not(.link) { background: var(--g-coral); color: #fff; box-shadow: 0 4px 0 var(--g-coral-dk); }
+.buy-shop .modal button.primary:not(.tab):not(.link):active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 var(--g-coral-dk); }
+.buy-shop .btn-row { margin-top: 14px; }
+.buy-shop .btn-row button.primary:not(.tab) { flex: 1; padding: 15px 22px; font-size: 16px; }
+
+.buy-shop .dropzone {
+  border: 3px dashed rgba(255, 122, 89, 0.45); border-radius: var(--g-r); min-height: 160px; background: #fff6f1;
+  color: var(--g-coral-dk); font: 800 15px/1.3 var(--g-font); transition: background 0.15s, transform 0.2s var(--g-ease);
+}
+.buy-shop .dropzone.over, .buy-shop .dropzone:hover { border-color: var(--g-coral); background: #ffece4; transform: scale(1.01); }
+.buy-shop .dropzone img { border-radius: 12px; }
+.buy-shop .note { background: var(--g-paper-2); border-radius: 12px; padding: 10px 12px; }
+.buy-shop .error { color: var(--g-bad); }
+.buy-shop .badge { font: 800 12px/1.3 var(--g-font); padding: 6px 10px; border-radius: 10px; }
+.buy-shop .thumb { border-radius: 14px; border: none; box-shadow: var(--g-shadow-sm); }
+.buy-shop .draft-head { grid-template-columns: 84px 1fr; gap: 12px; }

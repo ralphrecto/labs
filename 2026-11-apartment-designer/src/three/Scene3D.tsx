@@ -163,7 +163,7 @@ function PlacedItem({
   )
 }
 
-function Scene({ wallMode, eye }: { wallMode: WallMode; eye: [number, number, number] | null }) {
+function Scene({ wallMode, eye, autoRotate }: { wallMode: WallMode; eye: [number, number, number] | null; autoRotate?: boolean }) {
   const doc = useStore((s) => s.doc)
   const selection = useStore((s) => s.selection)
   const snap = useStore((s) => s.snap)
@@ -266,7 +266,7 @@ function Scene({ wallMode, eye }: { wallMode: WallMode; eye: [number, number, nu
       {eye ? (
         <OrbitControls ref={controls} makeDefault target={[eye[0], eye[1], eye[2] - 0.01]} enableZoom={false} enablePan={false} rotateSpeed={-0.4} />
       ) : (
-        <OrbitControls ref={controls} target={target} makeDefault maxPolarAngle={Math.PI / 2 - 0.02} minDistance={0.3} maxDistance={60} />
+        <OrbitControls ref={controls} target={target} makeDefault maxPolarAngle={Math.PI / 2 - 0.02} minDistance={0.3} maxDistance={60} autoRotate={autoRotate} autoRotateSpeed={0.6} />
       )}
     </>
   )
@@ -303,12 +303,32 @@ function sceneFootprint(doc: ReturnType<typeof useStore.getState>['doc']): Vec2[
   return pts
 }
 
-export function Scene3D() {
+/** Camera and wall settings driven from outside (the game HUD), replacing the built-in tool strip. */
+export interface SceneControl {
+  /** Stand at eye level in the middle of the first room. */
+  eye: boolean
+  /** Bump to reset the camera to the overview. */
+  resetKey: number
+  autoRotate: boolean
+  wallMode: WallMode
+}
+
+export function Scene3D({ control }: { control?: SceneControl } = {}) {
   const doc = useStore((s) => s.doc)
   const scan3d = useStore((s) => s.scan3d)
-  const [wallMode, setWallMode] = useState<WallMode>('auto')
-  const [camKey, setCamKey] = useState(0)
-  const [eye, setEye] = useState<{ pos: [number, number, number] } | null>(null)
+  const [ownWallMode, setWallMode] = useState<WallMode>('auto')
+  const [ownCamKey, setCamKey] = useState(0)
+  const [ownEye, setEye] = useState<{ pos: [number, number, number] } | null>(null)
+  const wallMode = control?.wallMode ?? ownWallMode
+  const eyePos = useMemo(() => {
+    const room = doc.rooms[0]
+    const scan = (doc.scans ?? []).find((r) => r.visible)
+    const c = room ? centroid(room.polygon) : scan ? scanCenter(scan) : null
+    return c ? { pos: [c.x, 1.6, c.y] as [number, number, number] } : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [control?.eye, control?.resetKey, doc.apartment.id])
+  const eye = control ? (control.eye ? eyePos : null) : ownEye
+  const camKey = control ? `${control.resetKey}:${control.eye}` : ownCamKey
 
   const initial = useMemo(() => {
     const pts = sceneFootprint(doc)
@@ -339,8 +359,9 @@ export function Scene3D() {
         gl={{ preserveDrawingBuffer: true }}
       >
         <color attach="background" args={['#f6f4ef']} />
-        <Scene wallMode={wallMode} eye={eye?.pos ?? null} />
+        <Scene wallMode={wallMode} eye={eye?.pos ?? null} autoRotate={control?.autoRotate && !eye} />
       </Canvas>
+      {!control && (
       <div className="scene-tools">
         <button
           onClick={() => {
@@ -370,6 +391,7 @@ export function Scene3D() {
           </select>
         </label>
       </div>
+      )}
     </div>
   )
 }

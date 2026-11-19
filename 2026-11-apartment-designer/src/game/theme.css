@@ -75,3 +75,11 @@
 @keyframes g-pop { 0% { transform: scale(0.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 @keyframes g-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
 @media (prefers-reduced-motion: reduce) { .game *, .game *::before, .game *::after { animation: none !important; transition: none !important; } }
+
+/* index.css styles every button (and button.primary in blue); keep game buttons game-styled. */
+.game button.g-btn.primary, .game button.g-btn.primary:hover:not(:disabled) { background: var(--g-coral); border: none; color: #fff; }
+.game button.g-btn:hover:not(:disabled), .game button.g-icon:hover:not(:disabled) { border: none; }
+.game button.g-btn:not(.primary):not(.ghost):hover:not(:disabled) { background: #fff; }
+.game button.g-btn.ghost:hover:not(:disabled) { background: transparent; }
+.game .g-btn svg { width: 18px; height: 18px; flex: none; }
+.game .g-btn.sm svg { width: 16px; height: 16px; }

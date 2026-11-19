@@ -10,7 +10,7 @@ export type GameMode = 'build' | 'buy' | 'look'
 /** What the main stage shows. */
 export type Camera = '3d' | 'plan'
 
-export type Sheet = null | 'settings' | 'goals' | 'layouts' | 'shop' | 'scan'
+export type Sheet = null | 'settings' | 'goals' | 'layouts' | 'shop' | 'scan' | 'details' | 'room'
 
 interface GameState {
   phase: Phase
@@ -22,6 +22,8 @@ interface GameState {
   buyTab: string
   /** Shows the advanced controls (exact sizes, snapping, overlays) in context menus. */
   advanced: boolean
+  /** Player chose the old all-panels editor from settings. */
+  classic: boolean
 
   setPhase: (p: Phase) => void
   setMode: (m: GameMode) => void
@@ -29,9 +31,11 @@ interface GameState {
   openSheet: (s: Sheet) => void
   setBuyTab: (t: string) => void
   setAdvanced: (a: boolean) => void
+  setClassic: (c: boolean) => void
 }
 
 const ONBOARDED_KEY = 'apartment-designer:onboarded'
+const CLASSIC_KEY = 'apartment-designer:classic'
 
 function readOnboarded(): boolean {
   try {
@@ -57,6 +61,13 @@ export const useGame = create<GameState>((set) => ({
   sheet: null,
   buyTab: 'living',
   advanced: false,
+  classic: (() => {
+    try {
+      return localStorage.getItem(CLASSIC_KEY) === '1'
+    } catch {
+      return false
+    }
+  })(),
 
   setPhase: (phase) => {
     if (phase === 'play') markOnboarded()
@@ -67,4 +78,12 @@ export const useGame = create<GameState>((set) => ({
   openSheet: (sheet) => set({ sheet }),
   setBuyTab: (buyTab) => set({ buyTab }),
   setAdvanced: (advanced) => set({ advanced }),
+  setClassic: (classic) => {
+    try {
+      localStorage.setItem(CLASSIC_KEY, classic ? '1' : '0')
+    } catch {
+      // ignore
+    }
+    set({ classic, sheet: null })
+  },
 }))
