@@ -35,6 +35,16 @@ export interface Room {
   ceilingHeight: number
   wallThickness: number
   openings: Opening[]
+  /** Set for rooms detected from a scan: how scan world (x, z) maps onto the plan, for the point cloud underlay. */
+  scan?: RoomScanLink
+}
+
+export interface RoomScanLink {
+  scanId: string
+  /** Plan position of the scan's world origin, and rotation (clockwise on the plan) applied to world (x, z). */
+  x: number
+  y: number
+  rotation: number
 }
 
 export interface Clearance {
@@ -71,6 +81,9 @@ export interface Item {
   imageUrl?: string
   /** The size was estimated (from a photo or typical sizes) rather than read from a listing. */
   sizeEstimated?: boolean
+  /** Items detected in a scan: which scan, and how sure the detector was about the type (0..1). */
+  scanId?: string
+  confidence?: number
 }
 
 export interface Placement {

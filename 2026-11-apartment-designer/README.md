@@ -58,6 +58,15 @@ it (`IMPORT_MODEL` overrides the model, default `claude-opus-5-5`).
 - **Layouts.** A layout is a named set of placements over the apartment. Copy a layout to try a
   variant and compare two side by side. Items you don't own yet can carry a price and link, and
   the layout shows what you'd need to buy.
+- **Rooms and furniture from a scan** (Milestone 3). Open a point cloud or Gaussian splat export
+  (`.ply`, in meters), or try the built-in sample scan. The app levels the scan, squares it up
+  with the walls, and finds the room outline, ceiling height, doors and windows, and every piece of
+  furniture as a sized box with a guessed type, color and facing (backs go against walls). A
+  review panel lists what it found: uncheck clutter, relabel a wrong guess (it keeps the measured
+  size), fix a size, and choose whether the scan becomes a new room or replaces one you drew.
+  Added furniture is ordinary furniture marked as owned, so you can drag it around and the
+  checks apply. The scan's points stay under the plan and in 3D (toggle "Scan") so you can line
+  things up. If you run the scan through SpatialLM on a GPU, paste its layout text instead.
 - **Undo/redo** for every change (Ctrl+Z, Ctrl+Shift+Z).
 - **Export** the plan as a PNG, print or save it as a PDF, and download or open the whole
   project as JSON. Everything also autosaves in the browser.
@@ -124,6 +133,20 @@ from the camera alone), then export it and drop the file on the **Scans** panel.
 
 Conventions: meters everywhere. Plan x is right and plan y is down; 3D world is Y up with plan
 (x, y) at world (x, 0, y). An item's front is its local +y; rotation is clockwise on the plan.
+
+## How scan detection works, and its limits
+
+Detection is geometric, not ML, so it runs in the browser on any scan. It squares the room to its
+dominant wall direction, builds 5 cm occupancy grids, takes the largest floor region (cutting
+openings narrower than about 90 cm, so a hallway seen through a door doesn't join), traces an
+axis-aligned outline and snaps each wall to the wall surface in the points. Doors are gaps in the
+wall from the floor up; windows are gaps above a solid sill. Furniture is everything standing
+inside the walls, split where there's a gap or a big height change, boxed, and typed from its
+size. Known limits: one room per scan; walls are square to each other (angled walls come out
+stepped or straight); pieces that touch (a chair pushed under a desk) come out as one box; types
+are a size guess (desk vs dresser is often wrong), and scaled-down or sparse scans do worse. A
+server model like SpatialLM or SAM 3 can replace the detector: it only has to produce a
+`SceneEstimate`, and the review step works the same.
 
 ## Assumptions
 

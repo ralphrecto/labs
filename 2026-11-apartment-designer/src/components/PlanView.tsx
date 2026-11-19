@@ -28,6 +28,9 @@ import { activeLayout, useStore } from '../store'
 import { planToScan, rotateAbout, scanToPlan, snapAxes, straightenFromLine, svgTransform, underlayAt } from '../scan/align'
 import { scanCenter, scanCorners, underlayOf, useScanRuntime } from '../scan/runtime'
 import type { ScanRef } from '../model/types'
+import { PlanScanLayer } from './ScanPanels'
+import { placementShift } from '../scan/apply'
+import { reviewChoice, useScanUI } from '../scan/scanUi'
 
 const COLORS = {
   paper: '#fbfaf7',
@@ -107,8 +110,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     return () => ro.disconnect()
   }, [])
 
+  const review = useScanUI((s) => (readOnly ? null : s.review))
   const fit = (focus?: Vec2[]) => {
     const pts = focus ?? [...doc.rooms.flatMap((r) => r.polygon), ...(doc.scans ?? []).filter((r) => r.visible).flatMap((r) => scanCorners(r) ?? [])]
+    // Include a scan waiting for review, which lands beside the rooms.
+    const rv = useScanUI.getState().review
+    const shift = !focus && rv && !readOnly ? placementShift(doc, rv.estimate, reviewChoice(rv)) : null
+    if (rv && shift) for (const p of rv.estimate.room?.polygon ?? rv.estimate.objects) pts.push(v(p.x + shift.x, p.y + shift.y))
     if (!pts.length) {
       setView({ cx: 3, cy: 2, k: Math.min(size.w / 8, size.h / 6) })
       return
@@ -146,6 +154,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     if (corners && fitted.current) fit(corners)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanIds, scansReady])
+
+  // Re-fit when a scan review starts or ends, so the scan (or the room it added) is in view.
+  const reviewId = review?.estimate
+  useEffect(() => {
+    if (fitted.current) fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewId])
 
   useEffect(() => {
     if (mode !== 'draw-room') {
@@ -517,6 +532,9 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
             </g>
           )
         })}
+
+        {/* Scan point clouds, and detections waiting for review */}
+        {!readOnly && <PlanScanLayer px={px} fs={fs} />}
 
         {/* Openings drawn over walls */}
         {doc.rooms.map((room) =>

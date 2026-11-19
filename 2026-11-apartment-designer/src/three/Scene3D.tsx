@@ -13,6 +13,7 @@ import { scanCenter, scanCorners, useScanRuntime } from '../scan/runtime'
 
 // The scan backdrop pulls in the splat renderer, so it loads on first use.
 const ScanBackdrop = lazy(() => import('./ScanBackdrop').then((m) => ({ default: m.ScanBackdrop })))
+import { ScanPoints } from './ScanPoints'
 
 const FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 
@@ -255,6 +256,7 @@ function Scene({ wallMode, eye }: { wallMode: WallMode; eye: [number, number, nu
           <ScanBackdrop eye={!!eye} />
         </Suspense>
       )}
+      <ScanPoints />
       <group onPointerMove={onMove} onPointerUp={onUp}>
         {placed.map(({ p, item }) => (
           <PlacedItem key={p.id} item={item} p={p} selected={selection?.kind === 'placement' && selection.id === p.id} flag={analysis.flagged.get(p.id)} onGrab={onGrab} />
