@@ -156,7 +156,7 @@ function Welcome({ onScan }: { onScan: () => void }) {
               finish()
             }}
           >
-            Explore a furnished home
+            Explore a sample home
           </button>
           <span aria-hidden>·</span>
           <button

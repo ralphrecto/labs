@@ -71,13 +71,13 @@ async function play(p, step) {
 
 async function sampleJourney(p, step) {
   await step('welcome', async () => {});
-  await step('sample-home', () => clickText(p, 'Try a sample home'));
+  await step('sample-home', () => clickText(p, /sample home/i));
   await play(p, step);
 }
 
 (async () => {
-  await run('desktop', { viewport: { width: 1440, height: 900 } }, scanJourney);
-  await run('phone', { ...devices['iPhone 14'], browserName: undefined, defaultBrowserType: undefined }, sampleJourney);
+  if (process.env.ONLY !== 'phone') await run('desktop', { viewport: { width: 1440, height: 900 } }, scanJourney);
+  if (process.env.ONLY !== 'desktop') await run('phone', { ...devices['iPhone 14'], browserName: undefined, defaultBrowserType: undefined }, sampleJourney);
   fs.writeFileSync(path.join(OUT, 'notes.json'), JSON.stringify(notes, null, 2));
   console.log(JSON.stringify(notes.steps.filter((s) => !s.ok), null, 1));
   console.log('errors:', notes.errors.length, notes.errors.slice(0, 8).join('\n'));

@@ -108,3 +108,41 @@ Reviewers: power user (speedrun), art director re-check, interior designer re-ch
 - Walk-in: furniture collision; Lifelike walk-in walls still neutral.
 - Dev note: restart the dev server after big merges; stale HMR state caused bogus splat shader
   errors in the Scan style during round 3 testing.
+
+## Round 4 (2026-11-20)
+
+Reviewers: cozy phone gamer, first-time player (incl. the real-scan path), returning player.
+A usage limit paused the round from 09:00 to 10:50 UTC. 24 findings.
+
+**Fixed this round**
+- Real-scan measuring: a corner magnet (about 25 px) snaps taps to wall corners and wall ends
+  (two taps on the long wall now read 4.99 m, was 4.52 m and left the home 11% too big). A gentle
+  ceiling check warns when the sized ceiling comes out outside 2.25-2.75 m. The length label no
+  longer hides under the hint; no scale bar before sizing. Welcome home's "First up" matches the
+  Next chip. "Back to <home>" from Move into a new place.
+- The Next chip never dead-ends: it dry-runs placement and suggests a piece that fits (bookshelf
+  when the bedroom is full), comes back after a refused placement, and skips goals nothing can
+  finish. A living room is no longer treated as a studio, so the first goals are sofa, rug, lamp
+  and plant. Pieces with a snag earn no stars or level-ups.
+- The sample home is now move-in day (rooms, sofa, TV stand, bed, two boxes; starts Lived-in).
+- Honest level: the pill shows the home's current level with a small "Best: …" note; only a new
+  level on a clean layout celebrates. Welcome back says how long you were away.
+- Calmer rewards: one-line toasts, level-up as a banner under the stars on phones, toast hidden
+  while it shows, "½" feedback on the first half of two-step goals, no camera labels on phones.
+- Forgiving drags: a green/red footprint while dragging; releasing in a bad spot slides to the
+  nearest clean spot or back to the last clean pose with a wobble; one undo step per drag.
+- Phones refit the camera to the selected piece's room (and back on deselect).
+- Look mode fills the screen and has a photo moment: one shutter, a flash, a polaroid with the
+  home name, level and stars, Share or Save. Walk-in stops short of furniture.
+
+**Backlog (next rounds)**
+- Your designs: show stars and level per design, a crown on the best, "Try a variation" as the
+  primary action, copies named after their source, rename "Current".
+- Home delete has no undo; a failed save (full storage) is silent.
+- Levels climb fast (sample: Lived-in to Dream home in about 9 placements); retune thresholds.
+- "A table to eat at" took 4 chairs before any counted as pulled up.
+- Finger drags need a check on a real iPhone (headless touch can't hit pieces reliably).
+- Measuring: refit the plan after sizing so the top wall isn't under the hint pill.
+- Challenges after the top level; room focus; desktop side-panel drawer; cap pieces per design.
+- Playthrough harness: on phones the tabs hide while a piece is selected, so the scripted
+  tab switch after placing fails; deselect first.
