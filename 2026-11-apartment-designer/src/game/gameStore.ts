@@ -27,8 +27,19 @@ interface GameState {
   classic: boolean
   /** How the 3D view is drawn (Cartoon, Lifelike, Scan, Clay, Blueprint), switched like map layers. */
   renderStyle: RenderStyle
-  /** Best level reached (with no errors) per home, by apartment id. The HUD never shows less. */
+  /**
+   * Best level reached (with no errors) per design, by bestLevelKey (apartment id and layout id;
+   * older saves have bare apartment ids). The HUD never shows less.
+   */
   bestLevel: Record<string, number>
+  /** The player was away a while (WELCOME_BACK_MS) before this visit: greet them once. */
+  welcomeBack: boolean
+  /** The catalog piece the "Next" chip pointed at; the drawer gives its card a nudge until it's placed. */
+  buyHint: { category: string; roomId?: string } | null
+  /** The goal to scroll to when the goals sheet opens. */
+  goalFocus: string | null
+  /** A level just reached, for the celebration card. */
+  levelUp: { key: number; index: number; name: string } | null
 
   setPhase: (p: Phase) => void
   setMode: (m: GameMode) => void
@@ -40,12 +51,21 @@ interface GameState {
   setRenderStyle: (s: RenderStyle) => void
   /** Remember a level reached in a home; lower levels are ignored. */
   noteLevel: (homeId: string, level: number) => void
+  /** "Show me" for a goal: the drawer on a tab with a piece to point at, or the goals sheet at the goal. */
+  showGoal: (goal: { id: string; tab?: string; item?: string; placeIn?: string }) => void
+  setBuyHint: (hint: { category: string; roomId?: string } | null) => void
+  celebrateLevel: (index: number, name: string) => void
+  clearLevelUp: () => void
+  consumeWelcomeBack: () => void
 }
 
 const ONBOARDED_KEY = 'apartment-designer:onboarded'
 const CLASSIC_KEY = 'apartment-designer:classic'
 const STYLE_KEY = 'apartment-designer:render-style'
 const BEST_LEVEL_KEY = 'apartment-designer:best-level'
+const LAST_VISIT_KEY = 'apartment-designer:last-visit'
+/** Away this long counts as coming back. */
+export const WELCOME_BACK_MS = 6 * 60 * 60 * 1000
 const STYLE_IDS: RenderStyle[] = ['toon', 'real', 'scan', 'clay', 'blueprint']
 
 function readStyle(): RenderStyle {
@@ -64,6 +84,39 @@ function readBestLevels(): Record<string, number> {
   } catch {
     return {}
   }
+}
+
+/**
+ * Whether this visit comes after a long break, and from now on remember this as the last visit.
+ * The time is refreshed whenever the page is hidden, so a tab left open still counts its break.
+ */
+function checkVisit(now = Date.now()): boolean {
+  let away = false
+  try {
+    const last = Number(localStorage.getItem(LAST_VISIT_KEY))
+    away = last > 0 && now - last >= WELCOME_BACK_MS
+    localStorage.setItem(LAST_VISIT_KEY, String(now))
+  } catch {
+    // Private mode: no welcome back.
+  }
+  return away
+}
+
+function noteVisit() {
+  try {
+    localStorage.setItem(LAST_VISIT_KEY, String(Date.now()))
+  } catch {
+    // ignore
+  }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') noteVisit()
+    // Back to a tab left open for hours: that's a return visit too.
+    else if (checkVisit()) useGame.setState({ welcomeBack: true })
+  })
+  window.addEventListener('pagehide', noteVisit)
 }
 
 function readOnboarded(): boolean {
@@ -92,6 +145,11 @@ export const useGame = create<GameState>((set) => ({
   advanced: false,
   renderStyle: readStyle(),
   bestLevel: readBestLevels(),
+  // A first-time player still in the move-in flow has nothing to come back to.
+  welcomeBack: checkVisit() && readOnboarded(),
+  buyHint: null,
+  goalFocus: null,
+  levelUp: null,
   classic: (() => {
     try {
       return localStorage.getItem(CLASSIC_KEY) === '1'
@@ -106,7 +164,7 @@ export const useGame = create<GameState>((set) => ({
   },
   setMode: (mode) => set({ mode }),
   setCamera: (camera) => set({ camera }),
-  openSheet: (sheet) => set({ sheet }),
+  openSheet: (sheet) => set(sheet === 'goals' ? { sheet } : { sheet, goalFocus: null }),
   setBuyTab: (buyTab) => set({ buyTab }),
   setAdvanced: (advanced) => set({ advanced }),
   setClassic: (classic) => {
@@ -136,4 +194,14 @@ export const useGame = create<GameState>((set) => ({
       }
       return { bestLevel }
     }),
+  showGoal: (goal) =>
+    set(
+      goal.tab
+        ? { mode: 'buy', buyTab: goal.tab, buyHint: goal.item ? { category: goal.item, roomId: goal.placeIn } : null, sheet: null, goalFocus: null }
+        : { sheet: 'goals', goalFocus: goal.id },
+    ),
+  setBuyHint: (buyHint) => set({ buyHint }),
+  celebrateLevel: (index, name) => set({ levelUp: { key: Date.now(), index, name } }),
+  clearLevelUp: () => set({ levelUp: null }),
+  consumeWelcomeBack: () => set({ welcomeBack: false }),
 }))

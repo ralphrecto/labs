@@ -41,7 +41,7 @@
 .buy-tab.on .buy-tab-icon { background: #fff; box-shadow: 0 0 0 3px var(--g-coral), var(--g-shadow-sm); transform: translateY(-1px); }
 .buy-badge {
   position: absolute; top: -3px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
-  background: var(--g-coral); color: #fff; font: 900 11px/18px var(--g-font); text-align: center; box-shadow: 0 0 0 2px var(--g-paper);
+  background: var(--g-paper-2); color: var(--g-ink-2); font: 800 11px/18px var(--g-font); text-align: center; box-shadow: 0 0 0 2px var(--g-paper);
 }
 
 /* ---------------------------------------------------------------- item cards */
@@ -208,3 +208,7 @@
 .buy-shop .badge { font: 800 12px/1.3 var(--g-font); padding: 6px 10px; border-radius: 10px; }
 .buy-shop .thumb { border-radius: 14px; border: none; box-shadow: var(--g-shadow-sm); }
 .buy-shop .draft-head { grid-template-columns: 84px 1fr; gap: 12px; }
+
+/* The piece the "Next" goal chip pointed at: a gentle glow until it's placed. */
+.buy-card.hinted .buy-thumb { box-shadow: 0 0 0 3px var(--g-sun), 0 0 14px color-mix(in srgb, var(--g-sun) 60%, transparent); animation: buy-hint 1.4s ease-in-out 3; }
+@keyframes buy-hint { 50% { transform: translateY(-4px); } }

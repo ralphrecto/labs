@@ -3,7 +3,7 @@ import { analyze } from '../../analysis'
 import { catalogEntry, itemFromCatalog } from '../../model/catalog'
 import { emptyDoc, rectRoom, sampleDoc } from '../../model/sample'
 import type { Doc, Item, Placement } from '../../model/types'
-import { bankableLevel, levelThresholds, scoreHome, withBestLevel, type Goal } from '../goals'
+import { bankableLevel, bestLevelKey, inferEntrance, levelThresholds, nextGoal, scoreHome, withBestLevel, type Goal } from '../goals'
 
 const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
 const score = (d: Doc) => scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)))
@@ -236,5 +236,66 @@ describe('scoreHome', () => {
     step()
     for (let i = 1; i < shown.length; i++) expect(shown[i]).toBeGreaterThanOrEqual(shown[i - 1])
     expect(shown[shown.length - 1]).toBeGreaterThan(0)
+  })
+
+  it('only asks for what a one-room home can have', () => {
+    const d = emptyDoc()
+    const room = rectRoom('Living room', 0, 0, 4, 4.2)
+    room.openings.push({ id: 'd1', kind: 'door', wall: 1, offset: 1, width: 0.85, height: 2.03, sill: 0 })
+    d.rooms.push(room)
+    const s = score(d)
+    const ids = s.goals.map((g) => g.id)
+    // No dining room and too small for a table on the side: no dining goal.
+    expect(ids).not.toContain('eat')
+    // A studio takes the bed anywhere, and nothing mentions a bedroom it doesn't have.
+    expect(s.goals.find((g) => g.id === 'sleep')!.title).toBe('A cozy corner to sleep')
+    expect(s.goals.every((g) => !/the bedroom(?! tab)/i.test(g.hint))).toBe(true)
+    // The only door is the front door.
+    expect(s.goals.find((g) => g.id === 'walkways')!.hint).not.toMatch(/front door/)
+    // Flow goals waiting on furniture are marked locked; the next goal is never one of them.
+    const locked = s.goals.filter((g) => g.locked)
+    expect(locked.map((g) => g.id).sort()).toEqual(['doors-clear', 'in-walls', 'no-overlap', 'walkways'])
+    const next = nextGoal(s)!
+    expect(next.locked).toBeFalsy()
+    expect(next.tab).toBeTruthy()
+    // A bed anywhere counts.
+    place(d, 'bed', 2, 1.1)
+    expect(goal(d, (g) => g.id === 'sleep')!.done).toBe(true)
+  })
+
+  it('drops bed goals for a plan with rooms but no bedroom', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 5, 4), rectRoom('Kitchen', 5.12, 0, 3, 4))
+    const ids = score(d).goals.map((g) => g.id)
+    expect(ids).not.toContain('sleep')
+    expect(ids).not.toContain('headboard')
+    expect(ids).toContain('eat')
+  })
+
+  it('infers the front door when none is marked', () => {
+    const d = sampleDoc()
+    const front = d.rooms[0].openings.find((o) => o.entrance)!
+    front.entrance = false
+    expect(inferEntrance(d)).toEqual({ roomId: d.rooms[0].id, openingId: front.id })
+    expect(goal(d, (g) => g.id === 'walkways')!.done).toBe(true)
+    // With one marked, nothing to infer.
+    front.entrance = true
+    expect(inferEntrance(d)).toBeNull()
+  })
+
+  it('names the level the same way in the pill and the sheet', () => {
+    const s = score(sampleDoc())
+    expect(s.headline).toBe(s.level.name)
+    const shown = withBestLevel(s, 4)
+    expect(shown.headline).toBe('Designer home')
+  })
+
+  it('keys the best level per design', () => {
+    const d = sampleDoc()
+    const a = bestLevelKey(d)
+    d.layouts.push({ id: 'other', name: 'Idea 2', placements: [] })
+    d.activeLayoutId = 'other'
+    expect(bestLevelKey(d)).not.toBe(a)
+    expect(bestLevelKey(d)).toContain(d.apartment.id)
   })
 })
