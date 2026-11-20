@@ -1,9 +1,11 @@
 // "Your designs": the homes you've moved into and the designs for the open one, as little
 // top-down postcards. Rename and delete sit behind a "…" menu, and deleting asks first.
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { analyze } from '../analysis'
 import type { Doc, Layout } from '../model/types'
-import { deleteHome, switchHome, useStore } from '../store'
+import { deleteHome, restoreHome, switchHome, useStore } from '../store'
 import { listHomes, type HomeEntry } from '../storage'
+import { scoreHome } from './goals'
 import * as I from './icons'
 import './designs.css'
 
@@ -146,11 +148,45 @@ const ago = (t: number) => {
   return d === 1 ? 'yesterday' : `${d} days ago`
 }
 
+/** Stars and level for each design of a home, and which one scores best (only with more than one). */
+export function useDesignScores(doc: Doc) {
+  return useMemo(() => {
+    const scores = new Map(
+      doc.layouts.map((l) => {
+        try {
+          const sc = scoreHome(doc, l, analyze(doc, l))
+          return [l.id, { stars: sc.stars, level: sc.level.name }] as const
+        } catch {
+          return [l.id, null] as const
+        }
+      }),
+    )
+    let best: string | null = null
+    let top = 0
+    if (doc.layouts.length > 1)
+      for (const l of doc.layouts) {
+        const st = scores.get(l.id)?.stars ?? 0
+        if (st > top) [best, top] = [l.id, st]
+      }
+    return { scores, best }
+  }, [doc.rooms, doc.items, doc.layouts, doc.apartment.units])
+}
+
+function Crown() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden>
+      <path d="M2 12.5h12l1-8-4 3-3-5-3 5-4-3z" fill="currentColor" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 /** Every home you've moved into, the open one first. Tap one to go there. */
 export function HomesStrip({ onRenameHome }: { onRenameHome: () => void }) {
   const doc = useStore((s) => s.doc)
   // The index changes on save; re-read it whenever the open document changes.
   const [tick, setTick] = useState(0)
+  // The home just deleted, for "Deleted X · Undo" (it waits in the trash for a week).
+  const [deleted, setDeleted] = useState<{ id: string; name: string } | null>(null)
   const homes = useMemo<HomeEntry[]>(() => {
     const saved = listHomes()
     const here = saved.find((h) => h.id === doc.apartment.id) ?? { id: doc.apartment.id, name: doc.apartment.name, updatedAt: Date.now() }
@@ -158,6 +194,23 @@ export function HomesStrip({ onRenameHome }: { onRenameHome: () => void }) {
   }, [doc.apartment.id, doc.apartment.name, tick])
   const many = homes.length > 1
   return (
+    <>
+    {deleted && (
+      <div className="dz-undo" role="status">
+        <span>Deleted {deleted.name}</span>
+        <button
+          className="g-btn sm"
+          onClick={() => {
+            const ok = restoreHome(deleted.id)
+            setDeleted(null)
+            setTick((t) => t + 1)
+            useStore.getState().notify(ok ? `${deleted.name} is back.` : `Couldn't bring back ${deleted.name}.`)
+          }}
+        >
+          Undo
+        </button>
+      </div>
+    )}
     <div className="dz-homes" aria-label="Your homes">
       {homes.map((h) => {
         const here = h.id === doc.apartment.id
@@ -188,11 +241,11 @@ export function HomesStrip({ onRenameHome }: { onRenameHome: () => void }) {
                         label: 'Delete home',
                         icon: <I.IconTrash width={16} height={16} />,
                         danger: true,
-                        confirm: `Delete ${h.name} and all its designs? This can't be undone.`,
+                        confirm: `Delete ${h.name} and all its designs? You can undo it right after.`,
                         onPick: () => {
-                          deleteHome(h.id)
+                          if (deleteHome(h.id)) setDeleted({ id: h.id, name: h.name })
+                          else useStore.getState().notify(`Couldn't delete ${h.name}.`)
                           setTick((t) => t + 1)
-                          useStore.getState().notify(`Deleted ${h.name}.`)
                         },
                       },
                     ]
@@ -203,6 +256,7 @@ export function HomesStrip({ onRenameHome }: { onRenameHome: () => void }) {
         )
       })}
     </div>
+    </>
   )
 }
 
@@ -211,6 +265,7 @@ export function DesignsSheetBody() {
   const s = useStore.getState()
   const [editing, setEditing] = useState<string | null>(null)
   const [renamingHome, setRenamingHome] = useState(false)
+  const { scores, best } = useDesignScores(doc)
   return (
     <>
       <h3 className="hud-h3">Your homes</h3>
@@ -230,6 +285,7 @@ export function DesignsSheetBody() {
         {doc.layouts.map((l) => {
           const active = l.id === doc.activeLayoutId
           const n = l.placements.length
+          const sc = scores.get(l.id)
           return (
             <div key={l.id} className={`dz-design g-card${active ? ' on' : ''}`}>
               <button className="dz-design-main" onClick={() => s.setActiveLayout(l.id)} aria-pressed={active}>
@@ -247,8 +303,21 @@ export function DesignsSheetBody() {
                     <strong>{l.name}</strong>
                   )}
                   <small>
-                    {n} piece{n === 1 ? '' : 's'}
-                    {active && ' · playing'}
+                    {sc && (
+                      <span className="dz-score">
+                        ★{sc.stars} · {sc.level}
+                      </span>
+                    )}
+                    {best === l.id && (
+                      <span className="dz-crown" title="Your best design">
+                        <Crown />
+                        Best
+                      </span>
+                    )}
+                    <span>
+                      {n} piece{n === 1 ? '' : 's'}
+                      {active && ' · playing'}
+                    </span>
                   </small>
                 </span>
               </button>

@@ -113,6 +113,7 @@ function GameApp() {
           <div className="hud-toast">
             <GameToast />
           </div>
+          <SaveFailedToast />
           <LevelUpCard />
         </>
       )}
@@ -341,6 +342,23 @@ function GameToast() {
   )
 }
 
+/**
+ * A save that didn't reach storage: says so, and stays up (the store retries on every change)
+ * until a save goes through. The backup is the same JSON file as Settings' download.
+ */
+function SaveFailedToast() {
+  const failed = useStore((s) => s.saveFailed)
+  if (!failed) return null
+  return (
+    <div className="dz-save-failed g-card" role="alert">
+      <span>Couldn't save. Your device storage is full.</span>
+      <button className="g-btn sm primary" onClick={() => downloadJSON(useStore.getState().doc)}>
+        Download a backup
+      </button>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------- top bar
 
 function TopBar() {
@@ -354,8 +372,14 @@ function TopBar() {
   return (
     <header className="hud-top">
       <button className="hud-home" onClick={() => open('layouts')} aria-label="Your designs">
-        <span className="hud-home-icon">
-          <I.IconDesigns />
+        <span className="dz-hud-icon-col">
+          <span className="hud-home-icon">
+            <I.IconDesigns />
+          </span>
+          {/* Phones hide the name beside the icon; the design's name sits under it instead. */}
+          <small className="dz-hud-design" aria-hidden>
+            {layoutName}
+          </small>
         </span>
         <span className="hud-home-text">
           <strong>{name}</strong>
@@ -855,9 +879,14 @@ function DesignsSheet() {
   return (
     <Sheet title={name} sub="Try different designs for the same home and flip between them.">
       <DesignsSheetBody />
-      <button className="g-btn primary" onClick={() => s.addLayout()}>
-        <I.IconPlus width={18} height={18} /> New empty design
-      </button>
+      <div className="dz-actions">
+        <button className="g-btn primary" onClick={() => s.duplicateLayout(useStore.getState().doc.activeLayoutId)}>
+          <I.IconCopy width={18} height={18} /> Try a variation
+        </button>
+        <button className="g-btn ghost" onClick={() => s.addLayout()}>
+          <I.IconPlus width={18} height={18} /> New empty design
+        </button>
+      </div>
     </Sheet>
   )
 }

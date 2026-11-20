@@ -80,7 +80,7 @@ export function sampleDoc(opts: { settled?: boolean } = {}): Doc {
     apartment: { id: uid(), name: 'Sample apartment', units: 'metric' },
     rooms: [living, bedroom, bath],
     items,
-    layouts: [{ id: layoutId, name: 'Current', placements }],
+    layouts: [{ id: layoutId, name: 'Move-in day', placements }],
     activeLayoutId: layoutId,
   }
 }

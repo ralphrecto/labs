@@ -107,12 +107,27 @@ function Stars({ n, filled = true }: { n: number; filled?: boolean }) {
   )
 }
 
-type Banner = { key: number; kind: 'goal'; goal: Goal; more: number } | { key: number; kind: 'welcome'; goal?: Goal; home: string; away?: string }
+type Banner =
+  | { key: number; kind: 'goal'; goal: Goal; more: number }
+  /** `line`: "Sample apartment · Move-in day · Cozy, 14★". `top`: at the top level, lead with a variation. */
+  | { key: number; kind: 'welcome'; goal?: Goal; home: string; away?: string; line: string; top: boolean }
+
+/** At the top level there's nothing left to climb in this design: a variation is the next game. */
+function tryVariation() {
+  const st = useStore.getState()
+  st.duplicateLayout(st.doc.activeLayoutId)
+  st.notify(`Made ${activeLayout(useStore.getState().doc).name}. Rearrange away!`)
+}
 
 export function VibeMeter() {
   const score = useHomeScore()
   const designKey = useStore((s) => bestLevelKey(s.doc))
   const homeName = useStore((s) => s.doc.apartment.name)
+  const designName = useStore((s) => activeLayout(s.doc).name)
+  const placed = useStore((s) => activeLayout(s.doc).placements.length)
+  const top = score.level.index >= LEVELS.length - 1
+  const scoreRef = useRef(score)
+  scoreRef.current = score
   const welcomeBack = useGame((s) => s.welcomeBack)
   const levelUp = useGame((s) => s.levelUp)
   const sheet = useGame((s) => s.sheet)
@@ -201,7 +216,16 @@ export function VibeMeter() {
   useEffect(() => {
     if (!welcomeBack) return
     useGame.getState().consumeWelcomeBack()
-    setBanner({ key: Date.now(), kind: 'welcome', goal: nextRef.current, home: homeName, away: lastAwayMs ? ago(lastAwayMs) : undefined })
+    const sc = scoreRef.current
+    setBanner({
+      key: Date.now(),
+      kind: 'welcome',
+      goal: nextRef.current,
+      home: homeName,
+      away: lastAwayMs ? ago(lastAwayMs) : undefined,
+      line: `${homeName} · ${designName} · ${sc.level.name}, ${sc.stars}★`,
+      top: sc.level.index >= LEVELS.length - 1,
+    })
     // Only when the flag is raised; the score at that moment is the one to suggest from.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [welcomeBack])
@@ -211,11 +235,17 @@ export function VibeMeter() {
     const t = setTimeout(() => setPop(null), 1300)
     return () => clearTimeout(t)
   }, [pop])
+  // The welcome back stays until it's tapped or a piece is placed; goal banners pass by.
   useEffect(() => {
-    if (!banner) return
-    const t = setTimeout(() => setBanner(null), banner.kind === 'welcome' ? 6000 : 2600)
+    if (!banner || banner.kind === 'welcome') return
+    const t = setTimeout(() => setBanner(null), 2600)
     return () => clearTimeout(t)
   }, [banner])
+  const placedBefore = useRef(placed)
+  useEffect(() => {
+    if (placed > placedBefore.current) setBanner((b) => (b?.kind === 'welcome' ? null : b))
+    placedBefore.current = placed
+  }, [placed])
 
   const fill = levelProgress(score)
   // One quiet chip with the next goal. Tapping it steps it aside until the home changes.
@@ -251,7 +281,15 @@ export function VibeMeter() {
           <span className="goal-plus">{pop.half ? '½' : `+${pop.delta}`} ★</span>
         </div>
       )}
-      {chip && (
+      {top && !banner && !levelUp && !sheet && (
+        <button type="button" className="goal-next" onClick={tryVariation} aria-label="Top level reached. Try a variation of this design">
+          <span className="goal-next-text">
+            <b>Try a variation</b>
+          </span>
+          <span className="goal-next-stars">★</span>
+        </button>
+      )}
+      {chip && !top && (
         <button
           type="button"
           className="goal-next"
@@ -283,12 +321,13 @@ export function VibeMeter() {
       {banner?.kind === 'welcome' && (
         <button
           type="button"
-          className="goal-banner welcome"
+          className="goal-banner welcome dz-stay"
           key={`banner${banner.key}`}
           role="status"
           onClick={() => {
             setBanner(null)
-            if (banner.goal) useGame.getState().showGoal({ id: banner.goal.id })
+            if (banner.top) tryVariation()
+            else if (banner.goal) useGame.getState().showGoal({ id: banner.goal.id })
           }}
         >
           <span className="goal-banner-check">
@@ -296,10 +335,11 @@ export function VibeMeter() {
           </span>
           <span className="goal-banner-text">
             <small>
-              Welcome back{banner.goal ? '!' : ` to ${banner.home}!`}
+              Welcome back!
               {banner.away ? ` ${banner.away}` : ''}
             </small>
-            {banner.goal ? `Next: ${banner.goal.title} (+${banner.goal.stars} ★)` : 'Your home missed you.'}
+            <span className="dz-welcome-line">{banner.line}</span>
+            {banner.top ? 'Try a variation of this design' : banner.goal ? `Next: ${banner.goal.title} (+${banner.goal.stars} ★)` : 'Your home missed you.'}
           </span>
         </button>
       )}

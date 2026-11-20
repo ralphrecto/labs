@@ -6,7 +6,7 @@ import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
 import type { Doc, Item, Layout, Opening, Placement, Room, ScanRef, ScanReference, Units, Vec2 } from './model/types'
 import { calibrate, rescaleAbout } from './scan/align'
-import { deleteHome as dropHome, listHomes, loadDoc, loadHome, saveDoc, setCurrentHome } from './storage'
+import { deleteHome as dropHome, listHomes, loadDoc, loadHome, restoreHome as undropHome, saveDoc, setCurrentHome } from './storage'
 
 export type Mode = 'select' | 'draw-room' | 'door' | 'window' | 'scan-measure' | 'scan-straighten' | 'scan-move'
 export type View = 'split' | 'plan' | '3d' | 'compare'
@@ -33,6 +33,8 @@ interface UIState {
   scanDraft: { scanId: string; a: Vec2; b?: Vec2 } | null
   /** 3D view: how to show scans. */
   scan3d: 'off' | 'with-model' | 'scan-only'
+  /** The last save didn't reach storage (full, most likely). It's retried on every change. */
+  saveFailed: boolean
 }
 
 interface State extends UIState {
@@ -138,6 +140,7 @@ export const useStore = create<State>((set, get) => ({
   activeScanId: null,
   scanDraft: null,
   scan3d: 'with-model',
+  saveFailed: false,
 
   update: (fn) =>
     set((s) => {
@@ -344,18 +347,20 @@ export const useStore = create<State>((set, get) => ({
       })),
     ),
 
+  // Switching designs (including into a new one or a copy) starts that design's undo history
+  // afresh, so Undo never jumps from one design to another.
   addLayout: () =>
-    get().update((d) => {
+    switchDesign((d) => {
       const id = uid()
       return { ...d, layouts: [...d.layouts, { id, name: designName(d.layouts.map((l) => l.name)), placements: [] }], activeLayoutId: id }
     }),
   duplicateLayout: (id) =>
-    get().update((d) => {
+    switchDesign((d) => {
       const src = d.layouts.find((l) => l.id === id)
       if (!src) return d
       const nid = uid()
       // Placements reference the shared item library, so a copy just needs new placement ids.
-      const copy: Layout = { id: nid, name: designName(d.layouts.map((l) => l.name)), placements: src.placements.map((p) => ({ ...p, id: uid() })) }
+      const copy: Layout = { id: nid, name: copyName(src.name, d.layouts.map((l) => l.name)), placements: src.placements.map((p) => ({ ...p, id: uid() })) }
       return { ...d, layouts: [...d.layouts, copy], activeLayoutId: nid }
     }),
   renameLayout: (id, name) => get().update((d) => ({ ...d, layouts: d.layouts.map((l) => (l.id === id ? { ...l, name } : l)) })),
@@ -365,10 +370,7 @@ export const useStore = create<State>((set, get) => ({
       const layouts = d.layouts.filter((l) => l.id !== id)
       return { ...d, layouts, activeLayoutId: d.activeLayoutId === id ? layouts[0].id : d.activeLayoutId }
     }),
-  setActiveLayout: (id) => {
-    get().update((d) => ({ ...d, activeLayoutId: id }))
-    set({ selection: null })
-  },
+  setActiveLayout: (id) => switchDesign((d) => (d.activeLayoutId === id || !d.layouts.some((l) => l.id === id) ? d : { ...d, activeLayoutId: id })),
 
   addScan: (ref) => {
     get().update((d) => ({ ...d, scans: [...(d.scans ?? []), ref] }))
@@ -384,6 +386,21 @@ export const useStore = create<State>((set, get) => ({
     get().update((d) => mapScan(d, id, (s) => recalibrated(s, s.references.map((r) => (r.id === refId ? { ...r, ...patch } : r)), anchor))),
   deleteScanReference: (id, refId, anchor) => get().update((d) => mapScan(d, id, (s) => recalibrated(s, s.references.filter((r) => r.id !== refId), anchor))),
 }))
+
+/** A change that moves to another design: applied without an undo entry, and history starts over. */
+function switchDesign(fn: (d: Doc) => Doc) {
+  const s = useStore.getState()
+  const next = fn(s.doc)
+  if (next === s.doc) return
+  useStore.setState({ doc: next, past: [], future: [], selection: null, gesture: false })
+}
+
+/** A copy is named after its source: "Move-in day" → "Move-in day 2", then "Move-in day 3". */
+export function copyName(source: string, taken: string[]) {
+  const t = new Set(taken)
+  const base = source.replace(/ \d+$/, '') || source
+  for (let n = 2; ; n++) if (!t.has(`${base} ${n}`)) return `${base} ${n}`
+}
 
 const mapScan = (d: Doc, id: string, fn: (r: ScanRef) => ScanRef): Doc => ({ ...d, scans: (d.scans ?? []).map((r) => (r.id === id ? fn(r) : r)) })
 
@@ -458,7 +475,15 @@ export function deleteHome(id: string): boolean {
     if (!other || !switchHome(other.id)) return false
   }
   flushSave()
+  // A save of the deleted home still waiting for space must not bring it back.
+  pending.delete(id)
   return dropHome(id)
+}
+
+/** Bring back a home deleted with deleteHome (it stays in the trash for a week). */
+export function restoreHome(id: string): boolean {
+  flushSave()
+  return undropHome(id)
 }
 
 /** Playful names for new designs and copies; numbered once they run out. */
@@ -471,13 +496,17 @@ export function designName(taken: string[]) {
 }
 export { catalogEntry }
 
-// Persist the document locally (debounced), into the open home's own slot.
+// Persist the document locally (debounced), into the open home's own slot. A save that fails
+// (storage full) stays pending, per home, and is retried on the next change and on pagehide; until
+// then a toast that stays up offers a backup download.
 let saveTimer: ReturnType<typeof setTimeout> | undefined
-let pending: Doc | null = null
-function flushSave() {
+const pending = new Map<string, Doc>()
+export function flushSave(): boolean {
   clearTimeout(saveTimer)
-  if (pending) saveDoc(pending)
-  pending = null
+  for (const [id, d] of [...pending]) if (saveDoc(d)) pending.delete(id)
+  const failed = pending.size > 0
+  if (useStore.getState().saveFailed !== failed) useStore.setState({ saveFailed: failed })
+  return !failed
 }
 useStore.subscribe((s, prev) => {
   if (s.doc === prev.doc) return
@@ -487,7 +516,7 @@ useStore.subscribe((s, prev) => {
     setCurrentHome(s.doc.apartment.id)
   }
   clearTimeout(saveTimer)
-  pending = s.doc
+  pending.set(s.doc.apartment.id, s.doc)
   saveTimer = setTimeout(flushSave, 300)
 })
 if (typeof window !== 'undefined') window.addEventListener('pagehide', flushSave)
