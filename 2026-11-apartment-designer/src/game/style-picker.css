@@ -6,7 +6,7 @@
 }
 .sty-btn:hover { transform: translateY(-2px) scale(1.05); }
 .sty-btn:active { transform: scale(0.94); }
-.sty-btn.open { border-color: var(--g-sky); }
+.sty-btn.open { border-color: var(--g-coral); }
 .sty-btn .sty-swatch { width: 100%; height: 100%; display: block; }
 .sty-badge {
   position: absolute; right: 1px; bottom: 1px; width: 17px; height: 17px; border-radius: 6px; background: var(--g-paper); color: var(--g-ink);
@@ -28,7 +28,7 @@
 }
 .sty-tile-art .sty-swatch { width: 100%; height: 100%; display: block; }
 .sty-tile:hover:not(:disabled) .sty-tile-art { transform: translateY(-3px) rotate(-2deg); }
-.sty-tile.on .sty-tile-art { border-color: var(--g-sky); }
+.sty-tile.on .sty-tile-art { border-color: var(--g-coral); }
 .sty-tile.on { color: var(--g-ink); }
 .sty-tile:disabled { opacity: 0.4; cursor: default; }
 @keyframes sty-in { from { opacity: 0; transform: translateX(14px) scale(0.85); } to { opacity: 1; transform: none; } }

@@ -43,10 +43,44 @@
 /* ---------- camera buttons */
 .hud-cam { position: absolute; right: 16px; top: calc(var(--top-h) + 10px + env(safe-area-inset-top)); z-index: 15; display: flex; flex-direction: column; gap: 8px; }
 @media (max-width: 640px) { .hud-cam { top: calc(124px + env(safe-area-inset-top)); } }
-.hud-look { position: absolute; top: calc(16px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 20; display: flex; gap: 8px; padding: 6px; background: var(--g-paper); border-radius: 999px; box-shadow: var(--g-shadow-sm); }
+.hud-drawer-slot { display: contents; }
+.hud-drawer-slot.tucked .buy-drawer { display: none; }
+.hud-cam-row { position: relative; display: flex; justify-content: flex-end; }
+/* While the style picker is open, lift the whole column above the drawer, selection bar and dock. */
+.hud-cam:has(.sty-pop) { z-index: 45; }
+.hud-cam-label {
+  position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%); white-space: nowrap; pointer-events: none;
+  background: var(--g-ink); color: #fff; font: 800 12px var(--g-font); padding: 4px 10px; border-radius: 999px; box-shadow: var(--g-shadow-sm);
+  animation: hud-label 9s ease both;
+}
+@keyframes hud-label { 0% { opacity: 0; transform: translate(6px, -50%); } 5%, 88% { opacity: 1; transform: translate(0, -50%); } 100% { opacity: 0; } }
+
+/* Look mode: Dollhouse / Walk in segmented control, plus a round Spin toggle beside it. */
+.hud-look-bar { position: absolute; top: calc(16px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 10px; }
+.hud-look { display: flex; gap: 4px; padding: 5px; background: var(--g-paper); border-radius: 999px; box-shadow: var(--g-shadow-sm); }
 .hud-look .g-chip { background: transparent; }
-.hud-look .g-chip.on { background: var(--g-ink); }
+.hud-look .g-chip.on { background: var(--g-coral); color: #fff; }
+.hud-spin {
+  width: 46px; height: 46px; flex: none; border-radius: 50%; border: 3px solid transparent; background: var(--g-paper); color: var(--g-ink-2); display: grid; place-items: center;
+  box-shadow: var(--g-shadow-sm); cursor: pointer; padding: 0; transition: border-color 0.15s, color 0.15s, transform 0.18s var(--g-ease);
+}
+.hud-spin:active { transform: scale(0.92); }
+.hud-spin.on { border-color: var(--g-coral); color: var(--g-coral); }
+.hud-spin.on svg { animation: hud-spin 4s linear infinite; }
+@keyframes hud-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .hud-spin.on svg { animation: none; } }
+.game button.hud-spin:hover { border-color: var(--g-line); background: var(--g-paper); }
+.game button.hud-spin.on:hover { border-color: var(--g-coral); }
 .mode-look .hud-cam { display: none; }
+
+/* First walk-in: how to look around and move. */
+.scene-eye-hint {
+  position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 12; pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: rgba(45, 38, 32, 0.82); color: #fff; padding: 12px 20px; border-radius: 20px; font: 600 13px var(--g-font, system-ui); text-align: center;
+  width: max-content; max-width: calc(100vw - 48px); animation: g-pop 0.3s var(--g-ease, ease-out);
+}
+.scene-eye-hint b { font-weight: 900; font-size: 16px; white-space: nowrap; }
+
 
 /* ---------- dock */
 .hud-dock {
@@ -57,21 +91,19 @@
   border: none; background: transparent; border-radius: 999px; padding: 8px 18px 8px 8px; display: flex; align-items: center; gap: 8px; cursor: pointer;
   font: 900 15px var(--g-font); color: var(--g-ink-2); transition: background 0.2s, color 0.2s, transform 0.18s var(--g-ease);
 }
-.hud-mode:hover { transform: translateY(-2px); }
+@media (hover: hover) { .hud-mode:not(.on):hover { transform: translateY(-2px); } }
+.hud-mode-label { line-height: 1.15; }
 .hud-mode-icon { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: var(--g-paper-2); transition: background 0.2s, transform 0.25s var(--g-ease); }
 .hud-mode-icon svg { width: 24px; height: 24px; }
 .hud-mode.on { color: var(--g-ink); }
 .hud-mode.on .hud-mode-icon { color: #fff; transform: scale(1.08) rotate(-6deg); }
-.hud-mode-build.on .hud-mode-icon { background: var(--g-plum); }
-.hud-mode-buy.on .hud-mode-icon { background: var(--g-coral); }
-.hud-mode-look.on .hud-mode-icon { background: var(--g-sky); }
+.hud-mode.on .hud-mode-icon { background: var(--g-coral); }
 .hud-mode.on { background: var(--g-paper-2); }
 @media (max-width: 480px) {
   .hud-mode { flex-direction: column; gap: 2px; padding: 4px 12px 4px; font-size: 12px; }
   .hud-mode-icon { width: 44px; height: 44px; }
   .hud-mode.on { background: transparent; }
 }
-.mode-look .hud-dock { opacity: 0.85; }
 
 /* ---------- build tray */
 .hud-tray {
@@ -86,7 +118,12 @@
 .hud-tool:hover { transform: translateY(-3px); background: #efe4d3; }
 .hud-tool-icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--g-plum); color: #fff; }
 .hud-tool-icon svg { width: 22px; height: 22px; }
-@media (max-width: 480px) { .hud-tool { width: 64px; } }
+/* Phones: five tools fit across without scrolling. (A scrolling tray here also left a blank cream
+   box painted over the room in some browsers.) */
+@media (max-width: 480px) {
+  .hud-tray { gap: 6px; padding: 8px; overflow: visible; }
+  .hud-tool { width: calc((100vw - 24px - 16px - 24px) / 5); max-width: 64px; }
+}
 
 .hud-toolbanner {
   position: absolute; top: calc(16px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 35; display: flex; align-items: center; gap: 12px;
@@ -146,7 +183,12 @@
 /* ---------- toast */
 .hud-toast .toast {
   bottom: auto; top: calc(var(--top-h) + 64px + env(safe-area-inset-top)); background: var(--g-ink); border-radius: 999px; padding: 10px 18px; font: 800 14px var(--g-font);
-  max-width: calc(100vw - 32px); text-align: center; animation: g-pop 0.25s var(--g-ease); z-index: 60;
+  max-width: calc(100vw - 32px); text-align: center; animation: g-pop 0.25s var(--g-ease); z-index: 60; transition: top 0.25s var(--g-ease);
+}
+/* On phones the "Goal complete" banner slides in under the stars, right where the toast sits, so the
+   toast steps down below it while the banner shows. */
+@media (max-width: 640px) {
+  .game:has(.goal-banner) .hud-toast .toast { top: calc(188px + env(safe-area-inset-top)); }
 }
 
 /* ---------- sheets */

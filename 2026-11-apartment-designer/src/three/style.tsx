@@ -34,7 +34,7 @@ export const STYLE_STAGE: Record<StyleId, { sky?: string; ground?: string; showG
   toon: { sky: '#fde9cf', ground: '#f8d9b4', showGround: true, shadows: true },
   real: { sky: '#dfe4e8', ground: '#c9c4bb', showGround: true, shadows: true },
   scan: { sky: '#1d2129', showGround: false, shadows: false },
-  clay: { sky: '#dcd6ce', ground: '#e6e1da', showGround: true, shadows: true },
+  clay: { sky: '#c9c2b8', ground: '#cdc5ba', showGround: true, shadows: true },
   blueprint: { sky: '#1c4a8a', showGround: false, shadows: false },
 }
 
@@ -42,14 +42,16 @@ const BLUEPRINT_LINE = '#e8f2ff'
 const BLUEPRINT_FILL = '#5d95e0'
 const INK = '#3d2c25'
 const CLAY = '#eee9e2'
+const CLAY_ITEM = '#f4f0ea'
+const CLAY_FLOOR = '#d9d2c7'
 
 // ------------------------------------------------------------------ toon ramp
 
 let ramp: THREE.DataTexture | null = null
-/** Three flat light bands: shadow, mid, lit. */
+/** Three flat light bands: shadow, mid, lit. The shadow band stays fairly light so shade reads warm, not muddy. */
 function toonRamp() {
   if (ramp) return ramp
-  const d = new Uint8Array([110, 110, 110, 255, 190, 190, 190, 255, 255, 255, 255, 255])
+  const d = new Uint8Array([128, 128, 128, 255, 196, 196, 196, 255, 255, 255, 255, 255])
   ramp = new THREE.DataTexture(d, 3, 1, THREE.RGBAFormat)
   ramp.minFilter = THREE.NearestFilter
   ramp.magFilter = THREE.NearestFilter
@@ -105,7 +107,7 @@ export function Surface({
           color={map ? '#ffffff' : color}
           map={map ?? null}
           roughness={role === 'soft' ? 0.95 : role === 'floor' ? 0.55 : role === 'wall' ? 0.92 : 0.62}
-          envMapIntensity={role === 'wall' ? 0.35 : 0.55}
+          envMapIntensity={role === 'wall' ? 0.2 : 0.35}
           emissive={emissive}
           emissiveIntensity={emissiveIntensity}
           side={side}
@@ -114,7 +116,7 @@ export function Surface({
     case 'clay':
       return (
         <meshStandardMaterial
-          color={role === 'item' || role === 'soft' ? mix(CLAY, color, 0.1) : role === 'floor' ? '#e4ded5' : CLAY}
+          color={role === 'item' || role === 'soft' ? mix(CLAY_ITEM, color, 0.08) : role === 'floor' ? CLAY_FLOOR : CLAY}
           roughness={1}
           emissive={emissive}
           emissiveIntensity={emissiveIntensity}
@@ -153,6 +155,7 @@ export function Ink({ highlight, soft }: { highlight?: string; soft?: boolean })
   if (style === 'toon') return <Edges threshold={soft ? 40 : 20} color={highlight ?? INK} lineWidth={highlight ? 2.2 : 1.6} />
   if (style === 'blueprint') return <Edges threshold={20} color={highlight ? '#ffd166' : BLUEPRINT_LINE} lineWidth={highlight ? 2 : 1.2} />
   if (style === 'scan') return <Edges threshold={20} color={highlight ?? '#ffffff'} lineWidth={1.4} transparent opacity={0.85} />
+  if (style === 'clay') return <Edges threshold={soft ? 40 : 20} color={highlight ?? '#000000'} lineWidth={highlight ? 2 : 1} transparent opacity={highlight ? 0.9 : 0.15} />
   return null
 }
 
@@ -168,7 +171,7 @@ export function restyle(obj: THREE.Object3D, style: StyleId) {
       const src = mat as THREE.MeshStandardMaterial
       const color = src.color ? `#${src.color.getHexString()}` : '#cccccc'
       if (style === 'toon') return new THREE.MeshToonMaterial({ color: src.map ? '#ffffff' : toonHex(color), map: src.map ?? null, gradientMap: toonRamp() })
-      if (style === 'clay') return new THREE.MeshStandardMaterial({ color: CLAY, roughness: 1 })
+      if (style === 'clay') return new THREE.MeshStandardMaterial({ color: CLAY_ITEM, roughness: 1 })
       if (style === 'blueprint') return new THREE.MeshBasicMaterial({ color: BLUEPRINT_FILL, transparent: true, opacity: 0.2, depthWrite: false })
       return new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.12, depthWrite: false })
     }
@@ -201,32 +204,47 @@ export function StyleEnvironment() {
   return null
 }
 
-/** Lights for the style. Cartoon wants one strong sun for clean bands; Lifelike leans on the environment. */
-export function StyleLights({ target }: { target: THREE.Vector3 }) {
+/**
+ * Lights for the style. Cartoon wants one strong sun for clean bands; Lifelike leans on the environment.
+ * `extent` is the radius (m) the shadows need to cover around `target`: the home's footprint plus a margin.
+ */
+export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; extent?: number }) {
   const { style } = useStyle()
   const shadows = STYLE_STAGE[style].shadows
   const sun = useMemo(() => {
-    if (style === 'toon') return { pos: [target.x + 5, 10, target.z + 4] as const, intensity: 2.2, color: '#fff3df' }
-    if (style === 'real') return { pos: [target.x - 4, 8, target.z + 6] as const, intensity: 2.4, color: '#fff1dc' }
+    // Cartoon: high and nearly overhead, so furniture gets small crisp shadows and walls don't
+    // throw long dark wedges across the rooms.
+    if (style === 'toon') return { pos: [target.x + 2.5, 18, target.z + 2] as const, intensity: 2.2, color: '#fff3df' }
+    if (style === 'real') return { pos: [target.x - 4, 8, target.z + 6] as const, intensity: 3.0, color: '#fff1dc' }
     if (style === 'clay') return { pos: [target.x - 3, 9, target.z + 5] as const, intensity: 2.6, color: '#ffffff' }
     return { pos: [target.x + 4, 9, target.z + 6] as const, intensity: 1.4, color: '#ffffff' }
   }, [style, target])
+  // The sun aims at the middle of the home (a directional light aims at its target's position).
+  const aim = useMemo(() => new THREE.Object3D(), [])
+  aim.position.copy(target)
+  const r = Math.max(2, extent)
   if (style === 'blueprint' || style === 'scan') return <ambientLight intensity={1} />
   return (
     <>
       <ambientLight intensity={style === 'toon' ? 0.9 : style === 'real' ? 0 : style === 'clay' ? 0.15 : 0.8} color={style === 'toon' ? '#ffe9d6' : '#ffffff'} />
       <hemisphereLight args={[style === 'toon' ? '#fff8ec' : '#ffffff', style === 'toon' ? '#e7b48c' : style === 'clay' ? '#8f8a84' : '#b9a98f', style === 'real' ? 0.15 : style === 'clay' ? 0.9 : 0.6]} />
+      <primitive object={aim} />
       <directionalLight
+        key={`${r.toFixed(2)}`}
         position={sun.pos as unknown as [number, number, number]}
+        target={aim}
         intensity={sun.intensity}
         color={sun.color}
         castShadow={shadows}
         shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-12}
-        shadow-camera-right={12}
-        shadow-camera-top={12}
-        shadow-camera-bottom={-12}
+        shadow-camera-left={-r}
+        shadow-camera-right={r}
+        shadow-camera-top={r}
+        shadow-camera-bottom={-r}
+        shadow-camera-near={0.5}
+        shadow-camera-far={60}
         shadow-bias={-0.0004}
+        shadow-normalBias={0.02}
       />
     </>
   )

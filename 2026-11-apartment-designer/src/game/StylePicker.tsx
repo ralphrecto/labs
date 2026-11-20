@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { create } from 'zustand'
 import { useStore } from '../store'
 import { RENDER_STYLES, type RenderStyle } from '../three/style'
 import { useGame } from './gameStore'
@@ -84,10 +85,23 @@ const SCAN_DOTS: [number, number, string][] = (() => {
   return out
 })()
 
+/**
+ * Whether a style picker is open. The HUD tucks the furniture drawer away meanwhile, so on a phone
+ * the tiles and their names aren't hidden under it.
+ */
+export const useStylePicker = create<{ open: boolean; setOpen: (open: boolean) => void }>((set) => ({
+  open: false,
+  setOpen: (open) => set({ open }),
+}))
+
 export function StylePicker({ className = '' }: { className?: string }) {
   const style = useGame((s) => s.renderStyle)
   const hasScan = useStore((s) => (s.doc.scans ?? []).length > 0)
   const [open, setOpen] = useState(false)
+  useEffect(() => {
+    useStylePicker.getState().setOpen(open)
+  }, [open])
+  useEffect(() => () => useStylePicker.getState().setOpen(false), [])
   const [hint, setHint] = useState<RenderStyle | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
