@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import App, { Toast, useScanFiles, useShortcuts } from '../App'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import App, { useScanFiles, useShortcuts } from '../App'
 import { useAnalysis } from '../analysis'
 import { Inspector } from '../components/Panels'
 import { PlanView } from '../components/PlanView'
@@ -13,14 +13,14 @@ import { scanEntry } from '../scan/runtime'
 import { useScanUI } from '../scan/scanUi'
 import { activeLayout, loadSample, useStore } from '../store'
 import { downloadJSON, parseDoc } from '../storage'
-import { Scene3D, type WallMode } from '../three/Scene3D'
+import { Scene3D, type SceneInset, type WallMode } from '../three/Scene3D'
 import { BuyDrawer, ShopSheet } from './BuyDrawer'
 import { ItemThumb } from './ItemThumb'
 import { GoalsSheet, VibeMeter } from './Goals'
 import { useGame, type GameMode } from './gameStore'
 import * as I from './icons'
 import { Onboarding } from './Onboarding'
-import { StylePicker } from './StylePicker'
+import { StylePicker, useStylePicker } from './StylePicker'
 import './theme.css'
 import './hud.css'
 import './goals.css'
@@ -61,11 +61,14 @@ function GameApp() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const pickingStyle = useStylePicker((s) => s.open)
   const tool = storeMode !== 'select'
   const showDrawer = phase === 'play' && mode === 'buy' && !selection && !tool && !review
+  const gameRef = useRef<HTMLDivElement>(null)
+  const inset = useHudInset(gameRef)
   return (
-    <div className={`game mode-${mode}${tool ? ' tool-active' : ''}`}>
-      <Stage />
+    <div ref={gameRef} className={`game mode-${mode}${tool ? ' tool-active' : ''}`}>
+      <Stage inset={inset} />
       {phase === 'onboarding' ? (
         <Onboarding />
       ) : (
@@ -74,7 +77,13 @@ function GameApp() {
           {mode === 'look' && <LookControls />}
           {mode === 'look' && <StylePicker className="sty-look" />}
           <CameraControls />
-          {showDrawer && <BuyDrawer />}
+          {showDrawer && (
+            // The drawer steps aside while the style picker is open, so on a phone the style tiles
+            // and their names are never under it. Hidden rather than unmounted, so it comes back as it was.
+            <div className={`hud-drawer-slot${pickingStyle ? ' tucked' : ''}`}>
+              <BuyDrawer />
+            </div>
+          )}
           {mode === 'build' && !selection && !review && !tool && <BuildTray />}
           {tool && <ToolBanner />}
           {selection && !tool && mode !== 'look' && <ContextBar />}
@@ -85,7 +94,7 @@ function GameApp() {
           )}
           <Dock />
           <div className="hud-toast">
-            <Toast />
+            <GameToast />
           </div>
         </>
       )}
@@ -136,15 +145,24 @@ function useCam(): CamState {
   return camState
 }
 
-function Stage() {
+function Stage({ inset }: { inset: SceneInset }) {
   const view = useStageView()
   const phase = useGame((s) => s.phase)
   const mode = useGame((s) => s.mode)
   const cam = useCam()
   const style = useGame((s) => s.renderStyle)
   const control = useMemo(
-    () => ({ ...cam, ground: GROUND, sky: SKY, style, autoRotate: mode === 'look' && cam.autoRotate, eye: mode === 'look' && cam.eye }),
-    [cam, mode, style],
+    () => ({
+      ...cam,
+      ground: GROUND,
+      sky: SKY,
+      style,
+      autoRotate: mode === 'look' && cam.autoRotate,
+      eye: mode === 'look' && cam.eye,
+      inset,
+      hideFlags: mode === 'look',
+    }),
+    [cam, mode, style, inset],
   )
   return (
     <div
@@ -162,6 +180,97 @@ function Stage() {
       }}
     >
       {phase === 'onboarding' ? null : view === '3d' ? <Scene3D control={control} /> : <PlanView />}
+    </div>
+  )
+}
+
+/** HUD pieces along the bottom and the top of the screen that cover the stage. */
+const BOTTOM_HUD = ['.buy-drawer', '.hud-ctx-wrap', '.hud-tray', '.hud-dock', '.hud-review']
+const TOP_HUD = ['.hud-top', '.hud-look-bar']
+
+/**
+ * How much of the stage the HUD covers at the top and bottom (CSS px), kept up to date as the
+ * drawer, selection bar and tray come and go, so the 3D view can centre the home in what's left.
+ */
+function useHudInset(root: RefObject<HTMLDivElement | null>): SceneInset {
+  const [inset, setInset] = useState<SceneInset>({ top: 0, bottom: 0 })
+  useLayoutEffect(() => {
+    const game = root.current
+    if (!game) return
+    let raf = 0
+    const measure = () => {
+      raf = 0
+      const W = game.clientWidth
+      const H = game.clientHeight
+      let bottom = 0
+      let top = 0
+      for (const sel of BOTTOM_HUD) {
+        const el = game.querySelector<HTMLElement>(sel)
+        // Side panels (the scan review on wide screens) don't cover the middle of the stage.
+        if (!el || el.offsetWidth < W * 0.6) continue
+        bottom = Math.max(bottom, H - offsetTopIn(el, game))
+      }
+      for (const sel of TOP_HUD) {
+        const el = game.querySelector<HTMLElement>(sel)
+        if (el) top = Math.max(top, offsetTopIn(el, game) + el.offsetHeight)
+      }
+      setInset((was) => (Math.abs(was.top - top) < 4 && Math.abs(was.bottom - bottom) < 4 ? was : { top, bottom }))
+    }
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(measure)
+    }
+    measure()
+    const mo = new MutationObserver(schedule)
+    mo.observe(game, { childList: true, subtree: true })
+    window.addEventListener('resize', schedule)
+    return () => {
+      mo.disconnect()
+      window.removeEventListener('resize', schedule)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [root])
+  return inset
+}
+
+/** An element's top edge inside `root`, ignoring transforms (so opening animations don't count). */
+function offsetTopIn(el: HTMLElement, root: HTMLElement) {
+  let y = 0
+  let n: HTMLElement | null = el
+  while (n && n !== root) {
+    y += n.offsetTop
+    n = n.offsetParent as HTMLElement | null
+  }
+  return y
+}
+
+const DRAG_HINT = /\s*Drag it into place\.$/
+const DRAG_HINT_KEY = 'apartment-designer:drag-hint-count'
+const DRAG_HINT_TIMES = 3
+
+/**
+ * The game's toast. "Drag it into place" after buying something is only said the first few times;
+ * after that the toast just names what was placed.
+ */
+function GameToast() {
+  const toast = useStore((s) => s.toast)
+  const [hint, setHint] = useState<{ toast: string; keep: boolean } | null>(null)
+  useEffect(() => {
+    if (!toast || !DRAG_HINT.test(toast)) return
+    let n = DRAG_HINT_TIMES
+    try {
+      n = Number(localStorage.getItem(DRAG_HINT_KEY)) || 0
+      if (n < DRAG_HINT_TIMES) localStorage.setItem(DRAG_HINT_KEY, String(n + 1))
+    } catch {
+      // Private mode: show the hint every time rather than never.
+      n = 0
+    }
+    setHint({ toast, keep: n < DRAG_HINT_TIMES })
+  }, [toast])
+  if (!toast) return null
+  const text = DRAG_HINT.test(toast) && !(hint?.toast === toast && hint.keep) ? toast.replace(DRAG_HINT, '') : toast
+  return (
+    <div className="toast" role="status">
+      {text}
     </div>
   )
 }
@@ -238,27 +347,62 @@ function Dock() {
   )
 }
 
+const CAM_LABELS_KEY = 'apartment-designer:cam-labels-seen'
+
+/** Names next to the camera buttons on a first visit, until one is used or a few seconds pass. */
+function useFirstRunLabels() {
+  const [show, setShow] = useState(() => {
+    try {
+      return localStorage.getItem(CAM_LABELS_KEY) !== '1'
+    } catch {
+      return false
+    }
+  })
+  const done = () => {
+    setShow(false)
+    try {
+      localStorage.setItem(CAM_LABELS_KEY, '1')
+    } catch {
+      // Private mode: fine, they just show again next visit.
+    }
+  }
+  useEffect(() => {
+    if (!show) return
+    const t = setTimeout(done, 9000)
+    return () => clearTimeout(t)
+  }, [show])
+  return [show, done] as const
+}
+
 function CameraControls() {
   const view = useStageView()
   const mode = useGame((s) => s.mode)
   const tool = useStore((s) => s.mode !== 'select')
+  const [labels, seen] = useFirstRunLabels()
   if (mode === 'look' || tool) return null
+  const planLabel = view === '3d' ? 'Top-down plan' : '3D view'
   return (
-    <div className="hud-cam">
-      <button
-        className="g-icon sm"
-        onClick={() => useGame.getState().setCamera(view === '3d' ? 'plan' : '3d')}
-        aria-label={view === '3d' ? 'Top-down plan' : '3D view'}
-        title={view === '3d' ? 'Top-down plan' : '3D view'}
-      >
-        {view === '3d' ? <I.IconMap /> : <I.IconCube />}
-      </button>
-      {view === '3d' && (
-        <button className="g-icon sm" onClick={() => setCam({ resetKey: camState.resetKey + 1 })} aria-label="Reset camera" title="Reset camera">
-          <I.IconHome />
+    <div className={`hud-cam${labels ? ' labelled' : ''}`} onPointerDown={labels ? seen : undefined}>
+      <div className="hud-cam-row">
+        {labels && <span className="hud-cam-label">{view === '3d' ? 'Plan' : '3D'}</span>}
+        <button className="g-icon sm" onClick={() => useGame.getState().setCamera(view === '3d' ? 'plan' : '3d')} aria-label={planLabel} title={planLabel}>
+          {view === '3d' ? <I.IconMap /> : <I.IconCube />}
         </button>
+      </div>
+      {view === '3d' && (
+        <div className="hud-cam-row">
+          {labels && <span className="hud-cam-label">Recenter</span>}
+          <button className="g-icon sm" onClick={() => setCam({ resetKey: camState.resetKey + 1 })} aria-label="Recenter the view" title="Recenter the view">
+            <I.IconHome />
+          </button>
+        </div>
       )}
-      {view === '3d' && <StylePicker />}
+      {view === '3d' && (
+        <div className="hud-cam-row">
+          {labels && <span className="hud-cam-label">Style</span>}
+          <StylePicker />
+        </div>
+      )}
     </div>
   )
 }
@@ -266,16 +410,24 @@ function CameraControls() {
 function LookControls() {
   const cam = useCam()
   return (
-    <div className="hud-look">
-      <button className={`g-chip${!cam.eye ? ' on' : ''}`} onClick={() => setCam({ eye: false, resetKey: cam.resetKey + 1 })}>
-        <I.IconCube width={16} height={16} /> Dollhouse
-      </button>
-      <button className={`g-chip${cam.eye ? ' on' : ''}`} onClick={() => setCam({ eye: true, autoRotate: false })}>
-        <I.IconWalk width={16} height={16} /> Walk in
-      </button>
+    <div className="hud-look-bar">
+      <div className="hud-look" role="group" aria-label="View">
+        <button className={`g-chip${!cam.eye ? ' on' : ''}`} aria-pressed={!cam.eye} onClick={() => setCam({ eye: false, resetKey: cam.resetKey + 1 })}>
+          <I.IconCube width={16} height={16} /> Dollhouse
+        </button>
+        <button className={`g-chip${cam.eye ? ' on' : ''}`} aria-pressed={cam.eye} onClick={() => setCam({ eye: true, autoRotate: false })}>
+          <I.IconWalk width={16} height={16} /> Walk in
+        </button>
+      </div>
       {!cam.eye && (
-        <button className={`g-chip${cam.autoRotate ? ' on' : ''}`} onClick={() => setCam({ autoRotate: !cam.autoRotate })}>
-          <I.IconRotate width={16} height={16} /> Spin
+        <button
+          className={`hud-spin${cam.autoRotate ? ' on' : ''}`}
+          aria-pressed={cam.autoRotate}
+          aria-label={cam.autoRotate ? 'Stop spinning' : 'Spin the view'}
+          title={cam.autoRotate ? 'Stop spinning' : 'Spin the view'}
+          onClick={() => setCam({ autoRotate: !cam.autoRotate })}
+        >
+          <I.IconRotate width={20} height={20} />
         </button>
       )}
     </div>

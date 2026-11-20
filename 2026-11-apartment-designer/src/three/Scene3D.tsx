@@ -1,10 +1,10 @@
-import { OrbitControls } from '@react-three/drei'
+import { ContactShadows, Edges, OrbitControls } from '@react-three/drei'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useAnalysis } from '../analysis'
-import { bounds, centroid, dist, norm, scale, sub, add, v, wallInwardNormal, wallSegments } from '../model/geometry'
+import { bounds, centroid, dist, norm, openingEndpoints, pointInPolygon, polygonArea, scale, sub, add, v, wallInwardNormal, wallSegments } from '../model/geometry'
 import { snapPlacement } from '../model/snapping'
 import type { Item, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
@@ -62,7 +62,9 @@ function WallPiece({ w, mode, color, highlight }: { w: WallPieceSpec; mode: Wall
     m.position.y = (w.y0 + top) / 2
   })
   return (
-    <mesh ref={ref} position={w.pos} rotation={[0, w.rotY, 0]} castShadow receiveShadow>
+    // Cut-down walls in the dollhouse view would throw full-height shadows across the rooms, so
+    // walls only cast shadows when they stand at full height (Full walls, or walking in).
+    <mesh ref={ref} position={w.pos} rotation={[0, w.rotY, 0]} castShadow={mode === 'full'} receiveShadow>
       <boxGeometry args={w.size} />
       <Surface role="wall" color={color} highlight={highlight} />
       <Ink highlight={highlight} />
@@ -204,6 +206,49 @@ function useScanPalette(style: StyleId): ScanPalette | null {
   }, [wants, scans, rooms, entries])
 }
 
+/** Height of the first visible surface along a pointer ray, other than the object handling it. */
+function firstSolidHeight(e: ThreeEvent<MouseEvent>) {
+  const rc = new THREE.Raycaster(e.ray.origin, e.ray.direction)
+  let root: THREE.Object3D = e.object
+  while (root.parent) root = root.parent
+  for (const hit of rc.intersectObject(root, true)) {
+    const o = hit.object as THREE.Mesh
+    if (o === e.object || !o.isMesh) continue
+    let shown = true
+    for (let n: THREE.Object3D | null = o; n; n = n.parent) if (!n.visible) shown = false
+    const mat = o.material as THREE.Material
+    if (!shown || (mat && !Array.isArray(mat) && (!mat.visible || (mat.transparent && mat.opacity < 0.05)))) continue
+    return hit.point.y
+  }
+  return 0
+}
+
+const FLAG_COLOR = { error: '#e0484e', warning: '#e0962b' } as const
+const badges: Partial<Record<'error' | 'warning', THREE.CanvasTexture>> = {}
+/** A round "!" badge in the flag's color, drawn once and shared. */
+function flagBadge(flag: 'error' | 'warning') {
+  if (badges[flag]) return badges[flag]
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')!
+  g.beginPath()
+  g.arc(32, 32, 28, 0, Math.PI * 2)
+  g.fillStyle = FLAG_COLOR[flag]
+  g.fill()
+  g.lineWidth = 5
+  g.strokeStyle = '#ffffff'
+  g.stroke()
+  g.fillStyle = '#ffffff'
+  g.font = '900 38px system-ui, sans-serif'
+  g.textAlign = 'center'
+  g.textBaseline = 'middle'
+  g.fillText('!', 32, 34)
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  return (badges[flag] = t)
+}
+const noRaycast = () => null
+
 function PlacedItem({
   item,
   p,
@@ -217,7 +262,12 @@ function PlacedItem({
   flag?: 'error' | 'warning'
   onGrab: (e: ThreeEvent<PointerEvent>, p: Placement) => void
 }) {
-  const highlight = selected ? '#2f6fde' : flag === 'error' ? '#d64545' : flag === 'warning' ? '#d68a1f' : undefined
+  const { style } = useStyle()
+  // The classic editor tints problem pieces. In the game a tint reads as red furniture, so the
+  // piece keeps its own colors and gets an outline and a small "!" badge instead.
+  const tint = style === 'classic'
+  const highlight = selected ? '#2f6fde' : tint && flag === 'error' ? '#d64545' : tint && flag === 'warning' ? '#d68a1f' : undefined
+  const h = Math.max(item.height, 0.02)
   return (
     <group position={[p.x, 0, p.y]} rotation={[0, -p.rotation, 0]} onPointerDown={(e) => onGrab(e, p)}>
       <ItemModel item={item} highlight={highlight} />
@@ -227,11 +277,37 @@ function PlacedItem({
           <meshBasicMaterial color="#2f6fde" transparent opacity={0.25} />
         </mesh>
       )}
+      {flag && !selected && !tint && (
+        <group>
+          <mesh position={[0, h / 2, 0]} raycast={noRaycast}>
+            <boxGeometry args={[item.width + 0.04, h + 0.02, item.depth + 0.04]} />
+            <meshBasicMaterial visible={false} />
+            <Edges color={FLAG_COLOR[flag]} lineWidth={2.6} raycast={noRaycast} />
+          </mesh>
+          <sprite position={[0, h + 0.22, 0]} scale={[0.032, 0.032, 1]} raycast={noRaycast} renderOrder={10}>
+            <spriteMaterial map={flagBadge(flag)} sizeAttenuation={false} depthTest={false} transparent />
+          </sprite>
+        </group>
+      )}
     </group>
   )
 }
 
-function Scene({ wallMode, eye, autoRotate, ground = '#e9e6df' }: { wallMode: WallMode; eye: [number, number, number] | null; autoRotate?: boolean; ground?: string }) {
+function Scene({
+  wallMode,
+  eye,
+  autoRotate,
+  ground = '#e9e6df',
+  inset,
+  hideFlags,
+}: {
+  wallMode: WallMode
+  eye: EyeSpot | null
+  autoRotate?: boolean
+  ground?: string
+  inset?: SceneInset
+  hideFlags?: boolean
+}) {
   const { style } = useStyle()
   const stage = STYLE_STAGE[style]
   const doc = useStore((s) => s.doc)
@@ -260,7 +336,8 @@ function Scene({ wallMode, eye, autoRotate, ground = '#e9e6df' }: { wallMode: Wa
   }
 
   const onGrab = (e: ThreeEvent<PointerEvent>, p: Placement) => {
-    if (e.button !== 0) return
+    // Walking around is for looking: furniture isn't picked up, and taps go to walking.
+    if (e.button !== 0 || eye) return
     e.stopPropagation()
     const s = useStore.getState()
     s.select({ kind: 'placement', id: p.id })
@@ -297,22 +374,79 @@ function Scene({ wallMode, eye, autoRotate, ground = '#e9e6df' }: { wallMode: Wa
   }
 
   const entries = useScanRuntime((s) => s.entries)
-  const target = useMemo(() => {
+  const { target, extent } = useMemo(() => {
     const pts = sceneFootprint(doc)
-    if (!pts.length) return new THREE.Vector3(0, 0, 0)
+    if (!pts.length) return { target: new THREE.Vector3(0, 0, 0), extent: 6 }
     const b = bounds(pts)
-    return new THREE.Vector3((b.minX + b.maxX) / 2, 0, (b.minY + b.maxY) / 2)
+    return {
+      target: new THREE.Vector3((b.minX + b.maxX) / 2, 0, (b.minY + b.maxY) / 2),
+      // Half the footprint's diagonal, plus a meter of margin, for the shadow camera and ground shadows.
+      extent: Math.hypot(b.maxX - b.minX, b.maxY - b.minY) / 2 + 1,
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.rooms, doc.scans, entries])
+  const glide = useRef<THREE.Vector3 | null>(null)
+  // Lifelike and Clay sit furniture on soft contact shadows. They're added a moment after the style
+  // switches, so the switch itself shows at once instead of waiting on the extra shaders.
+  const wantsContact = style === 'real' || style === 'clay'
+  const [contact, setContact] = useState(false)
+  useEffect(() => {
+    setContact(false)
+    if (!wantsContact) return
+    const t = setTimeout(() => setContact(true), 700)
+    return () => clearTimeout(t)
+  }, [wantsContact, style])
+  const shadowKey = useMemo(() => {
+    let n = 0
+    for (const { p, item } of placed) n = (n * 31 + Math.round(p.x * 100) * 7 + Math.round(p.y * 100) * 13 + Math.round(p.rotation * 100) + item.width * 10 + item.depth * 10) % 1e9
+    return `${n}:${doc.rooms.length}`
+  }, [placed, doc.rooms])
 
   return (
     <>
-      <StyleLights target={target} />
+      <StyleLights target={target} extent={extent} />
       <StyleEnvironment />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[target.x, -0.01, target.z]} receiveShadow onPointerDown={() => useStore.getState().select(null)} visible={!scanOnly && stage.showGround}>
         <planeGeometry args={[200, 200]} />
         {style === 'toon' ? <meshToonMaterial color={stage.ground ?? ground} /> : <meshStandardMaterial color={stage.ground ?? ground} roughness={1} />}
       </mesh>
+      {contact && !scanOnly && (
+        // Rendering contact shadows costs two extra passes, so they're drawn once and redrawn only
+        // when furniture or rooms change (the key), not every frame.
+        <ContactShadows
+          key={shadowKey}
+          frames={2}
+          position={[target.x, 0.004, target.z]}
+          scale={extent * 2}
+          opacity={0.45}
+          blur={2.4}
+          far={1.2}
+          resolution={512}
+          color="#3a2a1c"
+        />
+      )}
+      {eye && (
+        // Tap the floor to walk there. Only a tap whose first hit is at floor level (the floor, or
+        // a rug on it) counts, so taps on furniture or through walls don't move you.
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[target.x, 0.006, target.z]}
+          onClick={(e) => {
+            if (e.delta > 8 || firstSolidHeight(e) > 0.06) return
+            const pt = v(e.point.x, e.point.z)
+            if (doc.rooms.length && !doc.rooms.some((r) => pointInPolygon(pt, r.polygon))) return
+            // Stop a little short of the spot, so you arrive looking at it rather than standing on it.
+            const cam = e.camera.position
+            const to = new THREE.Vector3(pt.x - cam.x, 0, pt.y - cam.z)
+            const len = to.length()
+            const go = len > 1 ? len - 0.5 : len
+            glide.current = new THREE.Vector3(cam.x, eye.pos[1], cam.z).addScaledVector(to.normalize(), go)
+          }}
+        >
+          <planeGeometry args={[200, 200]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      )}
       {style === 'blueprint' && <gridHelper args={[60, 120, '#7fb0ee', '#3a6fb5']} position={[target.x, -0.005, target.z]} />}
       {!scanOnly &&
         doc.rooms.map((r) => <RoomMesh key={r.id} room={r} wallMode={eye ? 'full' : wallMode} selected={selection?.kind === 'room' && selection.id === r.id} />)}
@@ -324,12 +458,23 @@ function Scene({ wallMode, eye, autoRotate, ground = '#e9e6df' }: { wallMode: Wa
       {(style === 'classic' || style === 'scan') && <ScanPoints />}
       <group onPointerMove={onMove} onPointerUp={onUp}>
         {placed.map(({ p, item }) => (
-          <PlacedItem key={p.id} item={item} p={p} selected={selection?.kind === 'placement' && selection.id === p.id} flag={analysis.flagged.get(p.id)} onGrab={onGrab} />
+          <PlacedItem
+            key={p.id}
+            item={item}
+            p={p}
+            selected={selection?.kind === 'placement' && selection.id === p.id}
+            flag={hideFlags ? undefined : analysis.flagged.get(p.id)}
+            onGrab={onGrab}
+          />
         ))}
       </group>
-      {!eye && <FitCamera key={(doc.scans ?? []).length} target={target} />}
+      {!eye && <FitCamera key={(doc.scans ?? []).length} target={target} inset={inset} />}
+      <ViewOffset inset={eye ? undefined : inset} />
       {eye ? (
-        <OrbitControls ref={controls} makeDefault target={[eye[0], eye[1], eye[2] - 0.01]} enableZoom={false} enablePan={false} rotateSpeed={-0.4} />
+        <>
+          <OrbitControls ref={controls} makeDefault target={eyeTarget(eye)} enableZoom={false} enablePan={false} rotateSpeed={-0.4} />
+          <EyeWalk controls={controls} glide={glide} rooms={doc.rooms} />
+        </>
       ) : (
         <OrbitControls ref={controls} target={target} makeDefault maxPolarAngle={Math.PI / 2 - 0.02} minDistance={0.3} maxDistance={60} autoRotate={autoRotate} autoRotateSpeed={0.6} />
       )}
@@ -337,8 +482,17 @@ function Scene({ wallMode, eye, autoRotate, ground = '#e9e6df' }: { wallMode: Wa
   )
 }
 
-/** Place the overview camera so the whole apartment fits the pane, whatever its aspect ratio. */
-function FitCamera({ target }: { target: THREE.Vector3 }) {
+/** Screen space (CSS px) covered by HUD at the top and bottom of the pane: the visible stage is in between. */
+export interface SceneInset {
+  top: number
+  bottom: number
+}
+
+/** Height of the part of the pane the HUD leaves visible, never less than 35% of it. */
+const visibleHeight = (h: number, inset?: SceneInset) => Math.max(h * 0.35, h - (inset?.top ?? 0) - (inset?.bottom ?? 0))
+
+/** Place the overview camera so the whole apartment fits the part of the pane the HUD leaves visible. */
+function FitCamera({ target, inset }: { target: THREE.Vector3; inset?: SceneInset }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
   const doc = useStore((s) => s.doc)
@@ -350,14 +504,164 @@ function FitCamera({ target }: { target: THREE.Vector3 }) {
     if (!pts.length) return
     const b = bounds(pts)
     const radius = Math.hypot(b.maxX - b.minX, b.maxY - b.minY) / 2 + 0.3
-    const vfov = (camera.fov * Math.PI) / 180
-    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * (size.width / size.height))
+    const t = Math.tan((camera.fov * Math.PI) / 360)
+    const vfov = 2 * Math.atan(t * (visibleHeight(size.height, inset) / size.height))
+    const hfov = 2 * Math.atan(t * (size.width / size.height))
     const d = radius / Math.sin(Math.min(vfov, hfov) / 2)
     const dir = new THREE.Vector3(0.15, 1.0, 0.75).normalize()
     camera.position.copy(target).addScaledVector(dir, d)
     camera.lookAt(target)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, size, target])
+  return null
+}
+
+/**
+ * Shift the picture so the orbit target sits in the middle of the visible stage (between the top
+ * bar and the drawer or selection bar) rather than the middle of the pane. Eases in about 250 ms
+ * whenever the HUD changes, without moving the camera itself.
+ */
+function ViewOffset({ inset }: { inset?: SceneInset }) {
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
+  const size = useThree((s) => s.size)
+  const cur = useRef(0)
+  useFrame((_, dt) => {
+    const top = inset?.top ?? 0
+    const vis = visibleHeight(size.height, inset)
+    // Centre of the visible band, measured from the pane's centre.
+    const goal = inset ? top + vis / 2 - size.height / 2 : 0
+    let next = cur.current + (goal - cur.current) * (1 - Math.exp(-dt * 14))
+    if (Math.abs(goal - next) < 0.5) next = goal
+    const view = camera.view
+    const same = view?.enabled ? view.fullWidth === size.width && view.fullHeight === size.height && view.offsetY === -next : next === 0
+    if (same) return
+    cur.current = next
+    if (next === 0) camera.clearViewOffset()
+    else camera.setViewOffset(size.width, size.height, 0, -next, size.width, size.height)
+  })
+  useEffect(() => () => camera.clearViewOffset(), [camera])
+  return null
+}
+
+/** Where walk-in starts: a spot in a room, and the point it looks at. */
+export interface EyeSpot {
+  pos: [number, number, number]
+  look: [number, number, number]
+}
+const EYE_HEIGHT = 1.5
+const LOOK_HEIGHT = 1.1
+
+/** A target a hair in front of the eye, for OrbitControls to turn the head around. */
+function eyeTarget(eye: EyeSpot): [number, number, number] {
+  const d = new THREE.Vector3(eye.look[0] - eye.pos[0], eye.look[1] - eye.pos[1], eye.look[2] - eye.pos[2]).normalize().multiplyScalar(0.01)
+  return [eye.pos[0] + d.x, eye.pos[1] + d.y, eye.pos[2] + d.z]
+}
+
+/**
+ * Pick where walking in starts: just inside the door of the most furnished room (or, with no door,
+ * in its corner farthest from the middle), looking across the room at its centre.
+ */
+export function eyeSpot(doc: ReturnType<typeof useStore.getState>['doc']): EyeSpot | null {
+  if (!doc.rooms.length) {
+    const scan = (doc.scans ?? []).find((r) => r.visible)
+    const c = scan ? scanCenter(scan) : null
+    return c ? { pos: [c.x, EYE_HEIGHT, c.y + 1], look: [c.x, LOOK_HEIGHT, c.y - 1] } : null
+  }
+  const layout = activeLayout(doc)
+  const score = (r: Room) => layout.placements.filter((p) => pointInPolygon(v(p.x, p.y), r.polygon)).length * 100 + polygonArea(r.polygon)
+  const room = [...doc.rooms].sort((a, b) => score(b) - score(a))[0]
+  const c = centroid(room.polygon)
+  const door = room.openings.find((o) => o.kind === 'door')
+  let p: Vec2
+  if (door) {
+    const [a, b] = openingEndpoints(room, door)
+    p = add(scale(add(a, b), 0.5), scale(wallInwardNormal(room, door.wall), 0.6))
+  } else {
+    const far = room.polygon.reduce((best, q) => (dist(q, c) > dist(best, c) ? q : best), room.polygon[0])
+    p = add(far, scale(norm(sub(c, far)), Math.min(0.7, dist(far, c) * 0.5)))
+  }
+  // Too close to the middle to see much (a tiny room): step back from it along the same line.
+  if (dist(p, c) < 0.8) p = add(c, scale(dist(p, c) > 1e-3 ? norm(sub(p, c)) : v(0, 1), 0.8))
+  return { pos: [p.x, EYE_HEIGHT, p.y], look: [c.x, LOOK_HEIGHT, c.y] }
+}
+
+const WALK_KEYS = new Set(['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'])
+
+/**
+ * Moving around at eye level: glide to a tapped spot on the floor, or walk with WASD / arrow keys
+ * (left and right arrows turn). Moves the camera and the look-at target together.
+ */
+function EyeWalk({ controls, glide, rooms }: { controls: RefObject<OrbitControlsImpl | null>; glide: RefObject<THREE.Vector3 | null>; rooms: Room[] }) {
+  const camera = useThree((s) => s.camera)
+  const keys = useRef(new Set<string>())
+  const box = useMemo(() => {
+    const pts = rooms.flatMap((r) => r.polygon)
+    return pts.length ? bounds(pts) : null
+  }, [rooms])
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || e.metaKey || e.ctrlKey || e.altKey) return
+      const k = e.key.toLowerCase()
+      if (!WALK_KEYS.has(k)) return
+      e.preventDefault()
+      keys.current.add(k)
+    }
+    const up = (e: KeyboardEvent) => keys.current.delete(e.key.toLowerCase())
+    const clear = () => keys.current.clear()
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', clear)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', clear)
+    }
+  }, [])
+  useFrame((_, rawDt) => {
+    const c = controls.current
+    if (!c) return
+    const dt = Math.min(rawDt, 0.05)
+    const k = keys.current
+    const fwd = new THREE.Vector3()
+    camera.getWorldDirection(fwd)
+    fwd.y = 0
+    if (fwd.lengthSq() < 1e-6) return
+    fwd.normalize()
+    const right = new THREE.Vector3(-fwd.z, 0, fwd.x)
+    const turn = (k.has('arrowright') ? 1 : 0) - (k.has('arrowleft') ? 1 : 0)
+    if (turn) {
+      const off = c.target.clone().sub(camera.position).applyAxisAngle(new THREE.Vector3(0, 1, 0), -turn * 1.6 * dt)
+      c.target.copy(camera.position).add(off)
+      glide.current = null
+    }
+    const move = new THREE.Vector3()
+    if (k.has('w') || k.has('arrowup')) move.add(fwd)
+    if (k.has('s') || k.has('arrowdown')) move.sub(fwd)
+    if (k.has('d')) move.add(right)
+    if (k.has('a')) move.sub(right)
+    if (move.lengthSq() > 0) {
+      glide.current = null
+      move.normalize().multiplyScalar(1.6 * dt)
+    } else if (glide.current) {
+      const d = glide.current.clone().sub(camera.position)
+      d.y = 0
+      const len = d.length()
+      if (len < 0.01) glide.current = null
+      else move.copy(d).multiplyScalar(Math.min(1, Math.max(dt * 3.5, Math.min(len, 0.4 * dt) / len)))
+    }
+    if (move.lengthSq() > 0) {
+      const next = camera.position.clone().add(move)
+      if (box) {
+        next.x = THREE.MathUtils.clamp(next.x, box.minX + 0.2, box.maxX - 0.2)
+        next.z = THREE.MathUtils.clamp(next.z, box.minY + 0.2, box.maxY - 0.2)
+      }
+      move.subVectors(next, camera.position)
+      camera.position.add(move)
+      c.target.add(move)
+    }
+    if (turn || move.lengthSq() > 0) c.update()
+  })
   return null
 }
 
@@ -370,7 +674,7 @@ function sceneFootprint(doc: ReturnType<typeof useStore.getState>['doc']): Vec2[
 
 /** Camera and wall settings driven from outside (the game HUD), replacing the built-in tool strip. */
 export interface SceneControl {
-  /** Stand at eye level in the middle of the first room. */
+  /** Walk in: stand at eye level inside the most furnished room, looking across it. */
   eye: boolean
   /** Bump to reset the camera to the overview. */
   resetKey: number
@@ -381,6 +685,10 @@ export interface SceneControl {
   sky?: string
   /** Rendering style (map-layer style look). Leave out for the classic editor's plain look. */
   style?: StyleId
+  /** Screen space the HUD covers, so the overview centres the home in what's left. */
+  inset?: SceneInset
+  /** Hide the problem outlines and badges (Look mode is for admiring). */
+  hideFlags?: boolean
 }
 
 export function Scene3D({ control }: { control?: SceneControl } = {}) {
@@ -388,19 +696,17 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
   const scan3d = useStore((s) => s.scan3d)
   const [ownWallMode, setWallMode] = useState<WallMode>('auto')
   const [ownCamKey, setCamKey] = useState(0)
-  const [ownEye, setEye] = useState<{ pos: [number, number, number] } | null>(null)
+  const [ownEye, setEye] = useState<EyeSpot | null>(null)
   const wallMode = control?.wallMode ?? ownWallMode
   const style: StyleId = control?.style ?? 'classic'
   const palette = useScanPalette(style)
   const styleEnv = useMemo(() => ({ style, palette }), [style, palette])
   const stage = STYLE_STAGE[style]
-  const eyePos = useMemo(() => {
-    const room = doc.rooms[0]
-    const scan = (doc.scans ?? []).find((r) => r.visible)
-    const c = room ? centroid(room.polygon) : scan ? scanCenter(scan) : null
-    return c ? { pos: [c.x, 1.6, c.y] as [number, number, number] } : null
+  const eyePos = useMemo(
+    () => eyeSpot(doc),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [control?.eye, control?.resetKey, doc.apartment.id])
+    [control?.eye, control?.resetKey, doc.apartment.id],
+  )
   const eye = control ? (control.eye ? eyePos : null) : ownEye
   const camKey = control ? `${control.resetKey}:${control.eye}` : ownCamKey
 
@@ -414,13 +720,13 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
   }, [camKey, doc.apartment.id])
 
   const eyeLevel = () => {
-    const room = doc.rooms[0]
-    const scan = (doc.scans ?? []).find((r) => r.visible)
-    const c = room ? centroid(room.polygon) : scan ? scanCenter(scan) : null
-    if (!c) return
-    setEye({ pos: [c.x, 1.6, c.y] })
+    const spot = eyeSpot(doc)
+    if (!spot) return
+    setEye(spot)
     setCamKey((k) => k + 1)
   }
+  // A wider lens at eye level, wider still on a portrait phone, so a room fits in view.
+  const eyeFov = typeof window !== 'undefined' && window.innerHeight > window.innerWidth ? 72 : 60
 
   return (
     <div className="scene-wrap">
@@ -428,15 +734,16 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
         key={`${camKey}:${doc.apartment.id}`}
         shadows
         dpr={[1, 2]}
-        camera={{ position: eye?.pos ?? initial, fov: eye ? 70 : 45, near: 0.05, far: 300 }}
+        camera={{ position: eye?.pos ?? initial, fov: eye ? eyeFov : 45, near: 0.05, far: 300 }}
         onPointerMissed={() => useStore.getState().select(null)}
         gl={{ preserveDrawingBuffer: true }}
       >
         <color attach="background" args={[stage.sky ?? control?.sky ?? '#f6f4ef']} />
         <StyleContext.Provider value={styleEnv}>
-          <Scene wallMode={wallMode} eye={eye?.pos ?? null} autoRotate={control?.autoRotate && !eye} ground={control?.ground} />
+          <Scene wallMode={wallMode} eye={eye} autoRotate={control?.autoRotate && !eye} ground={control?.ground} inset={control?.inset} hideFlags={control?.hideFlags} />
         </StyleContext.Provider>
       </Canvas>
+      {control && eye && <EyeHint />}
       {!control && (
       <div className="scene-tools">
         <button
@@ -472,3 +779,41 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
   )
 }
 
+
+const EYE_HINT_KEY = 'apartment-designer:eye-hint-seen'
+
+/** A one-time coach mark the first time you walk in: how to look around and move. */
+function EyeHint() {
+  const [show, setShow] = useState(() => {
+    try {
+      return localStorage.getItem(EYE_HINT_KEY) !== '1'
+    } catch {
+      return true
+    }
+  })
+  useEffect(() => {
+    if (!show) return
+    try {
+      localStorage.setItem(EYE_HINT_KEY, '1')
+    } catch {
+      // Private mode: the hint shows again next visit.
+    }
+    const hide = () => setShow(false)
+    const t = setTimeout(hide, 6000)
+    window.addEventListener('pointerdown', hide)
+    window.addEventListener('keydown', hide)
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('pointerdown', hide)
+      window.removeEventListener('keydown', hide)
+    }
+  }, [show])
+  if (!show) return null
+  const touch = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches
+  return (
+    <div className="scene-eye-hint" role="status">
+      <b>Drag to look around</b>
+      <span>{touch ? 'Tap the floor to walk there' : 'Click the floor to walk there, or use WASD'}</span>
+    </div>
+  )
+}
