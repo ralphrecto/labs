@@ -32,7 +32,10 @@ export function emptyDoc(): Doc {
   }
 }
 
-/** A small one-bedroom so the app has something to play with on first load. */
+/**
+ * A small one-bedroom so the app has something to play with on first load. Half moved in: the
+ * big pieces are there, so there's still storage, a nightstand, a lamp and a plant to add.
+ */
 export function sampleDoc(): Doc {
   const living = rectRoom('Living room', 0, 0, 5.2, 4.2)
   const bedroom = rectRoom('Bedroom', 5.32, 0, 3.6, 3.4)
@@ -55,10 +58,8 @@ export function sampleDoc(): Doc {
     itemFromCatalog(catalogEntry('dining-chair'), uid(), { owned: true }),
     itemFromCatalog(catalogEntry('dining-chair'), uid(), { owned: true }),
     itemFromCatalog(catalogEntry('bed'), uid(), { name: 'Queen bed', owned: true, clearance: { front: 0.6, back: 0, left: 0.6, right: 0 } }),
-    itemFromCatalog(catalogEntry('nightstand'), uid(), { owned: true }),
-    itemFromCatalog(catalogEntry('dresser'), uid(), { owned: true }),
   ]
-  const [sofa, coffee, tv, rug, table, chair1, chair2, bed, night, dresser] = items
+  const [sofa, coffee, tv, rug, table, chair1, chair2, bed] = items
   const layoutId = uid()
   const hd = (i: typeof sofa) => i.depth / 2
   return {
@@ -79,8 +80,6 @@ export function sampleDoc(): Doc {
           { id: uid(), itemId: chair1.id, x: 3.55, y: 1.2, rotation: -Math.PI / 2 },
           { id: uid(), itemId: chair2.id, x: 4.3, y: 2.35, rotation: Math.PI },
           { id: uid(), itemId: bed.id, x: 5.32 + 1.8, y: hd(bed), rotation: 0 },
-          { id: uid(), itemId: night.id, x: 5.32 + 1.8 - 0.76 - 0.3, y: hd(night), rotation: 0 },
-          { id: uid(), itemId: dresser.id, x: 5.32 + 3.6 - hd(dresser), y: 2.75, rotation: Math.PI / 2 },
         ],
       },
     ],

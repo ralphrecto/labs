@@ -27,6 +27,8 @@ interface GameState {
   classic: boolean
   /** How the 3D view is drawn (Cartoon, Lifelike, Scan, Clay, Blueprint), switched like map layers. */
   renderStyle: RenderStyle
+  /** Best level reached (with no errors) per home, by apartment id. The HUD never shows less. */
+  bestLevel: Record<string, number>
 
   setPhase: (p: Phase) => void
   setMode: (m: GameMode) => void
@@ -36,11 +38,14 @@ interface GameState {
   setAdvanced: (a: boolean) => void
   setClassic: (c: boolean) => void
   setRenderStyle: (s: RenderStyle) => void
+  /** Remember a level reached in a home; lower levels are ignored. */
+  noteLevel: (homeId: string, level: number) => void
 }
 
 const ONBOARDED_KEY = 'apartment-designer:onboarded'
 const CLASSIC_KEY = 'apartment-designer:classic'
 const STYLE_KEY = 'apartment-designer:render-style'
+const BEST_LEVEL_KEY = 'apartment-designer:best-level'
 const STYLE_IDS: RenderStyle[] = ['toon', 'real', 'scan', 'clay', 'blueprint']
 
 function readStyle(): RenderStyle {
@@ -49,6 +54,15 @@ function readStyle(): RenderStyle {
     return v && STYLE_IDS.includes(v) ? v : 'toon'
   } catch {
     return 'toon'
+  }
+}
+
+function readBestLevels(): Record<string, number> {
+  try {
+    const v = JSON.parse(localStorage.getItem(BEST_LEVEL_KEY) ?? '{}')
+    return v && typeof v === 'object' ? (v as Record<string, number>) : {}
+  } catch {
+    return {}
   }
 }
 
@@ -77,6 +91,7 @@ export const useGame = create<GameState>((set) => ({
   buyTab: 'living',
   advanced: false,
   renderStyle: readStyle(),
+  bestLevel: readBestLevels(),
   classic: (() => {
     try {
       return localStorage.getItem(CLASSIC_KEY) === '1'
@@ -110,4 +125,15 @@ export const useGame = create<GameState>((set) => ({
     }
     set({ renderStyle })
   },
+  noteLevel: (homeId, level) =>
+    set((s) => {
+      if ((s.bestLevel[homeId] ?? 0) >= level) return s
+      const bestLevel = { ...s.bestLevel, [homeId]: level }
+      try {
+        localStorage.setItem(BEST_LEVEL_KEY, JSON.stringify(bestLevel))
+      } catch {
+        // Private mode: remembered for this visit.
+      }
+      return { bestLevel }
+    }),
 }))

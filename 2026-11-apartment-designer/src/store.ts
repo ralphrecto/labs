@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { catalogEntry, itemFromCatalog, type CatalogEntry } from './model/catalog'
-import { add, bounds, centroid, closestPointOnSegment, dist, norm, pointInPolygon, scale, sub, v, wallSegments } from './model/geometry'
+import { add, dist, norm, scale, sub } from './model/geometry'
+import { findDrop, type DropResult } from './model/placement'
 import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
 import type { Doc, Item, Layout, Opening, Placement, Room, ScanRef, ScanReference, Units, Vec2 } from './model/types'
@@ -73,10 +74,11 @@ interface State extends UIState {
   updateOpening: (roomId: string, id: string, patch: Partial<Opening>) => void
   deleteOpening: (roomId: string, id: string) => void
 
-  addItemFromCatalog: (entry: CatalogEntry, at?: Vec2) => void
+  /** Without `at`, the piece goes to a free spot that suits it; when none exists nothing is added and a toast says why. */
+  addItemFromCatalog: (entry: CatalogEntry, at?: Vec2) => PlaceResult
   /** Add a new item to the library and place it in the active layout. */
-  addItem: (item: Item, at?: Vec2) => void
-  placeItem: (itemId: string, at?: Vec2) => void
+  addItem: (item: Item, at?: Vec2) => PlaceResult
+  placeItem: (itemId: string, at?: Vec2) => PlaceResult
   updateItem: (id: string, patch: Partial<Item>) => void
   deleteItem: (id: string) => void
   updatePlacement: (id: string, patch: Partial<Placement>) => void
@@ -108,42 +110,16 @@ const mapRoom = (d: Doc, id: string, fn: (r: Room) => Room): Doc => ({ ...d, roo
 const mapLayout = (d: Doc, fn: (l: Layout) => Layout): Doc => ({ ...d, layouts: d.layouts.map((l) => (l.id === d.activeLayoutId ? fn(l) : l)) })
 
 /**
- * Where a new piece lands when it isn't dropped somewhere specific: the open spot inside a room
- * that is farthest from the furniture already there (rooms in order, so the first room fills first).
+ * Where a new piece lands when it isn't dropped somewhere specific: a legal spot (fully inside a
+ * room, clear of other pieces and door swings) in the room that suits it, backed onto a wall or
+ * next to its partner piece. See findDrop in model/placement.ts. Null with a reason when nothing fits.
  */
-export function defaultDrop(d: Doc, item?: Pick<Item, 'width' | 'depth'>): Vec2 {
-  if (!d.rooms.length) return v(1, 1)
-  const layout = activeLayout(d)
-  const byId = new Map(d.items.map((i) => [i.id, i]))
-  const others = layout.placements.flatMap((p) => {
-    const it = byId.get(p.itemId)
-    return it && !it.floorLevel ? [{ c: v(p.x, p.y), r: Math.hypot(it.width, it.depth) / 2 }] : []
-  })
-  const r0 = item ? Math.hypot(item.width, item.depth) / 2 : 0.4
-  let best: Vec2 | null = null
-  let bestScore = -Infinity
-  d.rooms.forEach((room, ri) => {
-    const b = bounds(room.polygon)
-    const step = 0.25
-    for (let x = b.minX + step; x < b.maxX; x += step)
-      for (let y = b.minY + step; y < b.maxY; y += step) {
-        const p = v(x, y)
-        if (!pointInPolygon(p, room.polygon)) continue
-        // Keep the whole piece inside the room.
-        const wall = Math.min(...wallSegments(room).map(([a, c]) => closestPointOnSegment(p, a, c).distance))
-        if (wall < Math.min(item ? Math.min(item.width, item.depth) / 2 : 0.3, 0.6)) continue
-        const gap = others.length ? Math.min(...others.map((o) => dist(o.c, p) - o.r - r0)) : 3
-        const center = centroid(room.polygon)
-        // Enough room beats more room; then prefer earlier rooms and spots near the middle.
-        const score = Math.min(gap, 0.6) * 10 - ri * 2 - dist(p, center) * 0.3
-        if (score > bestScore) {
-          bestScore = score
-          best = p
-        }
-      }
-  })
-  return best ?? centroid(d.rooms[0].polygon)
+export function defaultDrop(d: Doc, item: Item, near?: Vec2): DropResult {
+  return findDrop(d, activeLayout(d), item, { near })
 }
+
+/** What happened when a piece was added: where it went, or why it couldn't be placed. */
+export type PlaceResult = { ok: true; placementId: string; roomName?: string } | { ok: false; reason: string }
 
 export const useStore = create<State>((set, get) => ({
   doc: loadDoc() ?? sampleDoc(),
@@ -295,20 +271,32 @@ export const useStore = create<State>((set, get) => ({
 
   addItemFromCatalog: (entry, at) => get().addItem(itemFromCatalog(entry, uid()), at),
   addItem: (item, at) => {
+    const d0 = get().doc
+    const drop = at ? null : defaultDrop(d0, item)
+    if (drop && !drop.ok) {
+      get().notify(drop.reason)
+      return drop
+    }
+    const spot = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: 0 }
     const pid = uid()
-    get().update((d) => {
-      const p = at ?? defaultDrop(d, item)
-      return mapLayout({ ...d, items: [...d.items, item] }, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: item.id, x: p.x, y: p.y, rotation: 0 }] }))
-    })
+    get().update((d) => mapLayout({ ...d, items: [...d.items, item] }, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: item.id, x: spot.x, y: spot.y, rotation: spot.rotation }] })))
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
+    return { ok: true, placementId: pid, roomName: drop?.ok ? drop.spot.roomName : undefined }
   },
   placeItem: (itemId, at) => {
+    const d0 = get().doc
+    const item = d0.items.find((i) => i.id === itemId)
+    if (!item) return { ok: false, reason: 'That piece is gone.' }
+    const drop = at ? null : defaultDrop(d0, item)
+    if (drop && !drop.ok) {
+      get().notify(drop.reason)
+      return drop
+    }
+    const spot = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: 0 }
     const pid = uid()
-    get().update((d) => {
-      const p = at ?? defaultDrop(d, d.items.find((i) => i.id === itemId))
-      return mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId, x: p.x, y: p.y, rotation: 0 }] }))
-    })
+    get().update((d) => mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId, x: spot.x, y: spot.y, rotation: spot.rotation }] })))
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
+    return { ok: true, placementId: pid, roomName: drop?.ok ? drop.spot.roomName : undefined }
   },
   updateItem: (id, patch) => get().update((d) => ({ ...d, items: d.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) })),
   deleteItem: (id) => {
@@ -332,8 +320,14 @@ export const useStore = create<State>((set, get) => ({
     // A duplicate is a new item (its own size and name), placed a little offset.
     const copy: Item = { ...item, id: uid(), clearance: { ...item.clearance } }
     const pid = uid()
+    // Prefer a free spot near the original (the other side of the bed for a nightstand); else a small offset.
+    const drop = findDrop(d0, activeLayout(d0), copy, { near: { x: p.x, y: p.y } })
+    const spot = drop.ok ? drop.spot : { x: p.x + 0.3, y: p.y + 0.3, rotation: p.rotation }
     get().update((d) =>
-      mapLayout({ ...d, items: [...d.items, copy] }, (l) => ({ ...l, placements: [...l.placements, { ...p, id: pid, itemId: copy.id, x: p.x + 0.3, y: p.y + 0.3 }] })),
+      mapLayout({ ...d, items: [...d.items, copy] }, (l) => ({
+        ...l,
+        placements: [...l.placements, { ...p, id: pid, itemId: copy.id, x: spot.x, y: spot.y, rotation: spot.rotation }],
+      })),
     )
     set({ selection: { kind: 'placement', id: pid } })
   },

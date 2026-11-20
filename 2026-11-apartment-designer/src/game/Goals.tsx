@@ -3,14 +3,22 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useAnalysis } from '../analysis'
 import { activeLayout, useStore } from '../store'
 import { useGame } from './gameStore'
-import { CATEGORY_LABEL, CATEGORY_ORDER, levelProgress, scoreHome, type Goal, type HomeScore } from './goals'
+import { bankableLevel, CATEGORY_LABEL, CATEGORY_ORDER, levelProgress, scoreHome, withBestLevel, type Goal, type HomeScore } from './goals'
 import { IconCheck, IconClose, IconStar } from './icons'
 
+/** The home's score, with the level held at the best one reached in this home (it never drops). */
 export function useHomeScore(): HomeScore {
   const doc = useStore((s) => s.doc)
   const layout = activeLayout(doc)
   const analysis = useAnalysis(doc, layout)
-  return useMemo(() => scoreHome(doc, layout, analysis), [doc, layout, analysis])
+  const raw = useMemo(() => scoreHome(doc, layout, analysis), [doc, layout, analysis])
+  const home = doc.apartment.id
+  const best = useGame((s) => s.bestLevel[home] ?? 0)
+  const bank = bankableLevel(raw)
+  useEffect(() => {
+    if (bank > best) useGame.getState().noteLevel(home, bank)
+  }, [home, bank, best])
+  return useMemo(() => withBestLevel(raw, Math.max(best, bank)), [raw, best, bank])
 }
 
 const SPARKS = 10
@@ -104,7 +112,10 @@ function GoalRow({ g }: { g: Goal }) {
     <li className={`goal-row${g.done ? ' done' : ''}`}>
       <span className="goal-check">{g.done && <IconCheck />}</span>
       <div className="goal-main">
-        <div className="goal-title">{g.title}</div>
+        <div className="goal-title">
+          {g.title}
+          {g.bonus && <span className="goal-bonus">Bonus</span>}
+        </div>
         {!g.done && g.hint && <div className="goal-hint">{g.hint}</div>}
         {!g.done && (g.progress ?? 0) > 0 && (
           <div className="goal-progress">
@@ -126,7 +137,6 @@ export function GoalsSheet() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
   const fill = levelProgress(score)
-  const doneCount = score.goals.filter((g) => g.done).length
   return (
     <div className="g-scrim" onClick={close}>
       <div className="g-sheet goal-sheet" role="dialog" aria-label="Goals" onClick={(e) => e.stopPropagation()}>
@@ -147,33 +157,20 @@ export function GoalsSheet() {
               <i style={{ width: `${Math.round(fill * 100)}%` }} />
             </div>
             <div className="goal-hero-sub">
-              {score.level.next
-                ? `${score.level.toNext} more ★ to ${score.level.next}`
-                : 'Top level reached. What a home!'}
+              {!score.level.next
+                ? 'Top level reached. What a home!'
+                : score.level.toNext > 0
+                  ? `${score.level.toNext} more ★ to ${score.level.next}`
+                  : `Fix the snag to reach ${score.level.next}`}
             </div>
           </div>
         </div>
-        <div className="goal-vibe">
-          <span>Vibe</span>
-          <div className="goal-vibe-bar">
-            <i style={{ width: `${score.vibe}%` }} />
-          </div>
-          <b>{score.vibe}</b>
-        </div>
-        <p className="g-sub goal-count">
-          {doneCount} of {score.goals.length} goals done · {score.stars}/{score.maxStars} ★
-        </p>
         {CATEGORY_ORDER.map((cat) => {
           const goals = score.goals.filter((g) => g.category === cat)
           if (!goals.length) return null
           return (
             <section key={cat} className={`goal-group goal-cat-${cat}`}>
-              <h3>
-                {CATEGORY_LABEL[cat]}
-                <span>
-                  {goals.filter((g) => g.done).length}/{goals.length}
-                </span>
-              </h3>
+              <h3>{CATEGORY_LABEL[cat]}</h3>
               <ul>
                 {goals.map((g) => (
                   <GoalRow key={g.id} g={g} />

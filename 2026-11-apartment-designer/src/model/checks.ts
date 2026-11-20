@@ -93,7 +93,7 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   for (const x of placed) {
     for (const zone of clearanceZones(x.item, x.p)) {
       const need = x.item.clearance[zone.side]
-      const blockers = solid.filter((o) => o.p.id !== x.p.id && convexOverlap(zone.poly, o.body, 0.005))
+      const blockers = solid.filter((o) => o.p.id !== x.p.id && !sideCompanion(x.item.category, zone.side, o.item.category) && convexOverlap(zone.poly, o.body, 0.005))
       for (const b of blockers)
         issues.push({
           id: `clear:${x.p.id}:${zone.side}:${b.p.id}`,
@@ -132,6 +132,15 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   }
 
   return issues
+}
+
+/**
+ * Pieces that belong in another's clearance and don't block it: a nightstand or side table beside
+ * a bed or seat, the chair at a desk.
+ */
+export function sideCompanion(ownerCategory: string, side: string, blockerCategory: string) {
+  if (side === 'front' && ownerCategory === 'desk' && blockerCategory === 'office-chair') return true
+  return (side === 'left' || side === 'right') && ['bed', 'sofa', 'armchair'].includes(ownerCategory) && ['nightstand', 'side-table', 'floor-lamp'].includes(blockerCategory)
 }
 
 function centerOf(poly: Vec2[]) {

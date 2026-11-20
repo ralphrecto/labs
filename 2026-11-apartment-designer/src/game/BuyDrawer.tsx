@@ -74,16 +74,20 @@ export function BuyDrawer() {
 
   const place = (entry: CatalogEntry, preset?: { name: string; width: number; depth: number }) => {
     const st = useStore.getState()
-    if (preset) st.addItem(itemFromCatalog(entry, uid(), { name: `${preset.name} bed`, width: preset.width, depth: preset.depth }))
-    else st.addItemFromCatalog(entry) // adds the item and a placement at the default drop point, and selects it
+    // Adds the item at a free spot that suits it and selects it; when nothing fits, the store toasts why.
+    const res = preset
+      ? st.addItem(itemFromCatalog(entry, uid(), { name: `${preset.name} bed`, width: preset.width, depth: preset.depth }))
+      : st.addItemFromCatalog(entry)
+    if (!res.ok) return
     const name = preset ? `${preset.name.toLowerCase()} bed` : displayName(entry).toLowerCase()
-    st.notify(`Placed ${article(name)} ${name}. Drag it into place.`)
+    st.notify(`Placed ${article(name)} ${name}${res.roomName ? ` in the ${res.roomName}` : ''}.`)
     celebrate(entry.category + (preset ? `:${preset.name}` : ''))
   }
   const placeMine = (item: Item) => {
     const st = useStore.getState()
-    st.placeItem(item.id) // adds a placement of the same item and selects it
-    st.notify(`Placed another “${item.name}”.`)
+    const res = st.placeItem(item.id) // adds a placement of the same item and selects it
+    if (!res.ok) return
+    st.notify(`Placed another “${item.name}”${res.roomName ? ` in the ${res.roomName}` : ''}.`)
     celebrate(item.id)
   }
   const shop = () => useGame.getState().openSheet('shop')
