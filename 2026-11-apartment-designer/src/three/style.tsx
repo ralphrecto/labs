@@ -32,18 +32,20 @@ export const useStyle = () => useContext(StyleContext)
 export const STYLE_STAGE: Record<StyleId, { sky?: string; ground?: string; showGround: boolean; shadows: boolean }> = {
   classic: { showGround: true, shadows: true },
   toon: { sky: '#fde9cf', ground: '#f8d9b4', showGround: true, shadows: true },
-  real: { sky: '#dfe4e8', ground: '#c9c4bb', showGround: true, shadows: true },
+  real: { sky: '#efe7da', ground: '#e6c9a0', showGround: true, shadows: true },
   scan: { sky: '#1d2129', showGround: false, shadows: false },
-  clay: { sky: '#c9c2b8', ground: '#cdc5ba', showGround: true, shadows: true },
+  clay: { sky: '#f1e6d6', ground: '#efd6b2', showGround: true, shadows: true },
   blueprint: { sky: '#1c4a8a', showGround: false, shadows: false },
 }
 
 const BLUEPRINT_LINE = '#e8f2ff'
 const BLUEPRINT_FILL = '#5d95e0'
 const INK = '#3d2c25'
-const CLAY = '#eee9e2'
-const CLAY_ITEM = '#f4f0ea'
-const CLAY_FLOOR = '#d9d2c7'
+// Clay keeps a warm off-white with clear steps of value: floor darkest, walls lighter, pieces lightest,
+// so the rooms separate from the stage and the shadows carry the form.
+const CLAY = '#efe7dc'
+const CLAY_ITEM = '#fbf7f1'
+const CLAY_FLOOR = '#e6dccd'
 
 // ------------------------------------------------------------------ toon ramp
 
@@ -63,10 +65,12 @@ function toonRamp() {
 const mix = (a: string, b: string, t: number) => `#${new THREE.Color(a).lerp(new THREE.Color(b), t).getHexString()}`
 
 /**
+ * `cap` is the top edge of a wall (a darker tone, so room outlines read from above); `trim` is the
+ * baseboard along the foot of a wall. Both are wall-like surfaces with their own tone per style.
  * `window` is window glass, painted with a soft sky so it reads as a window from inside and out;
  * `daylight` is the patch of light a window throws on the floor.
  */
-export type SurfaceRole = 'wall' | 'floor' | 'item' | 'soft' | 'glass' | 'ground' | 'window' | 'daylight'
+export type SurfaceRole = 'wall' | 'floor' | 'item' | 'soft' | 'glass' | 'ground' | 'window' | 'daylight' | 'cap' | 'trim'
 
 // ------------------------------------------------------------------ sky in the windows
 
@@ -149,6 +153,11 @@ export function Surface({
   side?: THREE.Side
 }) {
   const { style } = useStyle()
+  const edge = role === 'cap' || role === 'trim' ? role : null
+  if (edge) {
+    color = edgeTone(edge, color, style)
+    role = 'wall'
+  }
   const emissive = highlight ?? '#000000'
   const emissiveIntensity = highlight ? 0.35 : 0
   if (role === 'window') {
@@ -207,7 +216,7 @@ export function Surface({
     case 'clay':
       return (
         <meshStandardMaterial
-          color={role === 'item' || role === 'soft' ? mix(CLAY_ITEM, color, 0.08) : role === 'floor' ? CLAY_FLOOR : CLAY}
+          color={role === 'item' || role === 'soft' ? mix(CLAY_ITEM, color, 0.12) : role === 'floor' ? CLAY_FLOOR : edge ? color : CLAY}
           roughness={1}
           emissive={emissive}
           emissiveIntensity={emissiveIntensity}
@@ -240,13 +249,23 @@ export function Surface({
   }
 }
 
+/** The tone of a wall's top edge or its baseboard, from the wall's own color. */
+function edgeTone(role: 'cap' | 'trim', color: string, style: StyleId) {
+  if (style === 'toon') return role === 'trim' ? '#fffaf2' : color
+  if (style === 'clay') return role === 'cap' ? '#d3c6b4' : '#e2d7c8'
+  if (style === 'real') return mix(color, '#5e4a38', role === 'cap' ? 0.6 : 0.26)
+  return color
+}
+
 /** Outline lines on a mesh's creases: dark ink for Cartoon, white lines for Blueprint and Scan. */
 export function Ink({ highlight, soft }: { highlight?: string; soft?: boolean }) {
   const { style } = useStyle()
   if (style === 'toon') return <Edges threshold={soft ? 40 : 20} color={highlight ?? INK} lineWidth={highlight ? 2.2 : 1.6} />
   if (style === 'blueprint') return <Edges threshold={20} color={highlight ? '#ffd166' : BLUEPRINT_LINE} lineWidth={highlight ? 2 : 1.2} />
   if (style === 'scan') return <Edges threshold={20} color={highlight ?? '#ffffff'} lineWidth={1.4} transparent opacity={0.85} />
-  if (style === 'clay') return <Edges threshold={soft ? 40 : 20} color={highlight ?? '#000000'} lineWidth={highlight ? 2 : 1} transparent opacity={highlight ? 0.9 : 0.15} />
+  if (style === 'clay') return <Edges threshold={soft ? 40 : 20} color={highlight ?? '#000000'} lineWidth={highlight ? 2.2 : 1} transparent opacity={highlight ? 0.95 : 0.15} />
+  // Lifelike draws no lines, except the outline of a selected piece.
+  if (highlight && style === 'real') return <Edges threshold={soft ? 40 : 20} color={highlight} lineWidth={2.2} />
   return null
 }
 
@@ -307,7 +326,7 @@ export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; ex
     // throw long dark wedges across the rooms.
     if (style === 'toon') return { pos: [target.x + 2.5, 18, target.z + 2] as const, intensity: 2.2, color: '#fff3df' }
     if (style === 'real') return { pos: [target.x - 4, 8, target.z + 6] as const, intensity: 3.0, color: '#fff1dc' }
-    if (style === 'clay') return { pos: [target.x - 3, 9, target.z + 5] as const, intensity: 2.6, color: '#ffffff' }
+    if (style === 'clay') return { pos: [target.x - 3, 9, target.z + 5] as const, intensity: 1.8, color: '#fff3e2' }
     return { pos: [target.x + 4, 9, target.z + 6] as const, intensity: 1.4, color: '#ffffff' }
   }, [style, target])
   // The sun aims at the middle of the home (a directional light aims at its target's position).
@@ -317,8 +336,8 @@ export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; ex
   if (style === 'blueprint' || style === 'scan') return <ambientLight intensity={1} />
   return (
     <>
-      <ambientLight intensity={style === 'toon' ? 0.9 : style === 'real' ? 0 : style === 'clay' ? 0.15 : 0.8} color={style === 'toon' ? '#ffe9d6' : '#ffffff'} />
-      <hemisphereLight args={[style === 'toon' ? '#fff8ec' : '#ffffff', style === 'toon' ? '#e7b48c' : style === 'clay' ? '#8f8a84' : '#b9a98f', style === 'real' ? 0.15 : style === 'clay' ? 0.9 : 0.6]} />
+      <ambientLight intensity={style === 'toon' ? 0.9 : style === 'real' ? 0 : style === 'clay' ? 1.15 : 0.8} color={style === 'toon' ? '#ffe9d6' : style === 'clay' ? '#fff4e6' : '#ffffff'} />
+      <hemisphereLight args={[style === 'toon' ? '#fff8ec' : style === 'real' || style === 'clay' ? '#fff4e4' : '#ffffff', style === 'toon' ? '#e7b48c' : style === 'clay' ? '#d9c6aa' : '#b9a98f', style === 'real' ? 0.7 : style === 'clay' ? 0.9 : 0.6]} />
       <primitive object={aim} />
       <directionalLight
         key={`${r.toFixed(2)}`}

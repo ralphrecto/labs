@@ -1,6 +1,6 @@
 import { ContactShadows, Edges, OrbitControls } from '@react-three/drei'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useAnalysis } from '../analysis'
@@ -10,6 +10,7 @@ import type { Item, Opening, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { ItemModel } from './ItemModel'
 import { scanCenter, scanCorners, useScanRuntime } from '../scan/runtime'
+import { reduceMotion } from '../motion'
 
 // The scan backdrop pulls in the splat renderer, so it loads on first use.
 const ScanBackdrop = lazy(() => import('./ScanBackdrop').then((m) => ({ default: m.ScanBackdrop })))
@@ -33,6 +34,9 @@ interface WallPieceSpec {
   y1: number
   /** Which wall of the room this piece belongs to. */
   wi: number
+  /** Inward normal (toward the room), for the baseboard. */
+  ix: number
+  iz: number
   /** Outward normal and a point on the wall's outer face, for cutaway. */
   nx: number
   nz: number
@@ -40,11 +44,19 @@ interface WallPieceSpec {
   oz: number
 }
 
+const BASE_H = 0.08
+const BASE_D = 0.015
+
 function WallPiece({ w, mode, color, highlight }: { w: WallPieceSpec; mode: WallMode; color: string; highlight?: string }) {
   const ref = useRef<THREE.Mesh>(null)
+  // The classic editor keeps its plain walls: no darker top edge, no baseboard.
+  const trim = useStyle().style !== 'classic'
+  const cap = useRef<THREE.Mesh>(null)
   useFrame(({ camera }) => {
     const m = ref.current
     if (!m) return
+    // Keep the top edge 2 mm above the wall top whatever the cut-down squash.
+    if (cap.current) cap.current.position.y = w.size[1] / 2 + 0.002 / Math.max(m.scale.y, 1e-3)
     const c = camera.position
     const outside = (c.x - w.ox) * w.nx + (c.z - w.oz) * w.nz > 0
     const cut = mode === 'low' || (mode === 'auto' && outside)
@@ -66,11 +78,33 @@ function WallPiece({ w, mode, color, highlight }: { w: WallPieceSpec; mode: Wall
   return (
     // Cut-down walls in the dollhouse view would throw full-height shadows across the rooms, so
     // walls only cast shadows when they stand at full height (Full walls, or walking in).
-    <mesh ref={ref} position={w.pos} rotation={[0, w.rotY, 0]} castShadow={mode === 'full'} receiveShadow>
-      <boxGeometry args={w.size} />
-      <Surface role="wall" color={color} highlight={highlight} />
-      <Ink highlight={highlight} />
-    </mesh>
+    <>
+      <mesh ref={ref} position={w.pos} rotation={[0, w.rotY, 0]} castShadow={mode === 'full'} receiveShadow>
+        <boxGeometry args={w.size} />
+        <Surface role="wall" color={color} highlight={highlight} />
+        <Ink highlight={highlight} />
+        {/* The top edge, in a darker tone so the room outlines read from above. It rides along when
+            the wall is cut down (a flat plane doesn't mind the squash). */}
+        {trim && <mesh ref={cap} position={[0, w.size[1] / 2 + 0.002, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={noRaycast}>
+          <planeGeometry args={[w.size[0], w.size[2]]} />
+          <Surface role="cap" color={color} highlight={highlight} />
+        </mesh>}
+      </mesh>
+      {/* A baseboard along the foot of the wall's inner face. It is lower than a cut-down wall, so it
+          always shows. */}
+      {trim && w.y0 === 0 && w.y1 > BASE_H && (
+        <mesh
+          position={[w.pos[0] + w.ix * (w.size[2] / 2 + BASE_D / 2), BASE_H / 2, w.pos[2] + w.iz * (w.size[2] / 2 + BASE_D / 2)]}
+          rotation={[0, w.rotY, 0]}
+          receiveShadow
+          raycast={noRaycast}
+        >
+          <boxGeometry args={[w.size[0], BASE_H, BASE_D]} />
+          <Surface role="trim" color={color} />
+          <Ink />
+        </mesh>
+      )}
+    </>
   )
 }
 
@@ -97,7 +131,7 @@ function RoomMesh({ room, wallMode, selected, doorways }: { room: Room; wallMode
         if (s1 - s0 < 1e-4 || y1 - y0 < 1e-4) return
         const mid = add(add(a, scale(dir, (s0 + s1) / 2)), scale(n, -t / 2))
         const outer = add(a, scale(n, -t))
-        out.push({ pos: [mid.x, (y0 + y1) / 2, mid.y], size: [s1 - s0, y1 - y0 + jitter, t], rotY: -angle, y0, y1, wi, nx: -n.x, nz: -n.y, ox: outer.x, oz: outer.y })
+        out.push({ pos: [mid.x, (y0 + y1) / 2, mid.y], size: [s1 - s0, y1 - y0 + jitter, t], rotY: -angle, y0, y1, wi, ix: n.x, iz: n.y, nx: -n.x, nz: -n.y, ox: outer.x, oz: outer.y })
       }
       // Extend past both ends by the wall thickness so corners are filled.
       // A neighbour's door through this wall opens it too (doorways), unless it overlaps one of ours.
@@ -150,7 +184,7 @@ function RoomMesh({ room, wallMode, selected, doorways }: { room: Room; wallMode
   const { style, palette } = useStyle()
   const floor = useFloorLook(room, floorGeom, style, palette)
   const wallColors = palette?.walls[room.id]
-  const wallBase = palette?.wallColor[room.id] ?? (style === 'toon' ? '#f6ecdf' : '#f2f0eb')
+  const wallBase = palette?.wallColor[room.id] ?? (style === 'toon' ? '#f6ecdf' : style === 'real' ? '#f1e8da' : '#f2f0eb')
   const pick = style === 'toon' || style === 'real'
   const hl = selected && style !== 'classic' ? '#2f6fde' : undefined
 
@@ -267,6 +301,89 @@ function flagBadge(flag: 'error' | 'warning') {
 }
 const noRaycast = () => null
 
+/** A selected piece: an outline in this color, a warm ring on the floor and a small hop. */
+const SELECT_LINE = '#4f8be8'
+const SELECT_RING = '#e8643c'
+const SELECT_GLOW = '#fff3d6'
+
+/** A rounded-rectangle band around a w x d footprint, lying flat on the floor. */
+function ringGeometry(w: number, d: number, gap: number, band: number) {
+  const rr = (hw: number, hd: number, r: number, hole: boolean) => {
+    const p = hole ? new THREE.Path() : new THREE.Shape()
+    r = Math.min(r, hw, hd)
+    p.moveTo(-hw + r, -hd)
+    p.lineTo(hw - r, -hd)
+    p.quadraticCurveTo(hw, -hd, hw, -hd + r)
+    p.lineTo(hw, hd - r)
+    p.quadraticCurveTo(hw, hd, hw - r, hd)
+    p.lineTo(-hw + r, hd)
+    p.quadraticCurveTo(-hw, hd, -hw, hd - r)
+    p.lineTo(-hw, -hd + r)
+    p.quadraticCurveTo(-hw, -hd, -hw + r, -hd)
+    return p
+  }
+  const hw = w / 2 + gap
+  const hd = d / 2 + gap
+  const outer = rr(hw + band, hd + band, 0.1 + gap + band, false) as THREE.Shape
+  outer.holes.push(rr(hw, hd, 0.1 + gap, true))
+  const g = new THREE.ShapeGeometry(outer, 6)
+  g.rotateX(-Math.PI / 2)
+  return g
+}
+
+/** A soft cream band with a coral rim, so it reads on warm toon floors and pale wood alike. It pulses gently. */
+function SelectRing({ w, d }: { w: number; d: number }) {
+  const glow = useMemo(() => ringGeometry(w, d, 0.04, 0.07), [w, d])
+  const rim = useMemo(() => ringGeometry(w, d, 0.11, 0.03), [w, d])
+  useEffect(() => () => {
+    glow.dispose()
+    rim.dispose()
+  }, [glow, rim])
+  const a = useRef<THREE.MeshBasicMaterial>(null)
+  const b = useRef<THREE.MeshBasicMaterial>(null)
+  useFrame(({ clock }) => {
+    if (!a.current || !b.current || reduceMotion) return
+    const k = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 3.2)
+    a.current.opacity = 0.45 + 0.3 * k
+    b.current.opacity = 0.65 + 0.3 * k
+  })
+  const props = { transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, toneMapped: false } as const
+  return (
+    // Above a rug's height, so a piece standing on a rug still shows its ring.
+    <group position={[0, 0.03, 0]}>
+      <mesh geometry={glow} raycast={noRaycast} renderOrder={2}>
+        <meshBasicMaterial ref={a} color={SELECT_GLOW} opacity={0.6} {...props} />
+      </mesh>
+      <mesh geometry={rim} raycast={noRaycast} renderOrder={2}>
+        <meshBasicMaterial ref={b} color={SELECT_RING} opacity={0.8} {...props} />
+      </mesh>
+    </group>
+  )
+}
+
+const HOP_MS = 260
+/** Lifts its children 4 cm and sets them down again when `on` turns true (not with reduced motion). */
+function Hop({ on, children }: { on: boolean; children: ReactNode }) {
+  const ref = useRef<THREE.Group>(null)
+  const start = useRef(0)
+  useEffect(() => {
+    if (on && !reduceMotion) start.current = -1
+  }, [on])
+  useFrame(() => {
+    const g = ref.current
+    if (!g || !start.current) return
+    if (start.current < 0) start.current = performance.now()
+    const t = (performance.now() - start.current) / HOP_MS
+    if (t >= 1) {
+      g.position.y = 0
+      start.current = 0
+      return
+    }
+    g.position.y = 0.04 * Math.sin(Math.PI * t)
+  })
+  return <group ref={ref}>{children}</group>
+}
+
 function PlacedItem({
   item,
   p,
@@ -284,17 +401,29 @@ function PlacedItem({
   // The classic editor tints problem pieces. In the game a tint reads as red furniture, so the
   // piece keeps its own colors and gets an outline and a small "!" badge instead.
   const tint = style === 'classic'
-  const highlight = selected ? '#2f6fde' : tint && flag === 'error' ? '#d64545' : tint && flag === 'warning' ? '#d68a1f' : undefined
+  const highlight = selected ? SELECT_LINE : tint && flag === 'error' ? '#d64545' : tint && flag === 'warning' ? '#d68a1f' : undefined
   const h = Math.max(item.height, 0.02)
   return (
     <group position={[p.x, 0, p.y]} rotation={[0, -p.rotation, 0]} onPointerDown={(e) => onGrab(e, p)}>
-      <ItemModel item={item} highlight={highlight} />
-      {selected && (
+      <Hop on={selected}>
+        <ItemModel item={item} highlight={highlight} />
+        {/* Models from a URL draw their own materials, so their outline is the bounding box. */}
+        {selected && item.glbUrl && !tint && (
+          <mesh position={[0, h / 2, 0]} raycast={noRaycast}>
+            <boxGeometry args={[item.width + 0.02, h + 0.01, item.depth + 0.02]} />
+            <meshBasicMaterial visible={false} />
+            <Edges color={SELECT_LINE} lineWidth={2.4} raycast={noRaycast} />
+          </mesh>
+        )}
+      </Hop>
+      {selected && (tint ? (
         <mesh position={[0, 0.003, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[item.width + 0.06, item.depth + 0.06]} />
           <meshBasicMaterial color="#2f6fde" transparent opacity={0.25} />
         </mesh>
-      )}
+      ) : (
+        <SelectRing w={item.width} d={item.depth} />
+      ))}
       {flag && !selected && !tint && (
         <group>
           <mesh position={[0, h / 2, 0]} raycast={noRaycast}>
@@ -430,7 +559,7 @@ function Scene({
       <StyleEnvironment />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[target.x, -0.01, target.z]} receiveShadow onPointerDown={() => useStore.getState().select(null)} visible={!scanOnly && stage.showGround}>
         <planeGeometry args={[200, 200]} />
-        {style === 'toon' ? <meshToonMaterial color={stage.ground ?? ground} /> : <meshStandardMaterial color={stage.ground ?? ground} roughness={1} />}
+        {style === 'toon' ? <meshToonMaterial color={stage.ground ?? ground} /> : <meshStandardMaterial color={stage.ground ?? ground} roughness={1} envMapIntensity={0.25} />}
       </mesh>
       {contact && !scanOnly && (
         // Rendering contact shadows costs two extra passes, so they're drawn once and redrawn only

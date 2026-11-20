@@ -8,7 +8,7 @@
   --g-ink: #2d2620;
   --g-ink-2: #6f6255;         /* secondary text */
   --g-line: rgba(70, 50, 30, 0.12);
-  --g-coral: #ff7a59;         /* primary accent: borders, rings, decoration */
+  --g-coral: #e0603a;         /* primary accent: borders, rings, decoration (a lighter step of the fill, so they read as one color) */
   --g-coral-fill: #c94a28;    /* coral surfaces that carry white text or icons (4.7:1 with #fff) */
   --g-coral-ledge: #96331b;   /* the 3D ledge under a filled coral button */
   --g-coral-ink: #b23c1f;     /* coral text on cream (5.5:1) */
@@ -57,7 +57,7 @@
 .g-btn.primary:active:not(:disabled) { box-shadow: 0 1px 0 var(--g-coral-dk); transform: translateY(3px); }
 /* Coral surfaces with white text or a white icon use the deeper fill so they stay readable. Each one
    re-points the coral tokens for itself, so component rules that say var(--g-coral) follow. */
-.g-btn.primary, .g-chip.on, .hud-look .g-chip.on, .hud-mode.on .hud-mode-icon, .hud-home-icon, .panel button.primary,
+.g-btn.primary, .g-chip.on, .hud-look .g-chip.on, .hud-mode.on .hud-mode-icon, .panel button.primary,
 .buy-badge, .buy-shop-icons svg, .buy-shop .modal button.primary {
   --g-coral: var(--g-coral-fill); --g-coral-dk: var(--g-coral-ledge);
 }
