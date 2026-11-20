@@ -21,6 +21,8 @@ import { useGame, type GameMode } from './gameStore'
 import * as I from './icons'
 import { Onboarding } from './Onboarding'
 import { StylePicker, useStylePicker } from './StylePicker'
+import { useModal } from './useModal'
+import { reduceMotion } from '../motion'
 import './theme.css'
 import './hud.css'
 import './goals.css'
@@ -125,7 +127,8 @@ interface CamState {
   autoRotate: boolean
   wallMode: WallMode
 }
-let camState: CamState = { resetKey: 0, eye: false, autoRotate: true, wallMode: 'auto' }
+// The Look spin starts off when the player asked their system to reduce motion; Spin still turns it on.
+let camState: CamState = { resetKey: 0, eye: false, autoRotate: !reduceMotion, wallMode: 'auto' }
 const GROUND = '#fff4e2'
 const SKY = '#f3ece0'
 const camListeners = new Set<() => void>()
@@ -300,12 +303,15 @@ function TopBar() {
         <VibeMeter />
       </div>
       <div className="hud-right">
-        <button className="g-icon sm" disabled={!canUndo} onClick={() => s.undo()} aria-label="Undo">
-          <I.IconUndo />
-        </button>
-        <button className="g-icon sm" disabled={!canRedo} onClick={() => s.redo()} aria-label="Redo">
-          <I.IconRedo />
-        </button>
+        {/* On phones these two move down beside the dock (hud.css). */}
+        <div className="hud-undo">
+          <button className="g-icon sm" disabled={!canUndo} onClick={() => s.undo()} aria-label="Undo">
+            <I.IconUndo />
+          </button>
+          <button className="g-icon sm" disabled={!canRedo} onClick={() => s.redo()} aria-label="Redo">
+            <I.IconRedo />
+          </button>
+        </div>
         <button className="g-icon sm" onClick={() => open('settings')} aria-label="Settings">
           <I.IconGear />
         </button>
@@ -335,7 +341,7 @@ function Dock() {
             if (st.mode !== 'select') st.setMode('select')
             st.select(null)
             useGame.getState().setMode(m)
-            if (m === 'look') setCam({ autoRotate: true, eye: false, resetKey: camState.resetKey + 1 })
+            if (m === 'look') setCam({ autoRotate: !reduceMotion, eye: false, resetKey: camState.resetKey + 1 })
           }}
           aria-pressed={mode === m}
         >
@@ -645,9 +651,11 @@ function Act({ label, onClick, children, danger, on }: { label: string; onClick:
 
 function Sheet({ title, sub, children, className }: { title: string; sub?: string; children: ReactNode; className?: string }) {
   const close = () => useGame.getState().openSheet(null)
+  const ref = useRef<HTMLDivElement>(null)
+  useModal(ref, close)
   return (
     <div className="g-scrim" onPointerDown={(e) => e.target === e.currentTarget && close()}>
-      <div className={`g-sheet hud-sheet ${className ?? ''}`} role="dialog" aria-label={title} onKeyDown={(e) => e.stopPropagation()}>
+      <div ref={ref} className={`g-sheet hud-sheet ${className ?? ''}`} role="dialog" aria-modal="true" aria-label={title} onKeyDown={(e) => e.stopPropagation()}>
         <button className="g-icon sm hud-sheet-close" onClick={close} aria-label="Close">
           <I.IconClose />
         </button>

@@ -8,14 +8,17 @@
   --g-ink: #2d2620;
   --g-ink-2: #6f6255;         /* secondary text */
   --g-line: rgba(70, 50, 30, 0.12);
-  --g-coral: #ff7a59;         /* primary action */
-  --g-coral-dk: #e8603f;
+  --g-coral: #ff7a59;         /* primary accent: borders, rings, decoration */
+  --g-coral-fill: #c94a28;    /* coral surfaces that carry white text or icons (4.7:1 with #fff) */
+  --g-coral-ledge: #96331b;   /* the 3D ledge under a filled coral button */
+  --g-coral-ink: #b23c1f;     /* coral text on cream (5.5:1) */
+  --g-coral-dk: var(--g-coral-ink);
   --g-sage: #5fa67f;          /* success, goals met */
   --g-sky: #4f8be8;           /* selection, info */
   --g-sun: #ffc24b;           /* stars, rewards */
   --g-plum: #8a5cc7;          /* build mode */
   --g-warn: #e0892b;
-  --g-bad: #d9534f;
+  --g-bad: #b8322f;            /* remove, delete (5.7:1 on paper) */
   --g-shadow: 0 10px 30px rgba(60, 40, 20, 0.16), 0 2px 6px rgba(60, 40, 20, 0.08);
   --g-shadow-sm: 0 3px 10px rgba(60, 40, 20, 0.12);
   --g-r: 18px;                /* card radius */
@@ -25,14 +28,21 @@
 }
 
 .game { position: fixed; inset: 0; overflow: hidden; background: var(--g-bg); font-family: var(--g-font); color: var(--g-ink); font-size: 15px; -webkit-tap-highlight-color: transparent; user-select: none; }
+/* Taps never double-tap-zoom the page and the page never rubber-bands; the 3D stage claims its own
+   pinch and drag in hud.css. Pinch-zoom stays available on sheets (no user-scalable=no). */
+.game { touch-action: manipulation; overscroll-behavior: none; --error: var(--g-bad); }
+.g-sheet { touch-action: pan-x pan-y pinch-zoom; overscroll-behavior: contain; }
 .game input, .game textarea, .game select { user-select: text; }
 
 /* Round icon button, used for HUD corners and context actions. */
+:where(.g-icon) { position: relative; }
 .g-icon { width: 46px; height: 46px; border-radius: 50%; border: none; background: var(--g-paper); color: var(--g-ink); box-shadow: var(--g-shadow-sm); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; transition: transform 0.18s var(--g-ease), background 0.15s; flex: none; }
 .g-icon:hover:not(:disabled) { transform: translateY(-2px) scale(1.05); background: #fff; }
 .g-icon:active:not(:disabled) { transform: scale(0.94); }
 .g-icon:disabled { opacity: 0.35; cursor: default; }
 .g-icon.sm { width: 38px; height: 38px; }
+/* Small icons keep their look but get a 44px touch target. */
+.g-icon.sm::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; }
 .g-icon svg { width: 22px; height: 22px; }
 .g-icon.sm svg { width: 18px; height: 18px; }
 .g-icon.on { background: var(--g-sky); color: #fff; }
@@ -45,6 +55,12 @@
 .g-btn:disabled { opacity: 0.4; cursor: default; }
 .g-btn.primary { background: var(--g-coral); color: #fff; box-shadow: 0 4px 0 var(--g-coral-dk), var(--g-shadow-sm); }
 .g-btn.primary:active:not(:disabled) { box-shadow: 0 1px 0 var(--g-coral-dk); transform: translateY(3px); }
+/* Coral surfaces with white text or a white icon use the deeper fill so they stay readable. Each one
+   re-points the coral tokens for itself, so component rules that say var(--g-coral) follow. */
+.g-btn.primary, .g-chip.on, .hud-look .g-chip.on, .hud-mode.on .hud-mode-icon, .hud-home-icon, .panel button.primary,
+.buy-badge, .buy-shop-icons svg, .buy-shop .modal button.primary {
+  --g-coral: var(--g-coral-fill); --g-coral-dk: var(--g-coral-ledge);
+}
 .g-btn.ghost { background: transparent; box-shadow: none; color: var(--g-ink-2); }
 .g-btn.big { padding: 16px 30px; font-size: 18px; }
 .g-btn.sm { padding: 8px 14px; font-size: 13px; }
@@ -70,6 +86,18 @@
 .g-toggle input:checked { background: var(--g-sage); }
 .g-toggle input:checked::after { transform: translateX(18px); }
 
+/* Keyboard focus: one clear ring everywhere in the game. On coral or sky fills it turns ink. */
+.game :focus-visible { outline: 3px solid var(--g-sky); outline-offset: 3px; }
+.game .g-btn.primary:focus-visible, .game .g-icon.on:focus-visible, .game .g-chip.on:focus-visible, .game .hud-mode.on:focus-visible,
+.game .hud-ctx-done:focus-visible { outline-color: var(--g-ink); }
+.game .g-sheet:focus-visible, .game [role='dialog']:focus-visible { outline: none; }
+
+/* Touch targets and text sizes for the other game components (kept here so they share one floor). */
+.game .onb .onb-link, .game .onb .onb-link:hover:not(:disabled) { min-height: 44px; padding: 10px 4px; }
+.game .buy-size { font-size: 13px; }
+.game .buy-badge { font-size: 12px; min-width: 20px; height: 20px; line-height: 20px; border-radius: 10px; }
+.game .buy-grid { touch-action: pan-x pan-y pinch-zoom; }
+
 @keyframes g-fade { from { opacity: 0; } }
 @keyframes g-rise { from { transform: translateY(40px); opacity: 0; } }
 @keyframes g-pop { 0% { transform: scale(0.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
@@ -77,7 +105,7 @@
 @media (prefers-reduced-motion: reduce) { .game *, .game *::before, .game *::after { animation: none !important; transition: none !important; } }
 
 /* index.css styles every button (and button.primary in blue); keep game buttons game-styled. */
-.game button.g-btn.primary, .game button.g-btn.primary:hover:not(:disabled) { background: var(--g-coral); border: none; color: #fff; }
+.game button.g-btn.primary, .game button.g-btn.primary:hover:not(:disabled) { background: var(--g-coral-fill); border: none; color: #fff; }
 .game button.g-btn:hover:not(:disabled), .game button.g-icon:hover:not(:disabled) { border: none; }
 .game button.g-btn:not(.primary):not(.ghost):hover:not(:disabled) { background: #fff; }
 .game button.g-btn.ghost:hover:not(:disabled) { background: transparent; }

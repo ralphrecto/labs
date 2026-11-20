@@ -5,6 +5,7 @@ import { activeLayout, useStore } from '../store'
 import { useGame } from './gameStore'
 import { bankableLevel, CATEGORY_LABEL, CATEGORY_ORDER, levelProgress, scoreHome, withBestLevel, type Goal, type HomeScore } from './goals'
 import { IconCheck, IconClose, IconStar } from './icons'
+import { useModal } from './useModal'
 
 /** The home's score, with the level held at the best one reached in this home (it never drops). */
 export function useHomeScore(): HomeScore {
@@ -137,9 +138,11 @@ export function GoalsSheet() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
   const fill = levelProgress(score)
+  const sheetRef = useRef<HTMLDivElement>(null)
+  useModal(sheetRef, close)
   return (
     <div className="g-scrim" onClick={close}>
-      <div className="g-sheet goal-sheet" role="dialog" aria-label="Goals" onClick={(e) => e.stopPropagation()}>
+      <div ref={sheetRef} className="g-sheet goal-sheet" role="dialog" aria-modal="true" aria-label="Goals" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="g-icon sm goal-close" onClick={close} aria-label="Close">
           <IconClose />
         </button>

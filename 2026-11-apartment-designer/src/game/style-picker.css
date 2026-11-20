@@ -48,5 +48,5 @@
 }
 
 /* In Look mode the picker sits alone in the top-right corner. */
-.sty-look { position: absolute; right: 16px; top: calc(16px + env(safe-area-inset-top)); z-index: 20; }
+.sty-look { position: absolute; right: max(16px, env(safe-area-inset-right)); top: calc(16px + env(safe-area-inset-top)); z-index: 20; }
 @media (max-width: 640px) { .sty-look { top: calc(74px + env(safe-area-inset-top)); } }
