@@ -62,7 +62,74 @@ function toonRamp() {
 
 const mix = (a: string, b: string, t: number) => `#${new THREE.Color(a).lerp(new THREE.Color(b), t).getHexString()}`
 
-export type SurfaceRole = 'wall' | 'floor' | 'item' | 'soft' | 'glass' | 'ground'
+/**
+ * `window` is window glass, painted with a soft sky so it reads as a window from inside and out;
+ * `daylight` is the patch of light a window throws on the floor.
+ */
+export type SurfaceRole = 'wall' | 'floor' | 'item' | 'soft' | 'glass' | 'ground' | 'window' | 'daylight'
+
+// ------------------------------------------------------------------ sky in the windows
+
+const skies: Partial<Record<string, THREE.Texture>> = {}
+/**
+ * A vertical sky gradient for window glass: blue up top, bright and pale toward the horizon.
+ * Cartoon gets three flat bands; Clay a nearly white, barely blue version.
+ */
+function skyTexture(kind: 'smooth' | 'bands' | 'clay') {
+  const hit = skies[kind]
+  if (hit || typeof document === 'undefined') return hit ?? null
+  let t: THREE.Texture
+  if (kind === 'bands') {
+    // Bottom to top (DataTexture rows start at the bottom): horizon, mid, top.
+    const rows = [
+      [236, 247, 255],
+      [196, 228, 250],
+      [150, 203, 242],
+    ]
+    const d = new Uint8Array(rows.flatMap((c) => [...c, 255]))
+    t = new THREE.DataTexture(d, 1, 3, THREE.RGBAFormat)
+    t.magFilter = THREE.NearestFilter
+    t.minFilter = THREE.NearestFilter
+    t.generateMipmaps = false
+  } else {
+    const c = document.createElement('canvas')
+    c.width = 4
+    c.height = 128
+    const g = c.getContext('2d')!
+    const grad = g.createLinearGradient(0, 0, 0, 128)
+    if (kind === 'clay') {
+      grad.addColorStop(0, '#dfe6ec')
+      grad.addColorStop(1, '#f7f8f8')
+    } else {
+      grad.addColorStop(0, '#8cc4f0')
+      grad.addColorStop(0.55, '#cbe6fa')
+      grad.addColorStop(1, '#f6fbff')
+    }
+    g.fillStyle = grad
+    g.fillRect(0, 0, 4, 128)
+    t = new THREE.CanvasTexture(c)
+  }
+  t.colorSpace = THREE.SRGBColorSpace
+  t.needsUpdate = true
+  return (skies[kind] = t)
+}
+
+let fade: THREE.Texture | null = null
+/** Alpha that fades from full at the window (v = 1) to nothing across the room (v = 0). */
+function fadeTexture() {
+  if (fade) return fade
+  const d = new Uint8Array(32 * 4)
+  for (let i = 0; i < 32; i++) {
+    const a = Math.round(255 * Math.pow(i / 31, 0.8))
+    d.set([a, a, a, 255], i * 4)
+  }
+  fade = new THREE.DataTexture(d, 1, 32, THREE.RGBAFormat)
+  fade.magFilter = THREE.LinearFilter
+  fade.minFilter = THREE.LinearFilter
+  fade.generateMipmaps = false
+  fade.needsUpdate = true
+  return fade
+}
 
 /**
  * The material for one surface in the active style. `color` is the object's own color (a scanned
@@ -84,6 +151,30 @@ export function Surface({
   const { style } = useStyle()
   const emissive = highlight ?? '#000000'
   const emissiveIntensity = highlight ? 0.35 : 0
+  if (role === 'window') {
+    // Unlit, so the sky stays bright whatever the room's lighting.
+    if (style === 'blueprint') return <meshBasicMaterial color={BLUEPRINT_LINE} transparent opacity={0.16} depthWrite={false} side={side} />
+    if (style === 'scan') return <meshBasicMaterial color="#cfe6ff" transparent opacity={0.18} depthWrite={false} side={side} />
+    const sky = skyTexture(style === 'toon' ? 'bands' : style === 'clay' ? 'clay' : 'smooth')
+    return <meshBasicMaterial color="#ffffff" map={sky} toneMapped={false} side={side} />
+  }
+  if (role === 'daylight') {
+    if (style === 'blueprint' || style === 'scan') return <meshBasicMaterial visible={false} />
+    if (style === 'toon') return <meshBasicMaterial color="#fff6dc" transparent opacity={0.4} depthWrite={false} side={side} polygonOffset polygonOffsetFactor={-2} />
+    return (
+      <meshBasicMaterial
+        color={style === 'clay' ? '#ffffff' : color}
+        alphaMap={fadeTexture()}
+        transparent
+        opacity={style === 'clay' ? 0.45 : 0.55}
+        blending={style === 'clay' ? THREE.NormalBlending : THREE.AdditiveBlending}
+        depthWrite={false}
+        side={side}
+        polygonOffset
+        polygonOffsetFactor={-2}
+      />
+    )
+  }
   if (role === 'glass') {
     if (style === 'blueprint') return <meshBasicMaterial color={BLUEPRINT_LINE} transparent opacity={0.08} depthWrite={false} />
     if (style === 'real') return <meshPhysicalMaterial color="#cfe3f2" transparent opacity={0.25} roughness={0.05} metalness={0} />

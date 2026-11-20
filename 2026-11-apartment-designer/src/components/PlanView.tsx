@@ -783,9 +783,10 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
           </g>
         )}
 
-        {/* Scan reference lengths and the one being drawn */}
+        {/* Scan reference lengths and the one being drawn: only while measuring, or while that scan is
+            selected (its inspector is open). Elsewhere, such as the onboarding room review, they'd be clutter. */}
         {scans
-          .filter((r) => r.visible && (r.id === activeScanId || mode === 'scan-measure'))
+          .filter((r) => r.visible && (mode === 'scan-measure' || (selection?.kind === 'scan' && selection.id === r.id)))
           .map((ref) => (
             <g key={ref.id} pointerEvents="none" fontFamily="system-ui, sans-serif" fontSize={fs * 0.9} fontWeight={600}>
               {ref.references.map((r) => {

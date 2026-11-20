@@ -6,7 +6,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useAnalysis } from '../analysis'
 import { bounds, centroid, dist, norm, openingEndpoints, pointInPolygon, polygonArea, scale, sub, add, v, wallInwardNormal, wallSegments } from '../model/geometry'
 import { snapPlacement } from '../model/snapping'
-import type { Item, Placement, Room, Vec2 } from '../model/types'
+import type { Item, Opening, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { ItemModel } from './ItemModel'
 import { scanCenter, scanCorners, useScanRuntime } from '../scan/runtime'
@@ -17,6 +17,8 @@ import { ScanPoints } from './ScanPoints'
 import { floorTexture, Ink, StyleContext, StyleEnvironment, StyleLights, STYLE_STAGE, Surface, useStyle, woodTexture, type StyleId } from './style'
 import { scanPalette, toonFloor, type ScanPalette } from '../scan/palette'
 import { toScanData } from '../scan/align'
+import { WindowModel, type WindowSpec } from './WindowModel'
+import { routeTo, sharedDoorways, walkStep, wallSegmentsForWalking, type WallSeg } from './walkCollision'
 
 const FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 
@@ -72,7 +74,7 @@ function WallPiece({ w, mode, color, highlight }: { w: WallPieceSpec; mode: Wall
   )
 }
 
-function RoomMesh({ room, wallMode, selected }: { room: Room; wallMode: WallMode; selected: boolean }) {
+function RoomMesh({ room, wallMode, selected, doorways }: { room: Room; wallMode: WallMode; selected: boolean; doorways?: Opening[] }) {
   const floorGeom = useMemo(() => {
     // Shape in (x, -y) then rotate so plan y maps to world +z.
     const shape = new THREE.Shape(room.polygon.map((p) => new THREE.Vector2(p.x, -p.y)))
@@ -98,30 +100,49 @@ function RoomMesh({ room, wallMode, selected }: { room: Room; wallMode: WallMode
         out.push({ pos: [mid.x, (y0 + y1) / 2, mid.y], size: [s1 - s0, y1 - y0 + jitter, t], rotY: -angle, y0, y1, wi, nx: -n.x, nz: -n.y, ox: outer.x, oz: outer.y })
       }
       // Extend past both ends by the wall thickness so corners are filled.
-      const ops = room.openings.filter((o) => o.wall === wi).sort((x, y) => x.offset - y.offset)
+      // A neighbour's door through this wall opens it too (doorways), unless it overlaps one of ours.
+      const ops = [...room.openings, ...(doorways ?? [])].filter((o) => o.wall === wi).sort((x, y) => x.offset - y.offset)
       let cursor = -t
       for (const o of ops) {
         piece(cursor, o.offset, 0, H)
         const top = o.sill + o.height
         piece(o.offset, o.offset + o.width, 0, Math.min(H, o.sill))
         if (top < H) piece(o.offset, o.offset + o.width, top, H)
-        cursor = o.offset + o.width
+        cursor = Math.max(cursor, o.offset + o.width)
       }
       piece(cursor, L + t, 0, H)
     })
     return out
-  }, [room])
+  }, [room, doorways])
 
-  const glass = useMemo(
+  const windows = useMemo(
     () =>
       room.openings
         .filter((o) => o.kind === 'window')
-        .map((o) => {
+        .map((o): WindowSpec => {
           const [a, b] = wallSegments(room)[o.wall]
           const dir = norm(sub(b, a))
           const n = wallInwardNormal(room, o.wall)
-          const mid = add(add(a, scale(dir, o.offset + o.width / 2)), scale(n, -room.wallThickness / 2))
-          return { id: o.id, pos: [mid.x, o.sill + o.height / 2, mid.y] as [number, number, number], size: [o.width, o.height, 0.01] as [number, number, number], rotY: -Math.atan2(dir.y, dir.x) }
+          const t = room.wallThickness
+          const mid = add(add(a, scale(dir, o.offset + o.width / 2)), scale(n, -t / 2))
+          const outer = add(a, scale(n, -t))
+          // The group's local +z is (-dir.y, dir.x) on the plan; which way is that relative to the room?
+          const inward = -dir.y * n.x + dir.x * n.y >= 0 ? 1 : -1
+          const height = Math.max(0.05, Math.min(o.height, room.ceilingHeight - o.sill))
+          return {
+            id: o.id,
+            pos: [mid.x, o.sill + height / 2, mid.y],
+            rotY: -Math.atan2(dir.y, dir.x),
+            width: o.width,
+            height,
+            sill: o.sill,
+            depth: t,
+            inward,
+            nx: -n.x,
+            nz: -n.y,
+            ox: outer.x,
+            oz: outer.y,
+          }
         }),
     [room],
   )
@@ -148,11 +169,8 @@ function RoomMesh({ room, wallMode, selected }: { room: Room; wallMode: WallMode
           color={style === 'classic' ? (selected ? '#e5ecfa' : '#f2f0eb') : pick ? (wallColors?.[w.wi] ?? wallBase) : '#f2f0eb'}
         />
       ))}
-      {glass.map((g) => (
-        <mesh key={g.id} position={g.pos} rotation={[0, g.rotY, 0]}>
-          <boxGeometry args={g.size} />
-          <Surface role="glass" color="#9cc3e6" />
-        </mesh>
+      {windows.map((w) => (
+        <WindowModel key={w.id} w={w} mode={wallMode} />
       ))}
     </group>
   )
@@ -385,7 +403,11 @@ function Scene({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.rooms, doc.scans, entries])
-  const glide = useRef<THREE.Vector3 | null>(null)
+  // Walking in: doors open through to the room behind them, and the walls stop you.
+  const doorways = useMemo(() => sharedDoorways(doc.rooms), [doc.rooms])
+  const walls = useMemo(() => wallSegmentsForWalking(doc.rooms, doorways), [doc.rooms, doorways])
+  /** Where a tap-to-walk is heading: the points still to pass, through doorways when needed. */
+  const glide = useRef<Vec2[] | null>(null)
   // Lifelike and Clay sit furniture on soft contact shadows. They're added a moment after the style
   // switches, so the switch itself shows at once instead of waiting on the extra shaders.
   const wantsContact = style === 'real' || style === 'clay'
@@ -437,10 +459,12 @@ function Scene({
             if (doc.rooms.length && !doc.rooms.some((r) => pointInPolygon(pt, r.polygon))) return
             // Stop a little short of the spot, so you arrive looking at it rather than standing on it.
             const cam = e.camera.position
-            const to = new THREE.Vector3(pt.x - cam.x, 0, pt.y - cam.z)
-            const len = to.length()
-            const go = len > 1 ? len - 0.5 : len
-            glide.current = new THREE.Vector3(cam.x, eye.pos[1], cam.z).addScaledVector(to.normalize(), go)
+            const from = v(cam.x, cam.z)
+            const route = routeTo(from, pt, doc.rooms, walls)
+            const last = route.length > 1 ? route[route.length - 2] : from
+            const len = dist(last, pt)
+            if (len > 1) route[route.length - 1] = add(last, scale(norm(sub(pt, last)), len - 0.5))
+            glide.current = route
           }}
         >
           <planeGeometry args={[200, 200]} />
@@ -449,7 +473,7 @@ function Scene({
       )}
       {style === 'blueprint' && <gridHelper args={[60, 120, '#7fb0ee', '#3a6fb5']} position={[target.x, -0.005, target.z]} />}
       {!scanOnly &&
-        doc.rooms.map((r) => <RoomMesh key={r.id} room={r} wallMode={eye ? 'full' : wallMode} selected={selection?.kind === 'room' && selection.id === r.id} />)}
+        doc.rooms.map((r) => <RoomMesh key={r.id} room={r} doorways={doorways.get(r.id)} wallMode={eye ? 'full' : wallMode} selected={selection?.kind === 'room' && selection.id === r.id} />)}
       {(doc.scans ?? []).length > 0 && showScan && (
         <Suspense fallback={null}>
           <ScanBackdrop eye={!!eye} force={style === 'scan'} />
@@ -468,12 +492,12 @@ function Scene({
           />
         ))}
       </group>
-      {!eye && <FitCamera key={(doc.scans ?? []).length} target={target} inset={inset} />}
+      {!eye && <FitCamera key={(doc.scans ?? []).length} inset={inset} spin={autoRotate} />}
       <ViewOffset inset={eye ? undefined : inset} />
       {eye ? (
         <>
           <OrbitControls ref={controls} makeDefault target={eyeTarget(eye)} enableZoom={false} enablePan={false} rotateSpeed={-0.4} />
-          <EyeWalk controls={controls} glide={glide} rooms={doc.rooms} />
+          <EyeWalk controls={controls} glide={glide} rooms={doc.rooms} walls={walls} />
         </>
       ) : (
         <OrbitControls ref={controls} target={target} makeDefault maxPolarAngle={Math.PI / 2 - 0.02} minDistance={0.3} maxDistance={60} autoRotate={autoRotate} autoRotateSpeed={0.6} />
@@ -488,31 +512,155 @@ export interface SceneInset {
   bottom: number
 }
 
-/** Height of the part of the pane the HUD leaves visible, never less than 35% of it. */
-const visibleHeight = (h: number, inset?: SceneInset) => Math.max(h * 0.35, h - (inset?.top ?? 0) - (inset?.bottom ?? 0))
+/** Height of the part of the pane the HUD leaves visible, never less than a quarter of it. */
+const visibleHeight = (h: number, inset?: SceneInset) => Math.max(h * 0.25, h - (inset?.top ?? 0) - (inset?.bottom ?? 0))
 
-/** Place the overview camera so the whole apartment fits the part of the pane the HUD leaves visible. */
-function FitCamera({ target, inset }: { target: THREE.Vector3; inset?: SceneInset }) {
+/** How much of the visible stage the home spans across its tighter direction: about a 10% margin each side. */
+const FILL = 0.8
+/** The overview looks down from the front, a little to the right. */
+const OVERVIEW_DIR = new THREE.Vector3(0.15, 1.0, 0.75).normalize()
+const UP = new THREE.Vector3(0, 1, 0)
+
+/**
+ * The 3D points the overview has to keep in view: every room corner (pushed out by the wall
+ * thickness) at the floor and at the ceiling. With no rooms yet, the visible scans' footprints.
+ */
+function framePoints(doc: ReturnType<typeof useStore.getState>['doc']): THREE.Vector3[] {
+  const out: THREE.Vector3[] = []
+  if (doc.rooms.length) {
+    for (const r of doc.rooms) {
+      const t = r.wallThickness
+      for (const p of r.polygon)
+        for (const [dx, dz] of [[-t, -t], [t, -t], [t, t], [-t, t]])
+          for (const y of [0, r.ceilingHeight]) out.push(new THREE.Vector3(p.x + dx, y, p.y + dz))
+    }
+    return out
+  }
+  for (const r of doc.scans ?? []) if (r.visible) for (const p of scanCorners(r) ?? []) for (const y of [0, 2.4]) out.push(new THREE.Vector3(p.x, y, p.y))
+  return out
+}
+
+/**
+ * Where to put the orbit target and how far back to stand so `pts` fill the visible part of the
+ * pane (between the HUD at the top and bottom) to FILL, looking along `-dir`. The target is moved
+ * so the home's picture is centred on it (ViewOffset centres the target in the visible band), and
+ * stays on the floor. With `spin` (the Look mode turntable) the fit holds all the way round.
+ */
+function fitView(
+  pts: THREE.Vector3[],
+  dir: THREE.Vector3,
+  fovDeg: number,
+  width: number,
+  height: number,
+  inset?: SceneInset,
+  spin = false,
+): { target: THREE.Vector3; dist: number } {
+  const t = Math.tan((fovDeg * Math.PI) / 360)
+  const ky = t * (visibleHeight(height, inset) / height) * FILL
+  const kx = t * (width / height) * FILL
+  const box = new THREE.Box3().setFromPoints(pts)
+  let target = new THREE.Vector3((box.min.x + box.max.x) / 2, 0, (box.min.z + box.max.z) / 2)
+  const axes = (d: THREE.Vector3) => {
+    const f = d.clone().negate()
+    const r = new THREE.Vector3().crossVectors(f, UP).normalize()
+    const u = new THREE.Vector3().crossVectors(r, f)
+    return { f, r, u }
+  }
+  const q = new THREE.Vector3()
+  const solve = (tg: THREE.Vector3, d: THREE.Vector3) => {
+    const { f, r, u } = axes(d)
+    let D = 0.5
+    for (const p of pts) {
+      q.subVectors(p, tg)
+      const z = q.dot(f)
+      D = Math.max(D, Math.abs(q.dot(r)) / kx - z, Math.abs(q.dot(u)) / ky - z)
+    }
+    return D
+  }
+  if (spin) {
+    let D = 0
+    for (let i = 0; i < 12; i++) D = Math.max(D, solve(target, dir.clone().applyAxisAngle(UP, (i / 12) * Math.PI * 2)))
+    return { target, dist: D }
+  }
+  const { f, r, u } = axes(dir)
+  let D = solve(target, dir)
+  for (let it = 0; it < 6; it++) {
+    // Picture extents, in tangent units around the view axis.
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity
+    for (const p of pts) {
+      q.subVectors(p, target)
+      const z = D + q.dot(f)
+      const sx = q.dot(r) / z
+      const sy = q.dot(u) / z
+      x0 = Math.min(x0, sx)
+      x1 = Math.max(x1, sx)
+      y0 = Math.min(y0, sy)
+      y1 = Math.max(y1, sy)
+    }
+    const cx = (x0 + x1) / 2
+    const cy = (y0 + y1) / 2
+    if (Math.abs(cx) < 1e-4 && Math.abs(cy) < 1e-4) break
+    // Slide the camera and target sideways to centre the picture, then run the target down the
+    // view ray to the floor (which doesn't change the picture), and refit the distance.
+    const shifted = target.clone().addScaledVector(r, cx * D).addScaledVector(u, cy * D)
+    const s = f.y < -1e-3 ? -shifted.y / f.y : 0
+    target = shifted.addScaledVector(f, s)
+    D = solve(target, dir)
+  }
+  return { target, dist: D }
+}
+
+/**
+ * Frame the whole home in the part of the pane the HUD leaves visible, and keep it framed as the
+ * drawer and selection bar come and go (easing over about 300 ms), until the player moves the
+ * camera themselves. Recentering (a new Canvas) starts it again.
+ */
+function FitCamera({ inset, spin }: { inset?: SceneInset; spin?: boolean }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
-  const doc = useStore((s) => s.doc)
-  const done = useRef(false)
+  const controls = useThree((s) => s.controls) as OrbitControlsImpl | null
+  const rooms = useStore((s) => s.doc.rooms)
+  const scans = useStore((s) => s.doc.scans)
+  const touched = useRef(false)
+  const placed = useRef(false)
+  const goal = useRef<{ target: THREE.Vector3; dist: number } | null>(null)
+  useEffect(() => {
+    if (!controls) return
+    const stop = () => {
+      touched.current = true
+      goal.current = null
+    }
+    controls.addEventListener('start', stop)
+    return () => controls.removeEventListener('start', stop)
+  }, [controls])
   useLayoutEffect(() => {
-    if (done.current || size.width < 10) return
-    done.current = true
-    const pts = sceneFootprint(doc)
+    if (touched.current || size.width < 10 || !controls) return
+    const pts = framePoints(useStore.getState().doc)
     if (!pts.length) return
-    const b = bounds(pts)
-    const radius = Math.hypot(b.maxX - b.minX, b.maxY - b.minY) / 2 + 0.3
-    const t = Math.tan((camera.fov * Math.PI) / 360)
-    const vfov = 2 * Math.atan(t * (visibleHeight(size.height, inset) / size.height))
-    const hfov = 2 * Math.atan(t * (size.width / size.height))
-    const d = radius / Math.sin(Math.min(vfov, hfov) / 2)
-    const dir = new THREE.Vector3(0.15, 1.0, 0.75).normalize()
-    camera.position.copy(target).addScaledVector(dir, d)
-    camera.lookAt(target)
+    const dir = placed.current ? camera.position.clone().sub(controls.target).normalize() : OVERVIEW_DIR.clone()
+    const fit = fitView(pts, dir, camera.fov, size.width, size.height, inset, spin)
+    if (!placed.current) {
+      placed.current = true
+      controls.target.copy(fit.target)
+      camera.position.copy(fit.target).addScaledVector(dir, fit.dist)
+      camera.lookAt(fit.target)
+      controls.update()
+      goal.current = null
+    } else goal.current = fit
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [camera, size, target])
+  }, [camera, controls, size.width, size.height, inset?.top, inset?.bottom, rooms, scans, spin])
+  useFrame((_, dt) => {
+    const g = goal.current
+    if (!g || !controls) return
+    const k = 1 - Math.exp(-Math.min(dt, 0.05) * 12)
+    const off = camera.position.clone().sub(controls.target)
+    const d = off.length()
+    const nd = d + (g.dist - d) * k
+    controls.target.lerp(g.target, k)
+    camera.position.copy(controls.target).addScaledVector(off.normalize(), nd)
+    if (Math.abs(nd - g.dist) < 1e-3 && controls.target.distanceTo(g.target) < 1e-3) goal.current = null
+    controls.update()
+  })
   return null
 }
 
@@ -591,7 +739,18 @@ const WALK_KEYS = new Set(['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowlef
  * Moving around at eye level: glide to a tapped spot on the floor, or walk with WASD / arrow keys
  * (left and right arrows turn). Moves the camera and the look-at target together.
  */
-function EyeWalk({ controls, glide, rooms }: { controls: RefObject<OrbitControlsImpl | null>; glide: RefObject<THREE.Vector3 | null>; rooms: Room[] }) {
+function EyeWalk({
+  controls,
+  glide,
+  rooms,
+  walls,
+}: {
+  controls: RefObject<OrbitControlsImpl | null>
+  glide: RefObject<Vec2[] | null>
+  rooms: Room[]
+  walls: WallSeg[]
+}) {
+  const stuck = useRef(0)
   const camera = useThree((s) => s.camera)
   const keys = useRef(new Set<string>())
   const box = useMemo(() => {
@@ -643,20 +802,29 @@ function EyeWalk({ controls, glide, rooms }: { controls: RefObject<OrbitControls
     if (move.lengthSq() > 0) {
       glide.current = null
       move.normalize().multiplyScalar(1.6 * dt)
-    } else if (glide.current) {
-      const d = glide.current.clone().sub(camera.position)
-      d.y = 0
+    } else if (glide.current?.length) {
+      const route = glide.current
+      const goal = route[0]
+      const d = new THREE.Vector3(goal.x - camera.position.x, 0, goal.y - camera.position.z)
       const len = d.length()
-      if (len < 0.01) glide.current = null
+      // Waypoints on the way (doorways) are passed without stopping; the last one eases in.
+      if (len < (route.length > 1 ? 0.15 : 0.01)) {
+        route.shift()
+        if (!route.length) glide.current = null
+      } else if (route.length > 1) move.copy(d).multiplyScalar(Math.min(len, 2.2 * dt) / len)
       else move.copy(d).multiplyScalar(Math.min(1, Math.max(dt * 3.5, Math.min(len, 0.4 * dt) / len)))
     }
     if (move.lengthSq() > 0) {
-      const next = camera.position.clone().add(move)
-      if (box) {
-        next.x = THREE.MathUtils.clamp(next.x, box.minX + 0.2, box.maxX - 0.2)
-        next.z = THREE.MathUtils.clamp(next.z, box.minY + 0.2, box.maxY - 0.2)
-      }
-      move.subVectors(next, camera.position)
+      const from = v(camera.position.x, camera.position.z)
+      let next = walkStep(from, v(move.x, move.z), walls)
+      if (box) next = v(THREE.MathUtils.clamp(next.x, box.minX + 0.2, box.maxX - 0.2), THREE.MathUtils.clamp(next.y, box.minY + 0.2, box.maxY - 0.2))
+      // A glide that's pressed against a wall and getting nowhere gives up.
+      const got = dist(from, next)
+      if (glide.current && got < move.length() * 0.2) {
+        stuck.current += dt
+        if (stuck.current > 0.4) glide.current = null
+      } else stuck.current = 0
+      move.set(next.x - from.x, 0, next.y - from.y)
       camera.position.add(move)
       c.target.add(move)
     }
