@@ -389,9 +389,13 @@ function Dock() {
 
 const CAM_LABELS_KEY = 'apartment-designer:cam-labels-seen'
 
-/** Names next to the camera buttons on a first visit, until one is used or a few seconds pass. */
+/**
+ * Names next to the camera buttons on a first visit, until one is used or a few seconds pass. Not
+ * on phones: there they would run under the Next chip, and the first seconds belong to the goal.
+ */
 function useFirstRunLabels() {
   const [show, setShow] = useState(() => {
+    if (typeof matchMedia === 'function' && matchMedia('(max-width: 700px)').matches) return false
     try {
       return localStorage.getItem(CAM_LABELS_KEY) !== '1'
     } catch {
@@ -910,7 +914,7 @@ function SettingsSheet() {
           onClick={() => {
             loadSample()
             g.openSheet(null)
-            s.notify('Moved into the sample home. Your other homes are in Your designs.')
+            s.notify('Moved into the sample home!')
           }}
         >
           <I.IconHome width={18} height={18} /> Load the sample home

@@ -130,7 +130,7 @@ export const useScanUI = create<ScanUIState>((set, get) => ({
     set({ review: null })
     if (roomId) main.select({ kind: 'room', id: roomId })
     const what = [roomId ? 'the room' : '', count ? `${count} piece${count === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ') || 'your scan'
-    main.notify(`Moved in ${what}! Drag anything to fix it. Changed your mind? Undo takes it all back.`)
+    main.notify(`Moved in ${what}! Drag anything to fix it.`)
   },
   cancel: () => set({ review: null }),
 

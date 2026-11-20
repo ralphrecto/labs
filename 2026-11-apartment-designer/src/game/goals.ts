@@ -2,7 +2,7 @@
 // turned into goals, stars, a level and a "vibe" number for the game HUD. Pure logic, no React.
 import type { Analysis } from '../analysis'
 import { COMFORTABLE_WALKWAY, MIN_WALKWAY, placedItems, walkingPaths, type PathReport } from '../model/checks'
-import { BEDROOM, DINING, polygonGap, UTILITY_ROOM } from '../model/placement'
+import { BEDROOM, DINING, LIVING, OFFICE, polygonGap, UTILITY_ROOM } from '../model/placement'
 import { add as add2, closestPointOnSegment, convexOverlap, orientedRect, dist, dot, lerp, norm, openingEndpoints, pointInPolygon, polygonArea, polygonInsideRoom, rot, scale, sub, v, wallInwardNormal, wallSegments } from '../model/geometry'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 
@@ -52,6 +52,11 @@ export interface HomeScore {
   /** Error-level issues (overlaps, walls, doors, unreachable rooms) in the layout. */
   errors: number
   headline: string
+  /**
+   * The plan is a living space with no bedroom (one scanned living room, say): Next starts with
+   * the sofa, coffee table, rug, lamp and plant rather than a desk.
+   */
+  livingFirst?: boolean
 }
 
 export const LEVELS = ['Empty shell', 'Moving in', 'Lived-in', 'Cozy', 'Designer home', 'Dream home'] as const
@@ -87,6 +92,8 @@ export const RULES = {
 }
 
 const SEATING = new Set(['sofa', 'armchair'])
+/** Pieces you use from the front or sides: short of that space, they don't count toward goals. */
+const NEEDS_ROOM = new Set(['bed', 'wardrobe', 'dresser', 'desk'])
 const STORAGE = new Set(['dresser', 'wardrobe', 'bookshelf', 'sideboard', 'console-table'])
 /** Flow goals only count once the home has this many solid pieces. */
 export const MIN_PIECES = 4
@@ -197,20 +204,57 @@ export function withBestLevel(score: HomeScore, best: number): HomeScore {
   return { ...score, level, headline: score.headline === score.level.name ? level.name : score.headline }
 }
 
+/** The furniture drawer tab each catalog piece lives on. */
+export const TAB_OF: Record<string, string> = {
+  sofa: 'living', armchair: 'living', 'coffee-table': 'living', 'side-table': 'living', ottoman: 'living', 'tv-stand': 'living', 'console-table': 'living',
+  bed: 'bedroom', nightstand: 'bedroom', dresser: 'bedroom', wardrobe: 'bedroom',
+  'dining-table': 'dining', 'dining-chair': 'dining', bench: 'dining', sideboard: 'dining',
+  desk: 'work', 'office-chair': 'work', bookshelf: 'work',
+  plant: 'decor', 'floor-lamp': 'decor', rug: 'decor', box: 'decor',
+}
+/** Other pieces that finish the same goal, tried in order when the suggested one has no room. */
+const STAND_INS: Record<string, string[]> = {
+  dresser: ['wardrobe', 'bookshelf', 'sideboard', 'console-table'],
+  wardrobe: ['dresser', 'bookshelf', 'sideboard', 'console-table'],
+  bookshelf: ['sideboard', 'console-table', 'dresser', 'wardrobe'],
+  sofa: ['armchair'],
+  nightstand: ['side-table'],
+  'dining-chair': ['bench'],
+  'office-chair': ['dining-chair'],
+}
+const STAND_IN_GOALS: Record<string, string[]> = { storage: ['bookshelf', 'sideboard', 'console-table', 'wardrobe', 'dresser'], sit: STAND_INS.sofa }
+/** Goals that make a living room cozy, suggested first when the home is a living space. */
+const LIVING_GOAL = /^(sit|coffee:|rug|light|plant|nook|rooms-used|sofa-tv|tv-distance)/
+
 /**
  * The goal to suggest next: the unfinished one closest to done that the player can act on now
  * (goals waiting on something else are skipped), favouring ones the furniture drawer finishes.
+ * `fits` dry-runs placement: a goal whose piece has nowhere to go suggests a stand-in that fits
+ * (a bookshelf when the bedroom has no room for a dresser), or gives way to the next goal, so the
+ * chip never leads to a refusal.
  */
-export function nextGoal(score: HomeScore): Goal | undefined {
+export function nextGoal(score: HomeScore, fits?: (category: string) => boolean): Goal | undefined {
   const open = score.goals.filter((g) => !g.done && !g.locked)
   // Fix what's broken before buying more: errors, a tight walkway or a blocked door, then a TV the sofa can't see.
   for (const id of FIX_FIRST) {
     const g = open.find((x) => x.id === id && x.snag)
     if (g) return g
   }
+  const pool = score.livingFirst ? [...open.filter((g) => LIVING_GOAL.test(g.id)), ...open.filter((g) => !LIVING_GOAL.test(g.id))] : open
   // score.goals is already ranked (closest to done, basics first). A goal a piece of furniture
   // finishes is the easiest next step, so the first of those wins; then the first core goal.
-  return open.find((g) => g.tab) ?? open.find((g) => !g.bonus) ?? open[0]
+  for (const g of pool) {
+    if (!g.tab || !g.item) continue
+    if (!fits || fits(g.item)) return g
+    const alt = [g.item, ...(STAND_IN_GOALS[g.id] ?? []), ...(STAND_INS[g.item] ?? [])].find((c) => c !== g.item && fits(c))
+    if (alt) return { ...g, item: alt, tab: TAB_OF[alt] ?? g.tab, placeIn: undefined }
+  }
+  const rest = pool.filter((g) => !g.tab || !g.item)
+  const pick = rest.find((g) => !g.bonus) ?? rest[0] ?? (fits ? undefined : pool[0])
+  if (pick) return pick
+  // Nothing on offer fits anywhere: point at the goals sheet (its hints) rather than a refusal.
+  const g = pool.find((x) => !x.bonus) ?? pool[0]
+  return g && { ...g, tab: undefined, item: undefined }
 }
 
 /** Where the best level is remembered: per design, so designs of one home can be compared. */
@@ -240,9 +284,19 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       clean: false,
     }
   })
+  // A piece that is short of its own clearance (a bed with no room to get in) has a snag: it earns
+  // nothing until it's moved, so a goal and a level-up never land on a piece the game flags.
+  // (A coffee table inside the sofa's knee room is the point of a coffee table, so only a wall in
+  // the way counts there; beds, wardrobes, dressers and desks need their space whatever blocks it.)
+  const catOf = new Map(placed.map((x) => [x.id, x.category]))
+  const cramped = new Set(
+    analysis.issues
+      .filter((i) => i.kind === 'clearance' && i.severity !== 'info' && (i.id.startsWith('clearwall:') || NEEDS_ROOM.has(catOf.get(i.placementIds[0]) ?? '')))
+      .map((i) => i.placementIds[0]),
+  )
   for (const x of placed) x.clean = x.inside && analysis.flagged.get(x.id) !== 'error'
-  /** Pieces of these categories that count (inside a room, no errors). */
-  const of = (...cats: string[]) => placed.filter((x) => x.clean && cats.includes(x.category))
+  /** Pieces of these categories that count (inside a room, no errors, room to use them). */
+  const of = (...cats: string[]) => placed.filter((x) => x.clean && !cramped.has(x.id) && cats.includes(x.category))
   /** Any pieces of these categories, for hints. */
   const ofAny = (...cats: string[]) => placed.filter((x) => cats.includes(x.category))
   const inRoom = (room: Room) => placed.filter((x) => x.clean && x.room?.id === room.id)
@@ -260,8 +314,14 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const bedrooms = rooms.filter((r) => BEDROOM.test(r.name) && !UTILITY_ROOM.test(r.name))
   const livable = rooms.filter((r) => !UTILITY_ROOM.test(r.name))
   // Goals that need a kind of room only show when the plan has one. With no rooms yet, show them all.
-  // A studio (one livable room, or one named so) takes the bed anywhere.
-  const studio = !bedrooms.length && (livable.length === 1 || livable.some((r) => /studio|loft/i.test(r.name)))
+  // A studio takes the bed anywhere: a room named so, a single room with a bed in it already (a
+  // scan that found one), or a single room that isn't named for something else. One room called
+  // "Living room" is a living room: no bed goals.
+  const named = (r: Room) => /studio|loft|bedsit/i.test(r.name)
+  const single = livable.length === 1 ? livable[0] : undefined
+  const studio =
+    !bedrooms.length &&
+    (livable.some(named) || (!!single && (ofAny('bed').length > 0 || !(LIVING.test(single.name) || DINING.test(single.name) || OFFICE.test(single.name)))))
   const canSleep = !rooms.length || bedrooms.length > 0 || (studio && livable.some((r) => polygonArea(r.polygon) >= BED_ROOM_AREA))
   const canEat = !rooms.length || livable.some((r) => DINING.test(r.name) || (!bedrooms.includes(r) && polygonArea(r.polygon) >= OPEN_PLAN_AREA))
   const paths = pathsWithEntrance(doc, layout, analysis.paths)
@@ -548,7 +608,9 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   // Room to get into bed: 60 cm of free floor along the side (both sides for a double or bigger),
   // below the nightstands.
   const solids = placed.filter((x) => !x.floor)
-  for (const b of sleepBeds) {
+  // Checked on every bed in the right room, cramped or not: this goal is the one that says why.
+  const accessBeds = placed.filter((x) => x.clean && x.category === 'bed' && (!bedrooms.length || (!!x.room && bedrooms.includes(x.room))))
+  for (const b of accessBeds) {
     const along = Math.max(0.3, 2 * b.hd - 0.45)
     const sideFree = (sd: number) => {
       const strip = orientedRect(b.center, RULES.bedSide / 2, along / 2, b.rotation, v(sd * (b.hw + RULES.bedSide / 2), b.hd - along / 2))
@@ -745,5 +807,6 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const rank = (g: Goal) => CATEGORY_ORDER.indexOf(g.category)
   goals.sort((a, b) => Number(a.done) - Number(b.done) || (b.progress ?? 0) - (a.progress ?? 0) || rank(a) - rank(b) || a.stars - b.stars)
 
-  return { stars, maxStars, coreMax, thresholds, level, goals, vibe, errors, headline }
+  const livingFirst = !!rooms.length && !canSleep && livable.some((r) => LIVING.test(r.name) && !named(r))
+  return { stars, maxStars, coreMax, thresholds, level, goals, vibe, errors, headline, livingFirst }
 }

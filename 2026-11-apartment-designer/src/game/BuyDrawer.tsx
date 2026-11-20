@@ -46,7 +46,7 @@ interface SizeChip {
 
 /** Size chips per category, from the retail sizes in starterCatalog.ts: [chip label, starter id]. */
 const CHIP_IDS: Record<string, [string, string][]> = {
-  sofa: [['2-seat', 'sofa-2'], ['Apt', 'sofa-apt'], ['3-seat', 'sofa-3'], ['L-sofa', 'sectional-l']],
+  sofa: [['2-seat', 'sofa-2'], ['Compact', 'sofa-apt'], ['3-seat', 'sofa-3'], ['L-sofa', 'sectional-l']],
   'dining-table': [['Bistro', 'bistro'], ['Round', 'dining-round'], ['4-seat', 'dining-4'], ['6-seat', 'dining-6']],
   desk: [['Small', 'desk-sm'], ['Mid', 'desk'], ['Large', 'desk-standing']],
   rug: [['5×8', 'rug-5x8'], ['6×9', 'rug-6x9'], ['8×10', 'rug-8x10'], ['9×12', 'rug-9x12']],

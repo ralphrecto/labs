@@ -1,18 +1,22 @@
 // Goals HUD: the vibe meter pill (stars, level, progress, celebrations), the next-goal chip, the
 // level-up card and the goals sheet.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useAnalysis } from '../analysis'
+import { catalogEntry, itemFromCatalog } from '../model/catalog'
+import { findDrop } from '../model/placement'
+import type { Doc } from '../model/types'
 import { activeLayout, useStore } from '../store'
-import { useGame } from './gameStore'
-import { bankableLevel, bestLevelKey, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, scoreHome, withBestLevel, type Goal, type HomeScore } from './goals'
+import { lastAwayMs, useGame } from './gameStore'
+import { bankableLevel, bestLevelKey, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, scoreHome, type Goal, type HomeScore } from './goals'
 import { IconCheck, IconClose, IconSparkle, IconStar } from './icons'
 import { useModal } from './useModal'
 
 /**
- * The home's score, with the level held at the best one reached in this design (it never drops).
- * Each design keeps its own best, so a fresh "what if" design starts from its own score.
+ * The home's score as it is now (an honest level: a layout with snags reads as what it is), plus
+ * the best level reached in this design. The best only gates celebrations (no second level-up for
+ * a level already reached) and shows as a small "Best" note. Each design keeps its own best.
  */
-export function useHomeScore(): HomeScore {
+export function useHomeScore(): HomeScore & { best: number } {
   const doc = useStore((s) => s.doc)
   const layout = activeLayout(doc)
   const analysis = useAnalysis(doc, layout)
@@ -25,7 +29,67 @@ export function useHomeScore(): HomeScore {
   useEffect(() => {
     if (bank > best) useGame.getState().noteLevel(key, bank)
   }, [key, bank, best])
-  return useMemo(() => withBestLevel(raw, Math.max(best, bank)), [raw, best, bank])
+  return useMemo(() => ({ ...raw, best: Math.max(best, bank) }), [raw, best, bank])
+}
+
+/**
+ * Dry-runs placement for the Next chip: whether a catalog piece has a free spot in the home right
+ * now. Cached per doc; pieces the store just refused (while the chip's hint was up) count as not
+ * fitting until the home changes.
+ */
+function useFits(doc: Doc, refused: Set<string>) {
+  const cache = useMemo(() => new Map<string, boolean>(), [doc])
+  return useCallback(
+    (category: string) => {
+      if (refused.has(category)) return false
+      let ok = cache.get(category)
+      if (ok === undefined) {
+        try {
+          ok = findDrop(doc, activeLayout(doc), itemFromCatalog(catalogEntry(category), '__probe')).ok
+        } catch {
+          ok = true
+        }
+        cache.set(category, ok)
+      }
+      return ok
+    },
+    [cache, doc, refused],
+  )
+}
+
+/** The Next goal, never one whose piece has nowhere to go. */
+export function useNextGoal(score: HomeScore, refused: Set<string> = NO_REFUSALS): Goal | undefined {
+  const doc = useStore((s) => s.doc)
+  const fits = useFits(doc, refused)
+  return useMemo(() => nextGoal(score, fits), [score, fits])
+}
+const NO_REFUSALS = new Set<string>()
+
+/** Phones get a compact level-up banner under the pill instead of the centred card. */
+const PHONE = '(max-width: 700px)'
+function usePhone() {
+  const [phone, setPhone] = useState(() => typeof matchMedia === 'function' && matchMedia(PHONE).matches)
+  useEffect(() => {
+    if (typeof matchMedia !== 'function') return
+    const m = matchMedia(PHONE)
+    const on = () => setPhone(m.matches)
+    m.addEventListener?.('change', on)
+    return () => m.removeEventListener?.('change', on)
+  }, [])
+  return phone
+}
+
+/** The goal that earned the latest level, shown in the level-up ("+2★ A cozy corner to sleep"). */
+let levelGoalLine = ''
+
+/** Goals finished in two steps (a desk, then a chair): the first step gets a "½" and a nudge. */
+const TWO_STEP = new Set(['work', 'eat', 'nook'])
+const piece = (cat: string) => cat.replace(/^(office|dining)-chair$/, 'chair').replace(/-/g, ' ')
+const ago = (ms: number) => {
+  const d = Math.round(ms / 86400000)
+  if (d >= 1) return `${d} day${d === 1 ? '' : 's'} away!`
+  const h = Math.max(1, Math.round(ms / 3600000))
+  return `${h} hours away!`
 }
 
 const SPARKS = 10
@@ -43,7 +107,7 @@ function Stars({ n, filled = true }: { n: number; filled?: boolean }) {
   )
 }
 
-type Banner = { key: number; kind: 'goal'; goal: Goal; more: number } | { key: number; kind: 'welcome'; goal?: Goal; home: string }
+type Banner = { key: number; kind: 'goal'; goal: Goal; more: number } | { key: number; kind: 'welcome'; goal?: Goal; home: string; away?: string }
 
 export function VibeMeter() {
   const score = useHomeScore()
@@ -52,11 +116,26 @@ export function VibeMeter() {
   const welcomeBack = useGame((s) => s.welcomeBack)
   const levelUp = useGame((s) => s.levelUp)
   const sheet = useGame((s) => s.sheet)
-  const prev = useRef<{ key: string; stars: number; level: number; done: Set<string> } | null>(null)
-  const [pop, setPop] = useState<{ key: number; delta: number } | null>(null)
+  const phone = usePhone()
+  const prev = useRef<{ key: string; stars: number; level: number; done: Set<string>; progress: Map<string, number> } | null>(null)
+  const [pop, setPop] = useState<{ key: number; delta: number; half?: boolean } | null>(null)
   const [banner, setBanner] = useState<Banner | null>(null)
   const [shown, setShown] = useState<string | null>(null)
-  const next = nextGoal(score)
+  // Pieces the store refused while the chip's hint was up: Next stops suggesting them until the home changes.
+  const [refused, setRefused] = useState<Set<string>>(NO_REFUSALS)
+  const next = useNextGoal(score, refused)
+  const nextRef = useRef(next)
+  nextRef.current = next
+  const toast = useStore((s) => s.toast)
+  // A refusal ("The bedroom's full...") while the hint is up: bring the chip back with something that fits.
+  useEffect(() => {
+    const hint = useGame.getState().buyHint
+    if (!toast || PLACED_TOAST.test(toast) || !hint || shown === null) return
+    setRefused((r) => new Set([...r, hint.category]))
+    setShown(null)
+    // Only when a toast arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toast])
   const levelTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const pendingLevel = useRef<{ index: number; name: string } | null>(null)
   useEffect(() => () => clearTimeout(levelTimer.current), [])
@@ -64,8 +143,9 @@ export function VibeMeter() {
   // Layout effect, so a "Placed a sofa" toast that a goal or level-up replaces never paints.
   useLayoutEffect(() => {
     const done = new Set(score.goals.filter((g) => g.done).map((g) => g.id))
+    const progress = new Map(score.goals.map((g) => [g.id, g.progress ?? 0]))
     const before = prev.current
-    prev.current = { key: designKey, stars: score.stars, level: score.level.index, done }
+    prev.current = { key: designKey, stars: score.stars, level: score.level.index, done, progress }
     // First render, or another design or home: no fanfare.
     if (!before || before.key !== designKey) {
       clearTimeout(levelTimer.current)
@@ -74,30 +154,46 @@ export function VibeMeter() {
     }
     // Any change to the home brings the chip back (with whatever is next now).
     setShown(null)
+    setRefused(NO_REFUSALS)
     const fresh = score.goals.filter((g) => g.done && !before.done.has(g.id))
     if (fresh.length > 4) return
     if (score.stars > before.stars) setPop({ key: Date.now(), delta: score.stars - before.stars })
-    const leveled = score.level.index > before.level
-    // The level-up card waits for a pause in placing (each change pushes it back), so a burst of
-    // placements isn't covered up halfway.
+    // Only a level never reached before in this design, on a layout without errors, is celebrated
+    // (the best is banked in a passive effect, after this one, so the store still holds the old best).
+    const banked = useGame.getState().bestLevel[designKey] ?? 0
+    const leveled = score.level.index > before.level && bankableLevel(score) > banked
+    // The level-up waits for a pause in placing (each change pushes it back), so the drop shows
+    // first and a burst of placements isn't covered up halfway.
     if (leveled) pendingLevel.current = { index: score.level.index, name: score.level.name }
     if (pendingLevel.current) {
       clearTimeout(levelTimer.current)
       levelTimer.current = setTimeout(() => {
         const lv = pendingLevel.current
         pendingLevel.current = null
-        if (lv) useGame.getState().celebrateLevel(lv.index, lv.name)
+        if (!lv) return
+        // The level-up carries the goal line; the toast steps aside for it.
+        useStore.setState({ toast: null })
+        useGame.getState().celebrateLevel(lv.index, lv.name)
       }, LEVEL_UP_QUIET_MS)
     }
+    const toast = useStore.getState().toast
+    const placedToast = !!toast && PLACED_TOAST.test(toast)
     if (fresh.length) {
       const best = [...fresh].sort((a, b) => b.stars - a.stars)[0]
-      const toast = useStore.getState().toast
-      // One line per action: "Placed a bed in the Bedroom · Goal: A restful bed +2★" rather than
-      // the goal banner replacing the room confirmation.
-      if (toast && PLACED_TOAST.test(toast) && !toast.includes(' · Goal: ')) {
-        const more = fresh.length > 1 ? ` (+${fresh.length - 1} more)` : ''
-        useStore.getState().notify(`${toast.replace(/\.$/, '')} · Goal: ${best.title} +${best.stars}★${more}`)
-      } else setBanner({ key: Date.now(), kind: 'goal', goal: best, more: fresh.length - 1 })
+      // One short line per action ("+1★ Every room has something"): the room shows in 3D and the
+      // pill's pop has the total.
+      const line = `+${best.stars}★ ${best.title}`
+      levelGoalLine = line
+      if (placedToast) useStore.getState().notify(line)
+      else setBanner({ key: Date.now(), kind: 'goal', goal: best, more: fresh.length - 1 })
+    } else if (placedToast) {
+      // First half of a two-step goal (a desk without its chair): say what finishes it.
+      const half = score.goals.find((g) => TWO_STEP.has(g.id) && !g.done && (g.progress ?? 0) > (before.progress.get(g.id) ?? 0) && g.item)
+      if (half) {
+        const what = toast!.replace(/^Placed (an? )?/, '').replace(/ in the .*$/, '').replace(/\.$/, '')
+        useStore.getState().notify(`${what.charAt(0).toUpperCase()}${what.slice(1)} placed. Add a ${piece(half.item!)} to finish ${half.title}.`)
+        setPop({ key: Date.now(), delta: 0, half: true })
+      }
     }
   }, [score, designKey])
 
@@ -105,7 +201,7 @@ export function VibeMeter() {
   useEffect(() => {
     if (!welcomeBack) return
     useGame.getState().consumeWelcomeBack()
-    setBanner({ key: Date.now(), kind: 'welcome', goal: nextGoal(score), home: homeName })
+    setBanner({ key: Date.now(), kind: 'welcome', goal: nextRef.current, home: homeName, away: lastAwayMs ? ago(lastAwayMs) : undefined })
     // Only when the flag is raised; the score at that moment is the one to suggest from.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [welcomeBack])
@@ -124,6 +220,7 @@ export function VibeMeter() {
   const fill = levelProgress(score)
   // One quiet chip with the next goal. Tapping it steps it aside until the home changes.
   const chip = next && !banner && !levelUp && !sheet && shown !== next.id ? next : null
+  const bestName = score.best > score.level.index ? LEVELS[score.best] : null
   return (
     <div className="goal-meter-wrap">
       <button
@@ -137,7 +234,10 @@ export function VibeMeter() {
           <b>{score.stars}</b>
         </span>
         <span className="goal-meter-body">
-          <span className="goal-meter-level">{score.level.name}</span>
+          <span className="goal-meter-level">
+            {score.level.name}
+            {bestName && <small className="goal-meter-best">Best: {bestName}</small>}
+          </span>
           <span className="goal-meter-bar">
             <i style={{ width: `${Math.round(fill * 100)}%` }} />
           </span>
@@ -148,7 +248,7 @@ export function VibeMeter() {
           {Array.from({ length: SPARKS }, (_, i) => (
             <i key={i} style={{ '--a': `${(360 / SPARKS) * i + (i % 2) * 12}deg`, '--d': `${i % 2 ? 34 : 48}px` } as CSSProperties} />
           ))}
-          <span className="goal-plus">+{pop.delta} ★</span>
+          <span className="goal-plus">{pop.half ? '½' : `+${pop.delta}`} ★</span>
         </div>
       )}
       {chip && (
@@ -174,7 +274,7 @@ export function VibeMeter() {
             <IconCheck />
           </span>
           <span className="goal-banner-text">
-            <small>Goal complete{banner.more ? ` (+${banner.more} more)` : ''}</small>
+            <small>{banner.more ? `${banner.more + 1} goals complete` : 'Goal complete'}</small>
             {banner.goal.title}
           </span>
           <Stars n={banner.goal.stars} />
@@ -195,8 +295,23 @@ export function VibeMeter() {
             <IconStar />
           </span>
           <span className="goal-banner-text">
-            <small>Welcome back{banner.goal ? '!' : ` to ${banner.home}!`}</small>
+            <small>
+              Welcome back{banner.goal ? '!' : ` to ${banner.home}!`}
+              {banner.away ? ` ${banner.away}` : ''}
+            </small>
             {banner.goal ? `Next: ${banner.goal.title} (+${banner.goal.stars} ★)` : 'Your home missed you.'}
+          </span>
+        </button>
+      )}
+      {phone && levelUp && (
+        <button type="button" className="goal-banner goal-levelup-mini" key={`lv${levelUp.key}`} role="status" onClick={() => useGame.getState().clearLevelUp()}>
+          <span className="goal-banner-check">
+            <IconStar />
+          </span>
+          <span className="goal-banner-text">
+            <small>Level up! {levelUp.index + 1} of {LEVELS.length}</small>
+            {levelUp.name}
+            {levelGoalLine && <em>{levelGoalLine}</em>}
           </span>
         </button>
       )}
@@ -219,12 +334,14 @@ const CONFETTI = ['var(--g-coral)', 'var(--g-sun)', 'var(--g-sage)', 'var(--g-sk
 /** The level-up moment: a card with confetti, over the HUD, for a few seconds. Tap to close. */
 export function LevelUpCard() {
   const levelUp = useGame((s) => s.levelUp)
+  const phone = usePhone()
   useEffect(() => {
     if (!levelUp) return
     const t = setTimeout(() => useGame.getState().clearLevelUp(), 3600)
     return () => clearTimeout(t)
   }, [levelUp])
-  if (!levelUp) return null
+  // On phones the level-up is a compact banner under the pill (VibeMeter), so the room stays in view.
+  if (!levelUp || phone) return null
   return (
     <div className="goal-levelup" key={levelUp.key} role="status" onClick={() => useGame.getState().clearLevelUp()}>
       <div className="goal-confetti" aria-hidden>
@@ -253,6 +370,7 @@ export function LevelUpCard() {
         <span>
           Level {levelUp.index + 1} of {LEVELS.length}
         </span>
+        {levelGoalLine && <em className="goal-levelup-goal">{levelGoalLine}</em>}
       </div>
     </div>
   )
@@ -332,6 +450,7 @@ export function GoalsSheet() {
                   : <b>{score.level.name}</b>
                 </>
               )}
+              {score.best > score.level.index && ` · Best: ${LEVELS[score.best]}`}
             </div>
             <div className="goal-meter-bar big">
               <i style={{ width: `${Math.round(fill * 100)}%` }} />

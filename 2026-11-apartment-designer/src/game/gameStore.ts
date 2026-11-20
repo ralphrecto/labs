@@ -90,11 +90,15 @@ function readBestLevels(): Record<string, number> {
  * Whether this visit comes after a long break, and from now on remember this as the last visit.
  * The time is refreshed whenever the page is hidden, so a tab left open still counts its break.
  */
+/** How long the last break was, for the welcome back ("10 days away!"). */
+export let lastAwayMs = 0
+
 function checkVisit(now = Date.now()): boolean {
   let away = false
   try {
     const last = Number(localStorage.getItem(LAST_VISIT_KEY))
     away = last > 0 && now - last >= WELCOME_BACK_MS
+    if (away) lastAwayMs = now - last
     localStorage.setItem(LAST_VISIT_KEY, String(now))
   } catch {
     // Private mode: no welcome back.
