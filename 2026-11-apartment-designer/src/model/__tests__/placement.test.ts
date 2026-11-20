@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { analyze } from '../../analysis'
 import { catalogEntry, itemFromCatalog } from '../catalog'
 import { checkLayout } from '../checks'
-import { convexOverlap, doorSwing, footprint, pointInPolygon, polygonInsideRoom, v, wallInwardNormal, wallSegments, closestPointOnSegment } from '../geometry'
-import { findDrop } from '../placement'
-import { rectRoom, sampleDoc } from '../sample'
-import type { Doc, Item, Placement } from '../types'
+import { clearanceZones, convexOverlap, doorSwing, footprint, pointInPolygon, polygonInsideRoom, v, wallInwardNormal, wallSegments, closestPointOnSegment } from '../geometry'
+import { findDrop, polygonGap } from '../placement'
+import { emptyDoc, rectRoom, sampleDoc } from '../sample'
+import type { Doc, Item, Opening, Placement } from '../types'
+import { scoreHome } from '../../game/goals'
 
 const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
 let n = 0
@@ -154,4 +155,128 @@ describe('findDrop', () => {
     expect(p).not.toBeNull()
     void wallInwardNormal
   })
+
+  // ---- Round 3 (interior designer review) ----------------------------------
+
+  /** The reviewer's tight one-bedroom: living 4.0×3.6, kitchen 2.6×3.6, bedroom 3.0×3.2, bathroom. */
+  function tightOneBedroom(): Doc {
+    const d = emptyDoc()
+    const lv = rectRoom('Living room', 0, 0, 4.0, 3.6)
+    const kt = rectRoom('Kitchen', 4.12, 0, 2.6, 3.6)
+    const br = rectRoom('Bedroom', 0, 3.72, 3.0, 3.2)
+    const ba = rectRoom('Bathroom', 3.12, 3.72, 2.0, 2.4)
+    const door = (id: string, wall: number, offset: number, width: number, swing: 'in' | 'out', extra: Partial<Opening> = {}): Opening =>
+      ({ id, kind: 'door', wall, offset, width, height: 2.1, sill: 0, hinge: 'end', swing, ...extra }) as Opening
+    lv.openings.push(door('d1', 3, 1.0, 0.9, 'in', { entrance: true }), { id: 'w1', kind: 'window', wall: 0, offset: 1.2, width: 1.6, height: 1.4, sill: 0.8 } as Opening, door('d2', 1, 1.2, 0.9, 'out'), door('d3', 2, 2.0, 0.8, 'out'))
+    br.openings.push(door('d4', 1, 0.6, 0.75, 'in', { hinge: 'start' }), { id: 'w2', kind: 'window', wall: 2, offset: 0.8, width: 1.2, height: 1.4, sill: 0.8 } as Opening)
+    d.rooms = [lv, kt, br, ba]
+    return d
+  }
+  const DESIGNER_LIST = ['bed', 'nightstand', 'nightstand', 'dresser', 'wardrobe', 'sofa', 'tv-stand', 'coffee-table', 'rug', 'armchair', 'floor-lamp', 'side-table', 'dining-table', 'dining-chair', 'dining-chair', 'dining-chair', 'dining-chair', 'bookshelf', 'desk', 'office-chair', 'plant', 'plant', 'console-table']
+  const furnish = (d: Doc) => DESIGNER_LIST.map((c) => ({ c, ...drop(d, c, c === 'bed' ? { name: 'Queen bed' } : {}) }))
+  const local = (q: Placement, o: Placement) => {
+    const dx = q.x - o.x
+    const dy = q.y - o.y
+    const c = Math.cos(-o.rotation)
+    const s = Math.sin(-o.rotation)
+    return v(dx * c - dy * s, dx * s + dy * c)
+  }
+
+  it('keeps chairs at their table or desk, or says why not (round 3)', () => {
+    for (const d of [tightOneBedroom(), emptySample()]) {
+      const steps = furnish(d)
+      const l = layoutOf(d)
+      const ofCat = (c: string) => l.placements.filter((p) => d.items.find((i) => i.id === p.itemId)!.category === c)
+      const body = (p: Placement) => footprint(d.items.find((i) => i.id === p.itemId)!, p)
+      const tables = ofCat('dining-table')
+      expect(tables.length).toBe(1)
+      for (const ch of ofCat('dining-chair')) {
+        expect(polygonGap(body(ch), body(tables[0]))).toBeLessThanOrEqual(0.3)
+        expect(roomOf(d, ch).id).toBe(roomOf(d, tables[0]).id)
+      }
+      const desks = ofCat('desk')
+      // With no desk in the home, an office chair is just a chair.
+      for (const ch of desks.length ? ofCat('office-chair') : []) {
+        expect(polygonGap(body(ch), body(desks[0]))).toBeLessThanOrEqual(0.35)
+        const desk = d.items.find((i) => i.id === desks[0].itemId)!
+        expect(local(ch, desks[0]).y).toBeGreaterThan(desk.depth / 2)
+      }
+      for (const s of steps.filter((x) => !x.p && /chair/.test(x.c))) expect(s.reason).toMatch(/No room at the (table|desk)|would block the way/)
+      // Nightstands sit by the pillows of the bed.
+      const bed = ofCat('bed')[0]
+      const bedItem = d.items.find((i) => i.id === bed.itemId)!
+      for (const ns of ofCat('nightstand')) {
+        expect(polygonGap(body(ns), body(bed))).toBeLessThanOrEqual(0.15)
+        expect(local(ns, bed).y).toBeLessThan(0)
+        expect(Math.abs(local(ns, bed).x)).toBeGreaterThanOrEqual(bedItem.width / 2)
+      }
+    }
+  }, 30000)
+
+  it('keeps bedroom pieces in the bedroom and the sofa set out of the kitchen (round 3)', () => {
+    const d = tightOneBedroom()
+    const steps = furnish(d)
+    for (const s of steps) {
+      if (['bed', 'nightstand', 'dresser', 'wardrobe'].includes(s.c)) {
+        if (s.p) expect(s.roomName, s.c).toBe('Bedroom')
+        else expect(s.reason, s.c).toMatch(/bedroom's full/i)
+      }
+      if (['sofa', 'tv-stand', 'coffee-table', 'rug'].includes(s.c)) expect(s.roomName, s.c).toBe('Living room')
+    }
+    // The sofa faces the TV.
+    const s = scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)))
+    expect(s.goals.find((g) => g.id === 'sofa-tv')?.done).toBe(true)
+  }, 30000)
+
+  it('gives wardrobes, dressers and desks their whole front clearance, inside the room (round 3)', () => {
+    for (const d of [sampleDoc(), tightOneBedroom(), emptySample()]) {
+      if (d.items.length) for (const c of ['nightstand', 'nightstand', 'dresser', 'wardrobe', 'floor-lamp', 'plant', 'armchair', 'bookshelf', 'desk']) drop(d, c)
+      else furnish(d)
+      const l = layoutOf(d)
+      for (const p of l.placements) {
+        const item = d.items.find((i) => i.id === p.itemId)!
+        if (!['wardrobe', 'dresser', 'desk'].includes(item.category) || !p.id.startsWith('tp')) continue
+        const fz = clearanceZones(item, p).find((z) => z.side === 'front')!
+        expect(polygonInsideRoom(fz.poly, roomOf(d, p).polygon, 0.01), item.name).toBe(true)
+      }
+      const msgs = checkLayout(d, l).map((i) => i.message)
+      expect(msgs.filter((m) => /^(Wardrobe|Dresser) needs .* in front/.test(m))).toEqual([])
+    }
+  }, 30000)
+
+  it('puts a lamp by the armchair when the sofa already has one (round 3)', () => {
+    const d = emptySample()
+    drop(d, 'sofa')
+    drop(d, 'floor-lamp')
+    const chair = drop(d, 'armchair')
+    const lamp = drop(d, 'floor-lamp')
+    expect(lamp.p).not.toBeNull()
+    expect(polygonGap(footprint(lamp.item, lamp.p!), footprint(chair.item, chair.p!))).toBeLessThanOrEqual(0.5)
+  }, 30000)
+
+  it('puts a plant in an empty room (round 3)', () => {
+    const d = emptySample()
+    drop(d, 'sofa')
+    drop(d, 'bed')
+    const plant = drop(d, 'plant')
+    expect(plant.roomName).toBe('Bathroom')
+  }, 30000)
+
+  it('never costs stars or a walkway for a chair pulled up to the table (round 3)', () => {
+    for (const d of [tightOneBedroom(), emptySample()]) {
+      let last = -1
+      let walk: boolean | undefined
+      for (const c of DESIGNER_LIST) {
+        const r = drop(d, c)
+        const s = scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)))
+        const w = s.goals.find((g) => g.id === 'walkways')?.done
+        if (c === 'dining-chair' && r.p) {
+          expect(s.stars, 'a chair cost stars').toBeGreaterThanOrEqual(last)
+          if (walk) expect(w, 'a chair closed a walkway').toBe(true)
+        }
+        last = s.stars
+        walk = w
+      }
+    }
+  }, 30000)
 })

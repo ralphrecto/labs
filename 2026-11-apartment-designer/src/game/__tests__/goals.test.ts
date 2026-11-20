@@ -3,7 +3,8 @@ import { analyze } from '../../analysis'
 import { catalogEntry, itemFromCatalog } from '../../model/catalog'
 import { emptyDoc, rectRoom, sampleDoc } from '../../model/sample'
 import type { Doc, Item, Placement } from '../../model/types'
-import { bankableLevel, bestLevelKey, inferEntrance, levelThresholds, nextGoal, scoreHome, withBestLevel, type Goal } from '../goals'
+import { findDrop } from '../../model/placement'
+import { bankableLevel, bestLevelKey, inferEntrance, levelThresholds, nextGoal, scoreHome, SNAG_LEVEL_CAP, withBestLevel, type Goal } from '../goals'
 
 const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
 const score = (d: Doc) => scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)))
@@ -161,7 +162,7 @@ describe('scoreHome', () => {
     const before = score(d)
     // The sample starts part way, with room to grow.
     expect(before.level.index).toBeGreaterThanOrEqual(1)
-    expect(before.level.index).toBeLessThanOrEqual(2)
+    expect(before.level.index).toBeLessThanOrEqual(3)
     // A desk away from the window adds a bonus goal it doesn't meet.
     place(d, 'desk', 0.36, 1.0, -Math.PI / 2)
     place(d, 'side-table', 8.5, 2.6)
@@ -298,4 +299,123 @@ describe('scoreHome', () => {
     expect(bestLevelKey(d)).not.toBe(a)
     expect(bestLevelKey(d)).toContain(d.apartment.id)
   })
+
+  // ---- Round 3 (interior designer review) ----------------------------------
+
+  /** The sample home emptied and furnished by findDrop with a designer's list: a high-level home. */
+  function furnishedSample(skip: string[] = []) {
+    const d = sampleDoc()
+    d.items = []
+    layoutOf(d).placements = []
+    for (const c of ['bed', 'nightstand', 'nightstand', 'sofa', 'tv-stand', 'coffee-table', 'rug', 'armchair', 'floor-lamp', 'dining-table', 'dining-chair', 'dining-chair', 'bookshelf', 'desk', 'office-chair', 'plant', 'plant'].filter((c) => !skip.includes(c))) {
+      const item = itemFromCatalog(catalogEntry(c), `f${++n}`)
+      const r = findDrop(d, layoutOf(d), item)
+      if (!r.ok) continue
+      d.items.push(item)
+      layoutOf(d).placements.push({ id: `fp${n}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
+    }
+    return d
+  }
+  const tightened = (d: Doc, room: string, width: number) => {
+    const a = analyze(d, layoutOf(d))
+    a.paths.results = a.paths.results.map((r) => (r.roomName === room ? { ...r, narrowest: width } : r))
+    return scoreHome(d, layoutOf(d), a)
+  }
+
+  it('points Next at a tight walkway or an overlap before anything to buy (round 3)', () => {
+    const d = furnishedSample(['plant'])
+    const s = tightened(d, 'Living room', 0.45)
+    // There are still things to buy...
+    expect(s.goals.some((g) => !g.done && g.tab)).toBe(true)
+    // ...but the walkway comes first, and it isn't a shopping trip.
+    const next = nextGoal(s)!
+    expect(next.id).toBe('walkways')
+    expect(next.tab).toBeUndefined()
+    // An overlap beats the walkway.
+    const sofa = layoutOf(d).placements.find((p) => d.items.find((i) => i.id === p.itemId)!.category === 'sofa')!
+    const chair = layoutOf(d).placements.find((p) => d.items.find((i) => i.id === p.itemId)!.category === 'armchair')!
+    chair.x = sofa.x
+    chair.y = sofa.y
+    expect(nextGoal(score(d))!.id).toBe('no-overlap')
+  }, 30000)
+
+  it('points Next at a TV the sofa cannot see, after errors and walkways (round 3)', () => {
+    const s = score(sampleDoc())
+    const g = (id: string, extra: Partial<Goal> = {}): Goal => ({ id, title: id, hint: '', done: false, stars: 1, category: 'style', ...extra })
+    const buy = g('plant', { tab: 'decor', item: 'plant', progress: 0.9 })
+    const tv = g('sofa-tv', { bonus: true, snag: true, progress: 0.5 })
+    expect(nextGoal({ ...s, goals: [buy, tv] })!.id).toBe('sofa-tv')
+    expect(nextGoal({ ...s, goals: [buy, tv, g('walkways', { category: 'flow', snag: true })] })!.id).toBe('walkways')
+    // A walkway goal that only wants the front door marked doesn't jump the queue.
+    expect(nextGoal({ ...s, goals: [buy, g('walkways', { category: 'flow' })] })!.id).toBe('plant')
+  }, 30000)
+
+  it('caps the level at Cozy while walkways are tight or the layout has errors (round 3)', () => {
+    const d = furnishedSample()
+    const s = score(d)
+    expect(s.errors).toBe(0)
+    expect(s.level.index).toBeGreaterThan(SNAG_LEVEL_CAP)
+    const tight = tightened(d, 'Living room', 0.45)
+    expect(tight.stars).toBeLessThanOrEqual(s.stars)
+    expect(tight.level.index).toBe(SNAG_LEVEL_CAP)
+    expect(tight.level.name).toBe('Cozy')
+    expect(tight.level.toNext).toBe(0) // "Fix the snag to reach Designer home"
+    // A tight secondary path (bathroom: 60 cm) caps it too, but 75 cm there is fine.
+    expect(tightened(d, 'Bathroom', 0.5).level.index).toBe(SNAG_LEVEL_CAP)
+    expect(tightened(d, 'Bathroom', 0.75).level.index).toBe(s.level.index)
+    // A capped level is never banked above Cozy.
+    expect(bankableLevel(tight)).toBeLessThanOrEqual(SNAG_LEVEL_CAP)
+  }, 30000)
+
+  it('aims for about a third of the floor and never sends you shopping for filler (round 3)', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 4, 4))
+    const g0 = goal(d, (g) => g.id.startsWith('density:'))!
+    expect(g0.done).toBe(false)
+    expect(g0.tab).toBeUndefined()
+    // 40% coverage used to be "just right"; now it's crowded.
+    place(d, 'box', 2, 2, 0, { width: 2, depth: 3.2 })
+    const g = goal(d, (g) => g.id.startsWith('density:'))!
+    expect(g.done).toBe(false)
+    expect(g.hint).toMatch(/crowded \(aim for 15–35%\)/)
+  }, 30000)
+
+  it('wants room to get into bed: both sides for a double, one for a twin (round 3)', () => {
+    const access = (d: Doc) => goal(d, (g) => g.id.startsWith('bed-access:'))!
+    // A queen in the middle of the head wall: free on both sides.
+    let d = bedroomDoc()
+    place(d, 'bed', 2, 1.02)
+    expect(access(d).done).toBe(true)
+    // Pushed into the corner: one side against the wall.
+    d = bedroomDoc()
+    place(d, 'bed', 0.77, 1.02)
+    expect(access(d).done).toBe(false)
+    expect(access(d).hint).toMatch(/both sides/)
+    // A twin in the corner is fine.
+    d = bedroomDoc()
+    place(d, 'bed', 0.5, 0.96, 0, { width: 0.97, depth: 1.91 })
+    expect(access(d).done).toBe(true)
+    // A desk against the queen's side blocks it.
+    d = bedroomDoc()
+    place(d, 'bed', 2, 1.02)
+    place(d, 'desk', 3.15, 1.6, Math.PI / 2)
+    expect(access(d).done).toBe(false)
+  }, 30000)
+
+  it('checks rug size and TV distance (round 3)', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 5, 5))
+    place(d, 'sofa', 2.5, 0.46)
+    place(d, 'tv-stand', 2.5, 3.5, Math.PI) // 3 m from the sofa: 1.6 m stand → 2.4–4.0 m
+    place(d, 'rug', 2.5, 1.5, 0, { width: 1.6, depth: 1.2 }) // narrower than the sofa
+    expect(goal(d, (g) => g.id === 'tv-distance')!.done).toBe(true)
+    expect(goal(d, (g) => g.id === 'rug-size')!.done).toBe(false)
+    const rug = layoutOf(d).placements[2]
+    d.items.find((i) => i.id === rug.itemId)!.width = 2.4
+    d.items.find((i) => i.id === rug.itemId)!.depth = 1.7
+    rug.y = 1.6 // front legs on it
+    expect(goal(d, (g) => g.id === 'rug-size')!.done).toBe(true)
+    layoutOf(d).placements[1].y = 1.9 // 1.4 m: too close
+    expect(goal(d, (g) => g.id === 'tv-distance')!.done).toBe(false)
+  }, 30000)
 })

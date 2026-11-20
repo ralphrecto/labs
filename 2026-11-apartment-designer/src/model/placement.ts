@@ -11,6 +11,7 @@ import {
   bounds,
   centroid,
   clearanceZones,
+  closestPointOnSegment,
   convexOverlap,
   dist,
   doorSwing,
@@ -47,9 +48,15 @@ const CENTER_PIECES = new Set(['dining-table', 'coffee-table', 'rug', 'ottoman']
 /** Pieces that belong between a sofa and the TV. */
 const VIEW_OK = new Set(['coffee-table', 'ottoman', 'rug', 'tv-stand', 'side-table', 'floor-lamp', 'plant', 'sofa'])
 /** Pieces that only go in a bedroom when the home has one (never next to the sofa). */
-export const BEDROOM_ONLY = new Set(['bed', 'nightstand', 'wardrobe'])
-/** Pieces whose front must stay open: someone gets in, or doors and drawers swing out. */
-const FRONT_OPEN = new Set(['bed', 'wardrobe', 'dresser'])
+export const BEDROOM_ONLY = new Set(['bed', 'nightstand', 'wardrobe', 'dresser'])
+/** Living-room pieces that never belong in a kitchen when the home has a living room. */
+const LIVING_ONLY = new Set(['sofa', 'tv-stand', 'coffee-table', 'rug', 'ottoman'])
+/** Pieces that only make sense pulled up to a partner: they never land far from it. */
+const PARTNERS: Record<string, string[]> = { 'dining-chair': ['dining-table'], bench: ['dining-table'], 'office-chair': ['desk'], nightstand: ['bed'] }
+/** A piece counts as "with" its partner when this close (edge to edge, m): a chair pulled up, a nightstand against the bed. */
+export const PARTNER_REACH: Record<string, number> = { 'dining-chair': 0.3, bench: 0.3, 'office-chair': 0.35, nightstand: 0.15 }
+/** Pieces whose front must stay open: someone gets in or sits down, or doors and drawers swing out. */
+const FRONT_OPEN = new Set(['bed', 'wardrobe', 'dresser', 'desk'])
 /** Small things that may go in a bathroom or hall. */
 const UTILITY_OK = new Set(['plant', 'box', 'rug'])
 
@@ -110,11 +117,12 @@ interface Cand {
 export const facing = (d: Vec2) => Math.atan2(-d.x, d.y)
 const normAngle = (a: number) => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)
 
+const isLiving = (r: Room) => LIVING.test(r.name) && !UTILITY_ROOM.test(r.name) && polygonArea(r.polygon) >= MIN_ROOM_AREA
 const isBedroom = (r: Room) => BEDROOM.test(r.name) && !UTILITY_ROOM.test(r.name) && polygonArea(r.polygon) >= MIN_ROOM_AREA
 
 /** Room suitability for a category: >0 good, 0 neutral, -Infinity not allowed. */
 export function roomAffinity(room: Room, category: string, allRooms: Room[]): number {
-  // A bed, nightstand or wardrobe never lands in the living room when there's a bedroom for it.
+  // A bed, nightstand, wardrobe or dresser never lands in the living room when there's a bedroom for it.
   if (BEDROOM_ONLY.has(category) && allRooms.some(isBedroom) && !isBedroom(room)) return -Infinity
   const small = polygonArea(room.polygon) < MIN_ROOM_AREA
   if ((small || UTILITY_ROOM.test(room.name)) && !UTILITY_OK.has(category)) {
@@ -125,7 +133,22 @@ export function roomAffinity(room: Room, category: string, allRooms: Room[]): nu
   let s = 0
   for (const [re, w] of AFFINITY[category] ?? []) if (re.test(room.name)) s = Math.max(s, w)
   if (UTILITY_ROOM.test(room.name) || small) s -= 10
+  // The sofa, TV and rug don't spill into the kitchen when there's a living room for them.
+  if (LIVING_ONLY.has(category) && DINING.test(room.name) && !LIVING.test(room.name) && allRooms.some(isLiving)) s -= 40
   return s
+}
+
+/** Smallest distance between two convex polygons (0 when they touch or overlap). */
+export function polygonGap(a: Vec2[], b: Vec2[]): number {
+  if (convexOverlap(a, b, 0)) return 0
+  let best = Infinity
+  for (const [pts, poly] of [
+    [a, b],
+    [b, a],
+  ] as const)
+    for (const pt of pts)
+      for (let i = 0; i < poly.length; i++) best = Math.min(best, closestPointOnSegment(pt, poly[i], poly[(i + 1) % poly.length]).distance)
+  return best
 }
 
 const fmtSize = (it: DropItem, units: Doc['apartment']['units']) =>
@@ -150,6 +173,13 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
   const solids = others.filter((o) => !o.item.floorLevel)
   const rugs = others.filter((o) => o.item.floorLevel)
   const zonesOfOthers = solids.flatMap((o) => clearanceZones(o.item, o.p).map((z) => ({ poly: z.poly, side: z.side, owner: o.item.category })))
+  // The space in front of a bed, wardrobe, dresser or desk is where you get in, sit or open the
+  // doors, and a double bed needs both sides to get in: nothing stands there.
+  const openFronts = solids.flatMap((o) =>
+    clearanceZones(o.item, o.p)
+      .filter((z) => (z.side === 'front' && FRONT_OPEN.has(o.item.category)) || (o.item.category === 'bed' && o.item.width >= 1.2 && (z.side === 'left' || z.side === 'right')))
+      .map((z) => ({ poly: z.poly, side: z.side, owner: o.item.category })),
+  )
 
   // The space between a sofa and what it faces (the TV, or 2.5 m of room) stays open.
   const viewZones = solids
@@ -181,9 +211,11 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
   const hw = item.width / 2
   const hd = item.depth / 2
   const solid = !item.floorLevel
-  const frontZone = FRONT_OPEN.has(cat) ? Math.min(item.clearance?.front ?? 0, 0.6) : 0
+  const frontZone = FRONT_OPEN.has(cat) ? item.clearance?.front ?? 0 : 0
   const affinity = new Map(rooms.map((r) => [r.id, roomAffinity(r, cat, rooms)]))
   const cands: Cand[] = []
+  const used = new Set(others.map((o) => o.room?.id))
+  const emptyRooms = new Set(used.size ? rooms.filter((r) => polygonArea(r.polygon) >= MIN_ROOM_AREA && !used.has(r.id)).map((r) => r.id) : [])
 
   const roomAt = (c: Vec2) => rooms.find((r) => pointInPolygon(c, r.polygon))
 
@@ -196,12 +228,14 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     if (solid) {
       for (const o of solids) if (convexOverlap(body, o.body, 0.002)) return null
       for (const k of keepOut) if (convexOverlap(body, k, 0.005)) return null
-      // A bed or wardrobe with furniture right up against its front reads as jammed in (and
-      // looks overlapping in 3D): its front clearance must be clear of other pieces.
+      // A bed, wardrobe or dresser needs its whole front clearance (to get in, or to open the doors
+      // and drawers): inside the room, and clear of other pieces.
       if (frontZone) {
         const fz = orientedRect(c, hw, frontZone / 2, rotation, v(0, hd + frontZone / 2))
+        if (!polygonInsideRoom(fz, room.polygon, 0.01)) return null
         for (const o of solids) if (convexOverlap(fz, o.body, 0.005) && !sideCompanion(cat, 'front', o.item.category)) return null
       }
+      for (const z of openFronts) if (convexOverlap(body, z.poly, 0.005) && !sideCompanion(z.owner, z.side, cat)) return null
     } else {
       for (const o of rugs) if (convexOverlap(body, o.body, 0.01)) return null
     }
@@ -211,6 +245,8 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
   /** Soft rules: blocked clearances, crowding, distance from the room's middle. */
   function softScore(c: Vec2, rotation: number, body: Vec2[], room: Room): number {
     let s = affinity.get(room.id) ?? 0
+    // A plant is the easy way to give an empty room something.
+    if (cat === 'plant' && emptyRooms.has(room.id)) s += 25
     if (!solid) return s
     const pl = { id: '', itemId: '', x: c.x, y: c.y, rotation }
     // A dining table needs room to pull chairs out, though it has no clearance of its own.
@@ -258,7 +294,7 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
         [v(-1, 0), thd, thw, thd > thw],
       ] as [Vec2, number, number, boolean][]) {
         const perp = v(-n.y, n.x)
-        for (const u of [0, -along / 2, along / 2]) {
+        for (const u of [0, -along / 2, along / 2, -along / 3, along / 3, -(along - hw), along - hw]) {
           if (Math.abs(u) + hw > along + 0.1) continue
           const l = add(scale(n, off + 0.05 + hd), scale(perp, u))
           const nw = rot(n, t.p.rotation)
@@ -268,14 +304,24 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     }
   }
   if (cat === 'office-chair')
-    for (const d of ofCat('desk')) consider(local(d, v(0, d.item.depth / 2 + 0.03 + hd)), d.p.rotation + Math.PI, 25)
+    for (const d of ofCat('desk'))
+      for (const gap of [0.03, 0.12, 0.25])
+        for (const u of [0, -0.25, 0.25]) {
+          if (Math.abs(u) + hw > d.item.width / 2 + 0.1) continue
+          consider(local(d, v(u, d.item.depth / 2 + gap + hd)), d.p.rotation + Math.PI, 25 - gap * 4 - Math.abs(u) * 2)
+        }
   if (cat === 'coffee-table' || cat === 'ottoman')
     for (const s of ofCat('sofa')) for (const gap of [0.42, 0.38, 0.48]) consider(local(s, v(0, s.item.depth / 2 + gap + hd)), s.p.rotation, cat === 'coffee-table' ? 25 : 12)
   if (cat === 'rug')
     for (const s of ofCat('sofa')) consider(local(s, v(0, s.item.depth / 2 - 0.25 + hd)), s.p.rotation, 20)
-  if (cat === 'floor-lamp' || cat === 'side-table')
-    for (const s of ofCat('sofa', 'armchair'))
-      for (const sd of [-1, 1]) consider(local(s, v(sd * (s.item.width / 2 + 0.05 + hw), -s.item.depth / 2 + hd + 0.05)), s.p.rotation, 15)
+  if (cat === 'floor-lamp' || cat === 'side-table') {
+    // Seats without a lamp or side table yet come first (the armchair's reading corner before a second lamp by the sofa).
+    const lit = (s: Other) => others.some((o) => o.id !== s.id && ['floor-lamp', 'side-table', 'bookshelf'].includes(o.item.category) && polygonGap(s.body, o.body) <= 0.5)
+    for (const s of ofCat('sofa', 'armchair')) {
+      const bonus = lit(s) ? 6 : s.item.category === 'armchair' ? 22 : 18
+      for (const sd of [-1, 1]) consider(local(s, v(sd * (s.item.width / 2 + 0.05 + hw), -s.item.depth / 2 + hd + 0.05)), s.p.rotation, bonus)
+    }
+  }
 
   // ---- Along the walls -----------------------------------------------------
   const sofas = ofCat('sofa')
@@ -354,6 +400,42 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     }
   }
 
+  // A chair goes at its table or desk, or not at all: one stranded across the room is no use.
+  const partners = ofCat(...(PARTNERS[cat] ?? []))
+  if (partners.length) {
+    const near = cands.filter((c) =>
+      partners.some((o) => {
+        if (polygonGap(c.body, o.body) > PARTNER_REACH[cat]) return false
+        const l = rot(sub(c.c, v(o.p.x, o.p.y)), -o.p.rotation)
+        const ohw = o.item.width / 2
+        const ohd = o.item.depth / 2
+        // A nightstand stands beside the bed, by the pillows.
+        if (cat === 'nightstand') return Math.abs(l.x) >= ohw && l.y <= -ohd + hd * 2 + 0.2
+        // A chair faces its table or desk from one of its sides (not off a corner)...
+        const front = rot(v(0, 1), c.rotation)
+        if (dot(front, norm(sub(v(o.p.x, o.p.y), c.c))) < 0.5) return false
+        if (Math.abs(l.x) > ohw + 0.05 && Math.abs(l.y) > ohd + 0.05) return false
+        // ...and a desk chair sits at the front of the desk.
+        return cat !== 'office-chair' || l.y > ohd
+      }),
+    )
+    if (!near.length) {
+      const what = partners[0].item.category
+      const name = item.name.toLowerCase()
+      return {
+        ok: false,
+        reason:
+          what === 'desk'
+            ? `No room at the desk for the ${name}. Clear the space in front of the desk, or pull it off the wall.`
+            : what === 'bed'
+              ? `No room beside the bed for ${ofCat(cat).length ? 'another' : 'a'} ${name}. Make some room by the pillows, or move the bed out of the corner.`
+              : `No room at the table for another ${name}. Pull the table away from the wall${cat === 'bench' ? '' : ', or try a bench'}.`,
+      }
+    }
+    cands.length = 0
+    cands.push(...near)
+  }
+
   if (!cands.length && BEDROOM_ONLY.has(cat) && rooms.some(isBedroom)) {
     const many = rooms.filter(isBedroom).length > 1
     const where = many ? "The bedrooms are full" : "The bedroom's full"
@@ -379,25 +461,43 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
       const tmpItem = { ...(item as Item), id: '__drop__' }
       const tmpDoc = { ...doc, items: [...doc.items, tmpItem] }
       const tried: Cand[] = []
-      for (const c of cands) {
-        if (tried.length >= 6) break
-        if (tried.some((t) => dist(t.c, c.c) < 0.3 && t.room.id === c.room.id)) continue
-        if (c.score < cands[0].score - 12) break
-        tried.push(c)
+      let blocked: string | undefined
+      const keepsPaths = (c: Cand) => {
         const l2 = { ...layout, placements: [...layout.placements, { id: '__drop__', itemId: '__drop__', x: c.c.x, y: c.c.y, rotation: c.rotation }] }
         const after = walkingPaths(tmpDoc, l2)
         // Main routes (to living spaces) keep 90 cm; bathrooms and halls keep 60 cm.
-        const worse = after.results.some((r) => {
+        const worse = after.results.find((r) => {
           const b = ok0.get(r.roomId)
           if (!b?.reachable) return false
           const need = UTILITY_ROOM.test(r.roomName) ? 0.6 : 0.9
-          return !r.reachable || (r.narrowest < need && b.narrowest >= need)
+          // Worse: newly below the norm, or an already tight route squeezed further.
+          return !r.reachable || (r.narrowest < need && (b.narrowest >= need || r.narrowest < b.narrowest - 0.05))
         })
-        if (!worse) {
-          pick = c
-          break
-        }
+        blocked ??= worse?.roomName
+        return !worse
       }
+      // First the best few spots; then, if each of them closes a walkway, spots further afield.
+      let found: Cand | undefined
+      for (const [limit, spacing, window] of [
+        [10, 0.3, 12],
+        [20, 0.6, Infinity],
+      ]) {
+        for (const c of cands) {
+          if (found || tried.length >= limit) break
+          if (tried.some((t) => dist(t.c, c.c) < spacing && t.room.id === c.room.id)) continue
+          if (c.score < cands[0].score - window) break
+          tried.push(c)
+          if (keepsPaths(c)) found = c
+        }
+        if (found) break
+      }
+      if (found) {
+        pick = found
+        blocked = undefined
+      }
+      // A chair or nightstand only goes where it belongs; if every spot there closes a walkway, say so.
+      if (blocked && partners.length)
+        return { ok: false, reason: `${/^[aeiou]/i.test(item.name) ? 'An' : 'A'} ${item.name.toLowerCase()} by the ${partners[0].item.name.toLowerCase()} would block the way to the ${blocked}. Make some room around it first.` }
     }
   }
   return { ok: true, spot: { x: pick.c.x, y: pick.c.y, rotation: pick.rotation, roomId: pick.room.id, roomName: pick.room.name } }
