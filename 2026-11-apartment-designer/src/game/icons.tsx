@@ -39,3 +39,5 @@ export const IconPlus = P('M12 5v14M5 12h14')
 export const IconSparkle = P('M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6')
 export const IconHome = P('M3 11 12 3l9 8M5 9.5V21h14V9.5')
 export const IconWalk = P('M13 4.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM9 21l2-6 3 3v3M7 12l3-4h4l3 4M11 15l-1-4')
+/** Stacked cards: your homes and designs. */
+export const IconDesigns = P('M7 7h12a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1ZM4 16V5a1 1 0 0 1 1-1h11M9.5 16.5l2.5-3 2 2 1.5-1.5 2 2.5')
