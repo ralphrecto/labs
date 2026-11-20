@@ -135,10 +135,28 @@ function table(item: Item): Part[] {
   }
   out.push(...legs(w, d, legH, { t: lt, inset: category === 'coffee-table' ? 0.05 : 0.03, shade: 0.8 }))
   if (dining || category === 'console-table') {
-    // a slim apron under the top
-    const a = 0.07
-    out.push({ size: [w - 0.1, a, 0.02], pos: [0, legH - a / 2, d / 2 - 0.05], shade: 0.85 })
-    out.push({ size: [w - 0.1, a, 0.02], pos: [0, legH - a / 2, -d / 2 + 0.05], shade: 0.85 })
+    // an apron under the top, set just inside the legs, on all four sides
+    const a = category === 'dining-table' ? 0.09 : 0.07
+    const ax = w / 2 - 0.03 - lt / 2
+    const az = d / 2 - 0.03 - lt / 2
+    out.push({ size: [2 * ax, a, 0.022], pos: [0, legH - a / 2, az], shade: 0.78 })
+    out.push({ size: [2 * ax, a, 0.022], pos: [0, legH - a / 2, -az], shade: 0.78 })
+    out.push({ size: [0.022, a, 2 * az], pos: [ax, legH - a / 2, 0], shade: 0.78 })
+    out.push({ size: [0.022, a, 2 * az], pos: [-ax, legH - a / 2, 0], shade: 0.78 })
+  }
+  if (category === 'dining-table') {
+    // a darker band round the edge of the top, so it reads as a thick tabletop and not a slab
+    out.push({ size: [w + 0.006, topT * 0.55, d + 0.006], pos: [0, h - topT + (topT * 0.55) / 2, 0], shade: 0.62, noShadow: true })
+    if (w > 0.7 && d > 0.6) {
+      // two plates and a small vase with a sprig, as in the thumbnail
+      const pz = d / 2 - 0.2
+      for (const sx of [-1, 1]) {
+        out.push({ kind: 'cyl', size: [0.24, 0.014, 0.24], pos: [sx * w * 0.24, h + 0.007, sx * pz * 0.9], color: PAL.white, noShadow: true })
+        out.push({ kind: 'cyl', size: [0.15, 0.016, 0.15], pos: [sx * w * 0.24, h + 0.01, sx * pz * 0.9], color: '#efe4d2', noShadow: true })
+      }
+      out.push({ kind: 'cyl', top: 0.7, bottom: 0.85, size: [0.09, 0.15, 0.09], pos: [0, h + 0.075, 0], color: '#7fa3b8', noShadow: true })
+      out.push({ kind: 'ball', size: [0.13, 0.11, 0.13], pos: [0, h + 0.2, 0], color: '#6fae7c', noShadow: true })
+    }
   }
   if (category === 'side-table' || category === 'console-table') {
     out.push({ size: [w - 0.06 - 2 * lt, 0.022, d - 0.06], pos: [0, Math.min(0.16, h * 0.25), 0], shade: 0.95 })
@@ -415,18 +433,39 @@ export function parts(item: Item): Part[] {
     case 'plant':
       return plant(item)
     default: {
+      if (item.category === 'box' && /box|carton/i.test(item.name)) return movingBox(item)
       const { width: w, depth: d, height: h } = item
       return [{ kind: 'soft', size: [w, h, d], pos: [0, h / 2, 0], r: Math.min(0.02, w / 4, d / 4, h / 4) } satisfies Part]
     }
   }
 }
 
+/** A cardboard moving box with a strip of tape across the top and down the front and back. */
+function movingBox(item: Item): Part[] {
+  const { width: w, depth: d, height: h } = item
+  const card = '#c9a57a'
+  const tape = '#e6cf9c'
+  const tw = Math.min(0.06, w * 0.14)
+  return [
+    { kind: 'soft', size: [w, h, d], pos: [0, h / 2, 0], r: Math.min(0.012, w / 6, h / 6), color: card },
+    { size: [tw, 0.004, d + 0.004], pos: [0, h + 0.001, 0], color: tape, noShadow: true },
+    { size: [tw, h * 0.22, 0.004], pos: [0, h - h * 0.11, d / 2 + 0.002], color: tape, noShadow: true },
+    { size: [tw, h * 0.22, 0.004], pos: [0, h - h * 0.11, -d / 2 - 0.002], color: tape, noShadow: true },
+  ]
+}
+
+/** Plants and lamps are all curves: an edge outline on them is a scribble, so they show selection by the ring alone. */
+const ORGANIC = new Set(['plant', 'floor-lamp'])
+
 export function ProceduralItem({ item, highlight }: { item: Item; highlight?: string }) {
+  const { style } = useStyle()
   const specs = useMemo(() => parts(item), [item])
+  const lineStyle = style === 'blueprint' || style === 'scan' || style === 'classic'
+  const hl = ORGANIC.has(item.category) && !lineStyle ? undefined : highlight
   return (
     <group>
       {specs.map((s, i) => (
-        <PartMesh key={i} part={s} base={item.color} highlight={highlight} />
+        <PartMesh key={i} part={s} base={item.color} highlight={hl} />
       ))}
     </group>
   )

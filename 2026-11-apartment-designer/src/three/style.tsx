@@ -32,7 +32,7 @@ export const useStyle = () => useContext(StyleContext)
 export const STYLE_STAGE: Record<StyleId, { sky?: string; ground?: string; showGround: boolean; shadows: boolean }> = {
   classic: { showGround: true, shadows: true },
   toon: { sky: '#fde9cf', ground: '#f8d9b4', showGround: true, shadows: true },
-  real: { sky: '#efe7da', ground: '#e6c9a0', showGround: true, shadows: true },
+  real: { sky: '#d9cbb6', ground: '#cfb08a', showGround: true, shadows: true },
   scan: { sky: '#1d2129', showGround: false, shadows: false },
   clay: { sky: '#f1e6d6', ground: '#efd6b2', showGround: true, shadows: true },
   blueprint: { sky: '#1c4a8a', showGround: false, shadows: false },
@@ -41,11 +41,11 @@ export const STYLE_STAGE: Record<StyleId, { sky?: string; ground?: string; showG
 const BLUEPRINT_LINE = '#e8f2ff'
 const BLUEPRINT_FILL = '#5d95e0'
 const INK = '#3d2c25'
-// Clay keeps a warm off-white with clear steps of value: floor darkest, walls lighter, pieces lightest,
+// Clay keeps warm putty tones with clear steps of value: floor darkest, walls lighter, pieces lightest,
 // so the rooms separate from the stage and the shadows carry the form.
-const CLAY = '#efe7dc'
+const CLAY = '#d8ccbc'
 const CLAY_ITEM = '#fbf7f1'
-const CLAY_FLOOR = '#e6dccd'
+const CLAY_FLOOR = '#cbbca8'
 
 // ------------------------------------------------------------------ toon ramp
 
@@ -139,19 +139,25 @@ function fadeTexture() {
  * The material for one surface in the active style. `color` is the object's own color (a scanned
  * wall, a sofa's fabric); `map` is an optional texture (the scanned floor) that some styles use.
  */
-export function Surface({
-  role,
-  color,
-  highlight,
-  map,
-  side,
-}: {
+interface SurfaceProps {
   role: SurfaceRole
   color: string
   highlight?: string
   map?: THREE.Texture | null
   side?: THREE.Side
-}) {
+}
+
+/**
+ * Keyed on the style (and on whether there is a texture), so a mesh that stays mounted across a
+ * style switch gets a fresh material: React would otherwise patch the old one, leaving props the new
+ * style leaves out (opacity, visible, depthWrite) behind and a newly added map uncompiled.
+ */
+export function Surface(props: SurfaceProps) {
+  const { style } = useStyle()
+  return <SurfaceMaterial key={`${style}-${props.map ? 'map' : 'flat'}`} {...props} />
+}
+
+function SurfaceMaterial({ role, color, highlight, map, side }: SurfaceProps) {
   const { style } = useStyle()
   const edge = role === 'cap' || role === 'trim' ? role : null
   if (edge) {
@@ -252,20 +258,25 @@ export function Surface({
 /** The tone of a wall's top edge or its baseboard, from the wall's own color. */
 function edgeTone(role: 'cap' | 'trim', color: string, style: StyleId) {
   if (style === 'toon') return role === 'trim' ? '#fffaf2' : color
-  if (style === 'clay') return role === 'cap' ? '#d3c6b4' : '#e2d7c8'
+  if (style === 'clay') return role === 'cap' ? '#bfae98' : '#cdbfad'
   if (style === 'real') return mix(color, '#5e4a38', role === 'cap' ? 0.6 : 0.26)
   return color
 }
 
-/** Outline lines on a mesh's creases: dark ink for Cartoon, white lines for Blueprint and Scan. */
+/**
+ * Outline lines on a mesh's creases: dark ink for Cartoon, white lines for Blueprint and Scan.
+ * The <Edges> is keyed on the style: it sits at the same place in the tree for every style, and a
+ * mesh that doesn't remount on a style switch (walls, windows) would otherwise keep the old lines.
+ */
 export function Ink({ highlight, soft }: { highlight?: string; soft?: boolean }) {
   const { style } = useStyle()
-  if (style === 'toon') return <Edges threshold={soft ? 40 : 20} color={highlight ?? INK} lineWidth={highlight ? 2.2 : 1.6} />
-  if (style === 'blueprint') return <Edges threshold={20} color={highlight ? '#ffd166' : BLUEPRINT_LINE} lineWidth={highlight ? 2 : 1.2} />
-  if (style === 'scan') return <Edges threshold={20} color={highlight ?? '#ffffff'} lineWidth={1.4} transparent opacity={0.85} />
-  if (style === 'clay') return <Edges threshold={soft ? 40 : 20} color={highlight ?? '#000000'} lineWidth={highlight ? 2.2 : 1} transparent opacity={highlight ? 0.95 : 0.15} />
+  const k = `${style}-${highlight ?? ''}`
+  if (style === 'toon') return <Edges key={k} threshold={soft ? 40 : 20} color={highlight ?? INK} lineWidth={highlight ? 1.8 : 1.6} />
+  if (style === 'blueprint') return <Edges key={k} threshold={20} color={highlight ? '#ffd166' : BLUEPRINT_LINE} lineWidth={highlight ? 1.8 : 1.2} />
+  if (style === 'scan') return <Edges key={k} threshold={20} color={highlight ?? '#ffffff'} lineWidth={1.4} transparent opacity={0.85} />
+  if (style === 'clay') return <Edges key={k} threshold={soft ? 40 : 20} color={highlight ?? '#000000'} lineWidth={highlight ? 1.8 : 1} transparent opacity={highlight ? 0.95 : 0.3} />
   // Lifelike draws no lines, except the outline of a selected piece.
-  if (highlight && style === 'real') return <Edges threshold={soft ? 40 : 20} color={highlight} lineWidth={2.2} />
+  if (highlight && style === 'real') return <Edges key={k} threshold={soft ? 40 : 20} color={highlight} lineWidth={1.8} />
   return null
 }
 
@@ -300,7 +311,7 @@ export function StyleEnvironment() {
   useEffect(() => {
     if (style !== 'real') return
     const exposure = gl.toneMappingExposure
-    gl.toneMappingExposure = 0.8
+    gl.toneMappingExposure = 0.72
     const pm = new THREE.PMREMGenerator(gl)
     const env = pm.fromScene(new RoomEnvironment(), 0.04).texture
     scene.environment = env

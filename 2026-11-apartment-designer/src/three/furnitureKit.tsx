@@ -165,7 +165,7 @@ export function PartMesh({ part, base, highlight }: { part: Part; base: string; 
         {(!round || kind === 'cyl' || (kind === 'ball' && lines)) && <Ink highlight={highlight} soft={round} />}
       </mesh>
       {hull && (
-        <mesh geometry={geo} scale={scale} material={outlineMaterial(highlight ?? PAL.ink, highlight ? 2.4 : 1.5)} raycast={noRaycast} onBeforeRender={hullBeforeRender} />
+        <mesh geometry={geo} scale={scale} material={outlineMaterial(highlight ?? PAL.ink, highlight ? 1.8 : 1.5)} raycast={noRaycast} onBeforeRender={hullBeforeRender} />
       )}
       {kind === 'soft' && lines && (
         <mesh geometry={UNIT_BOX} scale={part.size} raycast={noRaycast}>
