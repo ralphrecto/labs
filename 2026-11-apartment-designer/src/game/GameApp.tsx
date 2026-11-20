@@ -210,8 +210,13 @@ function useHudInset(root: RefObject<HTMLDivElement | null>): SceneInset {
       let top = 0
       for (const sel of BOTTOM_HUD) {
         const el = game.querySelector<HTMLElement>(sel)
-        // Side panels (the scan review on wide screens) don't cover the middle of the stage.
-        if (!el || el.offsetWidth < W * 0.6) continue
+        if (!el) continue
+        // Side panels (the scan review on wide screens) don't cover the middle of the stage;
+        // centred bars (dock, selection bar) do, however narrow they are.
+        const r = el.getBoundingClientRect()
+        const g = game.getBoundingClientRect()
+        const mid = g.left + W / 2
+        if (r.right < mid - W * 0.1 || r.left > mid + W * 0.1) continue
         bottom = Math.max(bottom, H - offsetTopIn(el, game))
       }
       for (const sel of TOP_HUD) {
