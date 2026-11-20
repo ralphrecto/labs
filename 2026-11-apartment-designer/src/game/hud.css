@@ -27,7 +27,8 @@
   transition: transform 0.18s var(--g-ease);
 }
 .hud-home:hover { transform: translateY(-2px); }
-.hud-home-icon { width: 36px; height: 36px; border-radius: 50%; background: var(--g-coral-fill); color: #fff; display: grid; place-items: center; flex: none; }
+/* Paper disc with a terracotta glyph: the filled terracotta is kept for the active dock mode. */
+.hud-home-icon { width: 36px; height: 36px; border-radius: 50%; background: var(--g-paper-2); color: var(--g-coral-ink); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--g-coral) 28%, transparent); display: grid; place-items: center; flex: none; }
 .hud-home-icon svg { width: 20px; height: 20px; }
 .hud-home-text { display: flex; flex-direction: column; min-width: 0; }
 .hud-home-text strong { font-weight: 900; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -197,7 +198,13 @@
 /* On phones the "Goal complete" banner slides in under the stars, right where the toast sits, so the
    toast steps down below it while the banner shows. */
 @media (max-width: 640px) {
+  /* The Next chip sits under the stars on phones; the toast steps below it and keeps clear of the
+     camera buttons on the right. */
+  .game:has(.goal-next) .hud-toast .toast { top: calc(160px + env(safe-area-inset-top)); max-width: calc(100vw - 136px); }
   .game:has(.goal-banner) .hud-toast .toast { top: calc(188px + env(safe-area-inset-top)); }
+  /* First-run labels beside the camera buttons would run under the Next chip, so the chip waits
+     until they have gone (about 9 s, or the first tap on a camera button). */
+  .game:has(.hud-cam.labelled) .goal-next { visibility: hidden; opacity: 0; }
 }
 
 /* ---------- sheets */

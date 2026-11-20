@@ -154,14 +154,18 @@ export function PartMesh({ part, base, highlight }: { part: Part; base: string; 
   const scale: V3 = kind === 'soft' ? [1, 1, 1] : part.size
   const round = kind !== 'box'
   const lines = style === 'blueprint' || style === 'scan'
+  // A selected piece keeps its own material and gets an outline in the highlight color. Only the
+  // line styles (their fill is the look) and the classic editor (a tint) color the surface itself.
+  const tint = lines || style === 'classic' ? highlight : undefined
+  const hull = round && (style === 'toon' || (!!highlight && !lines && style !== 'classic'))
   return (
     <group position={part.pos} rotation={part.rot}>
       <mesh geometry={geo} scale={scale} castShadow={!part.noShadow} receiveShadow>
-        <Surface role={part.fabric ? 'soft' : 'item'} color={color} highlight={highlight} />
+        <Surface role={part.fabric ? 'soft' : 'item'} color={color} highlight={tint} />
         {(!round || kind === 'cyl' || (kind === 'ball' && lines)) && <Ink highlight={highlight} soft={round} />}
       </mesh>
-      {round && style === 'toon' && (
-        <mesh geometry={geo} scale={scale} material={outlineMaterial(highlight ?? PAL.ink, highlight ? 2.2 : 1.5)} raycast={noRaycast} onBeforeRender={hullBeforeRender} />
+      {hull && (
+        <mesh geometry={geo} scale={scale} material={outlineMaterial(highlight ?? PAL.ink, highlight ? 2.4 : 1.5)} raycast={noRaycast} onBeforeRender={hullBeforeRender} />
       )}
       {kind === 'soft' && lines && (
         <mesh geometry={UNIT_BOX} scale={part.size} raycast={noRaycast}>

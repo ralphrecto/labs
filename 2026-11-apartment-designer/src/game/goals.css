@@ -89,14 +89,22 @@
 /* Goals sheet: the goal "Show me" pointed at. */
 .goal-row.focus { border-color: var(--g-sun); box-shadow: 0 0 0 3px color-mix(in srgb, var(--g-sun) 35%, transparent); }
 
-/* Level up: a card with confetti (the same confetti as moving in) over the HUD. */
-.goal-levelup { position: absolute; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: calc(var(--top-h, 72px) + 40px) 16px 0; pointer-events: none; overflow: hidden; }
-.goal-levelup-card { pointer-events: auto; cursor: pointer; position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; width: min(320px, 100%); padding: 22px 20px 18px; border-radius: 24px; background: var(--g-paper); box-shadow: var(--g-shadow); font-family: var(--g-font); color: var(--g-ink); text-align: center; animation: goal-levelup 3.6s var(--g-ease) forwards; }
-.goal-levelup-card small { font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; color: #c98700; }
+/* Level up: the one big reward moment. A warm dim over everything (drawer, camera buttons, dock),
+   confetti on top of it, and a centred card with a sun header and a spinning badge. Tap to dismiss. */
+.goal-levelup { position: absolute; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; cursor: pointer;
+  background: radial-gradient(circle at 50% 42%, rgba(255, 194, 75, 0.28), rgba(45, 38, 32, 0.34) 75%); animation: goal-dim 3.6s ease forwards; }
+.goal-levelup-card { cursor: pointer; position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; width: min(320px, 100%); padding: 0 20px 20px; border-radius: 26px; overflow: visible;
+  background: linear-gradient(180deg, #ffd477 0, var(--g-sun) 72px, var(--g-paper) 72px); box-shadow: 0 0 0 4px rgba(255, 250, 242, 0.7), var(--g-shadow); font-family: var(--g-font); color: var(--g-ink); text-align: center; animation: goal-levelup 3.6s var(--g-ease) forwards; }
+@media (max-width: 640px) { .goal-levelup-card { width: min(300px, calc(100vw - 112px)); } }
+.goal-levelup-card small { margin-top: 4px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; color: #8a5a00; }
 .goal-levelup-card strong { font-size: 30px; font-weight: 900; line-height: 1.1; }
 .goal-levelup-card span { font-size: 13px; font-weight: 700; color: var(--g-ink-2); }
-.goal-levelup-badge { position: relative; width: 64px; height: 64px; margin-bottom: 8px; border-radius: 20px; background: var(--g-sun); display: flex; align-items: center; justify-content: center; box-shadow: inset 0 -5px 0 rgba(160, 100, 0, 0.18); transform: rotate(-4deg); }
-.goal-levelup-badge > svg:first-child { width: 36px; height: 36px; fill: #fff6dc; stroke: #b07a12; stroke-width: 1.5; }
+.goal-levelup-badge { position: relative; width: 84px; height: 84px; margin: 22px 0 8px; border-radius: 26px; background: var(--g-sun); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 5px var(--g-paper), inset 0 -6px 0 rgba(160, 100, 0, 0.2), 0 8px 18px rgba(160, 100, 0, 0.3); transform: rotate(-4deg); animation: goal-badge-in 0.9s var(--g-ease) both; }
+.goal-levelup-badge > svg:first-child { width: 46px; height: 46px; fill: #fff6dc; stroke: #b07a12; stroke-width: 1.5; }
+.goal-levelup .goal-confetti { z-index: 2; }
+/* The star pill pulses along with the card. */
+.game:has(.goal-levelup) .goal-meter-star { animation: goal-wiggle 0.6s var(--g-ease) 3; }
 .goal-spark { position: absolute; width: 22px; height: 22px; color: var(--g-sun); stroke-width: 2.4; animation: goal-twinkle 1.6s ease-in-out infinite; }
 .goal-spark.s1 { left: -22px; top: 4px; }
 .goal-spark.s2 { right: -24px; top: -12px; width: 28px; height: 28px; animation-delay: 0.5s; }
@@ -105,6 +113,8 @@
 .goal-confetti i { position: absolute; top: -20px; width: 9px; height: 14px; border-radius: 3px; animation-name: goal-fall; animation-timing-function: cubic-bezier(0.3, 0.6, 0.5, 1); animation-fill-mode: both; }
 .goal-confetti i:nth-child(3n) { width: 11px; height: 11px; border-radius: 50%; }
 
+@keyframes goal-dim { 0% { opacity: 0; } 8%, 85% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes goal-badge-in { 0% { transform: rotate(-200deg) scale(0.3); opacity: 0; } 60% { opacity: 1; } 100% { transform: rotate(-4deg) scale(1); } }
 @keyframes goal-twinkle { 0%, 100% { transform: scale(0.6) rotate(0deg); opacity: 0.4; } 50% { transform: scale(1.1) rotate(45deg); opacity: 1; } }
 @keyframes goal-fall { 0% { opacity: 1; translate: 0 0; rotate: 0deg; } 100% { opacity: 0; translate: 30px 105vh; rotate: 540deg; } }
 @keyframes goal-levelup { 0% { transform: translateY(-20px) scale(0.8); opacity: 0; } 10% { transform: translateY(0) scale(1.04); opacity: 1; } 16% { transform: scale(1); } 88% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-10px); } }
