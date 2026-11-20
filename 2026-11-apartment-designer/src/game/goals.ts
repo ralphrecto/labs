@@ -1,9 +1,9 @@
 // Home score: interior-design rules of thumb, checked against the real plan geometry,
 // turned into goals, stars, a level and a "vibe" number for the game HUD. Pure logic, no React.
 import type { Analysis } from '../analysis'
-import { COMFORTABLE_WALKWAY, MIN_WALKWAY, placedItems } from '../model/checks'
-import { BEDROOM, UTILITY_ROOM } from '../model/placement'
-import { add as add2, closestPointOnSegment, convexOverlap, dist, dot, lerp, norm, openingEndpoints, pointInPolygon, polygonArea, polygonInsideRoom, rot, sub, v, wallSegments } from '../model/geometry'
+import { COMFORTABLE_WALKWAY, MIN_WALKWAY, placedItems, walkingPaths, type PathReport } from '../model/checks'
+import { BEDROOM, DINING, UTILITY_ROOM } from '../model/placement'
+import { add as add2, closestPointOnSegment, convexOverlap, dist, dot, lerp, norm, openingEndpoints, pointInPolygon, polygonArea, polygonInsideRoom, rot, scale, sub, v, wallInwardNormal, wallSegments } from '../model/geometry'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 
 export type GoalCategory = 'basics' | 'comfort' | 'flow' | 'style'
@@ -24,6 +24,13 @@ export interface Goal {
    * stars but never raise the bar for a level, so buying furniture can't cost you a level.
    */
   bonus?: boolean
+  /** Waiting on something else first (a few pieces of furniture): the sheet folds these into one line. */
+  locked?: boolean
+  /** The furniture drawer tab that helps with this goal ("Show me"), and the catalog piece to point at. */
+  tab?: string
+  item?: string
+  /** The room that piece should go in, when the goal is about a particular room. */
+  placeIn?: string
 }
 
 export interface HomeScore {
@@ -70,7 +77,36 @@ export const RULES = {
 const SEATING = new Set(['sofa', 'armchair'])
 const STORAGE = new Set(['dresser', 'wardrobe', 'bookshelf', 'sideboard', 'console-table'])
 /** Flow goals only count once the home has this many solid pieces. */
-const MIN_PIECES = 4
+export const MIN_PIECES = 4
+/** A room this big with no walls between living and eating has space for a dining table. */
+const OPEN_PLAN_AREA = 20
+/** Smallest room that takes a bed with space to walk round it. */
+const BED_ROOM_AREA = 7
+
+/**
+ * The front door when none is marked: the only door that leads outside (one that doesn't open
+ * into another room), or the only door at all. Null when it can't be told.
+ */
+export function inferEntrance(doc: Doc): { roomId: string; openingId: string } | null {
+  const doors = doc.rooms.flatMap((room) => room.openings.filter((o) => o.kind === 'door').map((o) => ({ room, o })))
+  if (doors.some((d) => d.o.entrance)) return null
+  if (doors.length === 1) return { roomId: doors[0].room.id, openingId: doors[0].o.id }
+  const outside = doors.filter(({ room, o }) => {
+    const [a, b] = openingEndpoints(room, o)
+    const out = sub(scale(add2(a, b), 0.5), scale(wallInwardNormal(room, o.wall), 0.35))
+    return !doc.rooms.some((r) => r.id !== room.id && pointInPolygon(out, r.polygon))
+  })
+  return outside.length === 1 ? { roomId: outside[0].room.id, openingId: outside[0].o.id } : null
+}
+
+/** Walking paths, from the marked front door or, failing that, the one inferEntrance finds. */
+function pathsWithEntrance(doc: Doc, layout: Layout, paths: PathReport): PathReport {
+  if (paths.entrance) return paths
+  const e = inferEntrance(doc)
+  if (!e) return paths
+  const rooms = doc.rooms.map((r) => (r.id === e.roomId ? { ...r, openings: r.openings.map((o) => (o.id === e.openingId ? { ...o, entrance: true } : o)) } : r))
+  return walkingPaths({ ...doc, rooms }, layout)
+}
 
 interface P {
   id: string
@@ -151,8 +187,23 @@ export function levelProgress(score: HomeScore): number {
 export function withBestLevel(score: HomeScore, best: number): HomeScore {
   const index = score.errors > 0 ? Math.max(best, Math.min(score.level.index, best)) : Math.max(best, score.level.index)
   if (index === score.level.index) return score
-  return { ...score, level: levelAt(score.stars, score.thresholds, index) }
+  const level = levelAt(score.stars, score.thresholds, index)
+  return { ...score, level, headline: score.headline === score.level.name ? level.name : score.headline }
 }
+
+/**
+ * The goal to suggest next: the unfinished one closest to done that the player can act on now
+ * (goals waiting on something else are skipped), favouring ones the furniture drawer finishes.
+ */
+export function nextGoal(score: HomeScore): Goal | undefined {
+  const open = score.goals.filter((g) => !g.done && !g.locked)
+  // score.goals is already ranked (closest to done, basics first). A goal a piece of furniture
+  // finishes is the easiest next step, so the first of those wins; then the first core goal.
+  return open.find((g) => g.tab) ?? open.find((g) => !g.bonus) ?? open[0]
+}
+
+/** Where the best level is remembered: per design, so designs of one home can be compared. */
+export const bestLevelKey = (doc: Doc) => `${doc.apartment.id}:${doc.activeLayoutId}`
 
 /** The level to remember as the best reached: only a layout without errors banks a level. */
 export function bankableLevel(score: HomeScore): number {
@@ -196,16 +247,27 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const furnished = solidPieces.length >= MIN_PIECES
   const fewHint = `Place at least ${MIN_PIECES} pieces of furniture first.`
   const bedrooms = rooms.filter((r) => BEDROOM.test(r.name) && !UTILITY_ROOM.test(r.name))
+  const livable = rooms.filter((r) => !UTILITY_ROOM.test(r.name))
+  // Goals that need a kind of room only show when the plan has one. With no rooms yet, show them all.
+  // A studio (one livable room, or one named so) takes the bed anywhere.
+  const studio = !bedrooms.length && (livable.length === 1 || livable.some((r) => /studio|loft/i.test(r.name)))
+  const canSleep = !rooms.length || bedrooms.length > 0 || (studio && livable.some((r) => polygonArea(r.polygon) >= BED_ROOM_AREA))
+  const canEat = !rooms.length || livable.some((r) => DINING.test(r.name) || (!bedrooms.includes(r) && polygonArea(r.polygon) >= OPEN_PLAN_AREA))
+  const paths = pathsWithEntrance(doc, layout, analysis.paths)
 
   // ---- Basics -------------------------------------------------------------
   const beds = of('bed')
   // With a bedroom in the plan, the bed belongs there (a studio takes it anywhere).
   const sleepBeds = bedrooms.length ? beds.filter((b) => b.room && bedrooms.includes(b.room)) : beds
-  add({
+  if (canSleep) add({
     id: 'sleep',
-    title: 'Somewhere to sleep',
+    title: bedrooms.length || !rooms.length ? 'Somewhere to sleep' : 'A cozy corner to sleep',
+    tab: 'bedroom',
+    item: 'bed',
     hint: !ofAny('bed').length
-      ? 'Add a bed from the Bedroom tab.'
+      ? bedrooms.length || !rooms.length
+        ? 'Add a bed from the Bedroom tab.'
+        : 'Add a bed from the Bedroom tab. In a one-room home it can go anywhere.'
       : beds.length && bedrooms.length
         ? `Move the bed into the ${bedrooms[0].name}.`
         : 'Move the bed fully inside a room, clear of other furniture and doors.',
@@ -219,6 +281,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     id: 'sit',
     title: 'Somewhere to sit',
     hint: ofAny(...SEATING).length ? 'Move your seat fully inside a room, clear of other furniture.' : 'Add a sofa or an armchair.',
+    tab: 'living',
+    item: 'sofa',
     done: seats.length > 0,
     progress: ofAny(...SEATING).length ? 0.5 : 0,
     stars: 1,
@@ -227,10 +291,12 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const tables = of('dining-table')
   const chairs = of('dining-chair', 'bench')
   const servedTable = tables.some((t) => chairs.some((c) => polygonGap(t.body, c.body) <= RULES.chairToTable))
-  add({
+  if (canEat) add({
     id: 'eat',
     title: 'A table to eat at',
     hint: !tables.length ? 'Add a dining table and a chair or two.' : 'Pull a chair up to the dining table.',
+    tab: 'dining',
+    item: tables.length ? 'dining-chair' : 'dining-table',
     done: servedTable,
     progress: tables.length ? 0.5 : chairs.length ? 0.25 : 0,
     stars: 2,
@@ -240,6 +306,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     id: 'storage',
     title: 'A place for your things',
     hint: 'Add a dresser, wardrobe, bookshelf or sideboard.',
+    tab: bedrooms.length ? 'bedroom' : 'work',
+    item: bedrooms.length ? 'dresser' : 'bookshelf',
     done: placed.some((x) => STORAGE.has(x.category) && x.clean),
     stars: 1,
     category: 'basics',
@@ -251,6 +319,9 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       id: 'rooms-used',
       title: 'Every room has something',
       hint: empty.length ? `Nothing in the ${empty[0].name} yet. A plant works anywhere!` : '',
+      tab: 'decor',
+      item: 'plant',
+      placeIn: empty[0]?.id,
       done: filled.length === rooms.length,
       progress: filled.length / rooms.length,
       stars: 1,
@@ -265,6 +336,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     title: 'No furniture pile-ups',
     hint: overlaps.length ? `${overlaps[0].message}. Nudge them apart.` : furnished ? '' : fewHint,
     done: furnished && overlaps.length === 0,
+    locked: !furnished && !overlaps.length,
     progress: overlaps.length ? flowProgress * 0.9 : flowProgress,
     stars: 1,
     category: 'flow',
@@ -275,6 +347,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     title: 'Everything inside the walls',
     hint: walls.length ? `${walls[0].message}.` : furnished ? '' : fewHint,
     done: furnished && walls.length === 0,
+    locked: !furnished && !walls.length,
     progress: walls.length ? flowProgress * 0.9 : flowProgress,
     stars: 1,
     category: 'flow',
@@ -285,20 +358,23 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     title: 'Doors swing freely',
     hint: doors.length ? `${doors[0].message}.` : furnished ? '' : fewHint,
     done: furnished && doors.length === 0,
+    locked: !furnished && !doors.length,
     progress: doors.length ? flowProgress * 0.9 : flowProgress,
     stars: 1,
     category: 'flow',
   })
   // Designers plan 90 cm for the main routes (to living spaces) and at least 60 cm for secondary ones.
-  const routes = analysis.paths.results.map((r) => {
+  const routes = paths.results.map((r) => {
     const need = UTILITY_ROOM.test(r.roomName) ? RULES.minWalkway : RULES.mainWalkway
     return { r, need, ok: r.reachable && r.narrowest >= need - 0.005 }
   })
   const tight = routes.find((x) => !x.ok)
-  add({
+  // One room with no door to walk in from has no routes to check.
+  if (paths.entrance || rooms.length > 1 || !rooms.length) add({
     id: 'walkways',
     title: 'Clear walkways',
-    hint: !analysis.paths.entrance
+    locked: paths.entrance && !furnished && !tight,
+    hint: !paths.entrance
       ? 'Mark your front door in Build mode so paths can be checked.'
       : tight
         ? !tight.r.reachable
@@ -307,7 +383,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
         : furnished
           ? ''
           : fewHint,
-    done: analysis.paths.entrance && furnished && !tight,
+    done: paths.entrance && furnished && !tight,
     progress: routes.length ? (routes.filter((x) => x.ok).length / routes.length) * Math.min(1, solidPieces.length / MIN_PIECES) : 0,
     stars: 2,
     category: 'flow',
@@ -331,6 +407,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
           : `Furniture covers ${pct}% of the floor; it feels crowded (aim for 15–45%).`,
       done: f >= RULES.densityMin && f <= RULES.densityMax,
       progress: f < RULES.densityMin ? f / RULES.densityMin : clamp01(1 - (f - RULES.densityMax) / RULES.densityMax),
+      tab: f < RULES.densityMin ? (bedrooms.includes(room) ? 'bedroom' : 'living') : undefined,
       stars: 1,
       roomId: room.id,
       category: 'flow',
@@ -353,6 +430,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       hint: Number.isFinite(best)
         ? `Your nightstand is ${cm(best)} from the bed; slide it within ${cm(RULES.nightstandGap)} of the side, by the pillows.`
         : 'Put a nightstand right beside the head of the bed.',
+      tab: Number.isFinite(best) ? undefined : 'bedroom',
+      item: 'nightstand',
       done: best <= RULES.nightstandGap,
       progress: Number.isFinite(best) ? 0.5 : 0,
       stars: 1,
@@ -377,6 +456,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
           : gap < RULES.coffeeMin
             ? `It's ${cm(gap)} from the sofa; give your knees room (35–50 cm).`
             : `It's ${cm(gap)} from the sofa; pull it closer (35–50 cm).`,
+      tab: gap === undefined ? 'living' : undefined,
+      item: 'coffee-table',
       done: gap !== undefined && gap >= RULES.coffeeMin - 0.005 && gap <= RULES.coffeeMax + 0.005,
       progress: gap === undefined ? 0 : 0.6,
       stars: 1,
@@ -398,6 +479,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       : Number.isFinite(nearestLamp)
         ? `Your lamp is ${cm(nearestLamp)} from the seats; bring it within ${cm(RULES.lampReach)}.`
         : `Add a floor lamp near the seats in the ${livingSeats[0].room!.name}.`,
+    tab: !livingSeats.length ? 'living' : Number.isFinite(nearestLamp) ? undefined : 'decor',
+    item: !livingSeats.length ? 'armchair' : 'floor-lamp',
     done: nearestLamp <= RULES.lampReach,
     progress: Number.isFinite(nearestLamp) ? 0.6 : lamps.length ? 0.3 : 0,
     stars: 1,
@@ -429,11 +512,15 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   }
   const bedChecks = sleepBeds.map((b) => ({ b, ...headboard(b) }))
   const goodBed = bedChecks.find((x) => x.wall && !x.window)
-  add({
+  if (canSleep) add({
     id: 'headboard',
     title: 'A restful bed',
+    tab: sleepBeds.length ? undefined : 'bedroom',
+    item: 'bed',
     hint: !sleepBeds.length
-      ? 'Put a bed in the bedroom first.'
+      ? bedrooms.length
+        ? 'Put a bed in the bedroom first.'
+        : 'Add a bed first.'
       : bedChecks.some((x) => x.wall)
         ? 'Your headboard is under a window; move the bed to a solid wall.'
         : 'Push the head of the bed against a wall.',
@@ -449,6 +536,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     id: 'work',
     title: 'A spot to work',
     hint: !desksAll.length ? 'Add a desk and a chair from the Work tab.' : 'Pull a chair up to the front of the desk.',
+    tab: 'work',
+    item: desksAll.length ? 'office-chair' : 'desk',
     done: worked,
     progress: desksAll.length ? 0.5 : 0,
     stars: 1,
@@ -480,6 +569,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     id: 'plant',
     title: 'Bring in some greenery',
     hint: 'Add a plant. Corners and windows love them.',
+    tab: 'decor',
+    item: 'plant',
     done: of('plant').some((x) => x.inside),
     stars: 1,
     category: 'style',
@@ -492,6 +583,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       id: 'rug',
       title: 'A rug to anchor the seating',
       hint: ofAny('rug').length ? 'Slide the rug under the coffee table or the front of the sofa.' : 'Add a rug under the sofa and coffee table.',
+      tab: ofAny('rug').length ? undefined : 'decor',
+      item: 'rug',
       done: rugs.some((r) => anchors.some((a) => a.room?.id === r.room?.id && convexOverlap(r.body, a.body, 0.01))),
       progress: ofAny('rug').length ? 0.5 : 0,
       stars: 1,
@@ -505,6 +598,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     id: 'nook',
     title: 'A cozy reading corner',
     hint: ofAny('armchair').length ? 'Tuck a floor lamp, side table or bookshelf next to the armchair.' : 'Add an armchair with a lamp or bookshelf beside it.',
+    tab: ofAny('armchair').length ? 'decor' : 'living',
+    item: ofAny('armchair').length ? 'floor-lamp' : 'armchair',
     done: nook,
     progress: ofAny('armchair').length ? 0.5 : 0,
     stars: 2,
@@ -536,7 +631,6 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const coreMax = goals.reduce((a, g) => a + (g.bonus ? 0 : g.stars), 0)
   const thresholds = levelThresholds(coreMax)
   const level = levelAt(stars, thresholds)
-  const index = level.index
 
   const errors = analysis.issues.filter((i) => i.severity === 'error').length
   const warnings = analysis.issues.filter((i) => i.severity === 'warning').length
@@ -547,7 +641,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       ? 'Let’s move in!'
       : errors > 0
         ? 'Almost! Fix a snag'
-        : (['Fresh start', 'Settling in', 'Homey', 'Cozy!', 'So stylish!', 'Dream home!'] as const)[index]
+        : level.name
 
   // Next achievable first: unfinished goals by progress, then basics before style, then cheaper first.
   const rank = (g: Goal) => CATEGORY_ORDER.indexOf(g.category)

@@ -1,8 +1,11 @@
 // Buy mode: the furniture drawer above the mode dock, and the "shop from a link or photo" sheet.
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { CATALOG, itemFromCatalog, type CatalogEntry } from '../model/catalog'
+import { checkLayout } from '../model/checks'
+import { centroid } from '../model/geometry'
+import { findDrop, type DropResult } from '../model/placement'
 import { uid } from '../model/sample'
-import type { Item, Units } from '../model/types'
+import type { Doc, Item, Room, Units } from '../model/types'
 import { formatLength } from '../model/units'
 import { activeLayout, useStore } from '../store'
 import { ImportDialog, Photo } from '../components/AddDialogs'
@@ -16,7 +19,7 @@ export const CATEGORY_GROUPS: { key: string; label: string; emoji?: string; cate
   { key: 'bedroom', label: 'Bedroom', emoji: '🛏️', categories: ['bed', 'nightstand', 'dresser', 'wardrobe'] },
   { key: 'dining', label: 'Dining', emoji: '🍽️', categories: ['dining-table', 'dining-chair', 'bench', 'sideboard'] },
   { key: 'work', label: 'Work', emoji: '💻', categories: ['desk', 'office-chair', 'bookshelf'] },
-  { key: 'decor', label: 'Decor', emoji: '🪴', categories: ['rug', 'floor-lamp', 'plant', 'box'] },
+  { key: 'decor', label: 'Decor', emoji: '🪴', categories: ['plant', 'floor-lamp', 'rug', 'box'] },
   { key: 'mine', label: 'Mine', emoji: '⭐', categories: [] },
 ]
 
@@ -47,11 +50,28 @@ export function isMine(i: Item): boolean {
   return !!(i.owned || i.link || i.imageUrl || i.scanId || i.source === 'link' || i.source === 'photo' || i.source === 'scan')
 }
 
+/**
+ * A free spot for `item` in one room: first the usual search pulled toward that room (it respects
+ * every door and walkway), then a search of that room alone, kept only if it trips no checks.
+ */
+function dropIn(doc: Doc, item: Item, room: Room): DropResult | null {
+  const layout = activeLayout(doc)
+  const near = findDrop(doc, layout, item, { near: centroid(room.polygon) })
+  if (near.ok && near.spot.roomId === room.id) return near
+  const only = findDrop({ ...doc, rooms: [room] }, layout, item)
+  if (!only.ok) return null
+  const id = '__try'
+  const trial = { ...layout, placements: [...layout.placements, { id, itemId: item.id, x: only.spot.x, y: only.spot.y, rotation: only.spot.rotation }] }
+  const issues = checkLayout({ ...doc, items: [...doc.items, item], layouts: doc.layouts.map((l) => (l.id === layout.id ? trial : l)) }, trial)
+  return issues.some((i) => i.severity !== 'info' && i.placementIds.includes(id)) ? null : only
+}
+
 const article = (name: string) => (/^[aeiou]/i.test(name) ? 'an' : 'a')
 
 export function BuyDrawer() {
   const tab = useGame((s) => s.buyTab)
   const setTab = useGame((s) => s.setBuyTab)
+  const hint = useGame((s) => s.buyHint)
   const units = useStore((s) => s.doc.apartment.units)
   const items = useStore((s) => s.doc.items)
   const placements = useStore((s) => activeLayout(s.doc).placements)
@@ -63,6 +83,20 @@ export function BuyDrawer() {
   }, [placements])
 
   const group = CATEGORY_GROUPS.find((g) => g.key === tab) ?? CATEGORY_GROUPS[0]
+  const gridRef = useRef<HTMLDivElement>(null)
+  // Bring the card the "Next" chip pointed at into view.
+  useEffect(() => {
+    const grid = gridRef.current
+    const card = hint ? grid?.querySelector<HTMLElement>('.buy-card.hinted') : null
+    if (!grid || !card) return
+    // Scroll only the grid (scrollIntoView would also nudge the fixed game layer), by layout
+    // offsets so the cards' entrance animation doesn't throw the numbers off.
+    const left = card.offsetLeft - grid.offsetLeft
+    const top = card.offsetTop - grid.offsetTop
+    const x = left < grid.scrollLeft || left + card.offsetWidth > grid.scrollLeft + grid.clientWidth ? Math.max(0, left - 12) : grid.scrollLeft
+    const y = top < grid.scrollTop || top + card.offsetHeight > grid.scrollTop + grid.clientHeight ? Math.max(0, top - 8) : grid.scrollTop
+    if (x !== grid.scrollLeft || y !== grid.scrollTop) grid.scrollTo({ left: x, top: y })
+  }, [hint, tab])
   const [popped, setPopped] = useState<{ key: string; n: number } | null>(null)
   const popTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(popTimer.current), [])
@@ -74,11 +108,18 @@ export function BuyDrawer() {
 
   const place = (entry: CatalogEntry, preset?: { name: string; width: number; depth: number }) => {
     const st = useStore.getState()
-    // Adds the item at a free spot that suits it and selects it; when nothing fits, the store toasts why.
-    const res = preset
-      ? st.addItem(itemFromCatalog(entry, uid(), { name: `${preset.name} bed`, width: preset.width, depth: preset.depth }))
-      : st.addItemFromCatalog(entry)
+    const item = preset ? itemFromCatalog(entry, uid(), { name: `${preset.name} bed`, width: preset.width, depth: preset.depth }) : itemFromCatalog(entry, uid())
+    // A goal about one room ("Nothing in the Bathroom yet") puts the piece it pointed at in that room, if it fits there.
+    const room = hint?.category === entry.category && hint.roomId ? st.doc.rooms.find((r) => r.id === hint.roomId) : undefined
+    const there = room ? dropIn(st.doc, item, room) : null
+    // Otherwise the item goes to a free spot that suits it and is selected; when nothing fits, the store toasts why.
+    let res = there?.ok ? st.addItem(item, there.spot) : st.addItem(item)
+    if (res.ok && there?.ok) {
+      if (Math.abs(there.spot.rotation) > 1e-3) st.updatePlacement(res.placementId, { rotation: there.spot.rotation })
+      res = { ...res, roomName: room!.name }
+    }
     if (!res.ok) return
+    if (hint) useGame.getState().setBuyHint(null)
     const name = preset ? `${preset.name.toLowerCase()} bed` : displayName(entry).toLowerCase()
     st.notify(`Placed ${article(name)} ${name}${res.roomName ? ` in the ${res.roomName}` : ''}.`)
     celebrate(entry.category + (preset ? `:${preset.name}` : ''))
@@ -106,7 +147,10 @@ export function BuyDrawer() {
     <div className="buy-drawer" role="region" aria-label="Buy furniture">
       <div className="buy-tabs" role="tablist" aria-label="Furniture categories">
         {CATEGORY_GROUPS.map((g) => (
-          <button key={g.key} role="tab" aria-selected={g.key === group.key} aria-label={g.label} className={`buy-tab ${g.key === group.key ? 'on' : ''}`} onClick={() => setTab(g.key)}>
+          <button key={g.key} role="tab" aria-selected={g.key === group.key} aria-label={g.label} className={`buy-tab ${g.key === group.key ? 'on' : ''}`} onClick={() => {
+              setTab(g.key)
+              if (hint) useGame.getState().setBuyHint(null)
+            }}>
             <span className="buy-tab-icon">
               {g.key === 'mine' ? <IconStar /> : <ItemThumb category={TAB_ICON[g.key] ?? g.categories[0]} color={ENTRIES.get(TAB_ICON[g.key] ?? g.categories[0])?.color ?? '#9aa4ad'} size={34} />}
               {g.key === 'mine' && mine.length > 0 && <span className="buy-badge">{mine.length}</span>}
@@ -116,7 +160,7 @@ export function BuyDrawer() {
         ))}
       </div>
 
-      <div className="buy-grid" key={group.key} role="tabpanel" aria-label={group.label}>
+      <div className="buy-grid" ref={gridRef} key={group.key} role="tabpanel" aria-label={group.label}>
         {group.key === 'mine' ? (
           <>
             <ShopCard onClick={shop} i={0} />
@@ -156,7 +200,7 @@ export function BuyDrawer() {
               if (!entry) return null
               const name = displayName(entry)
               return (
-                <div key={cat} className={`buy-card ${isPopped(cat) || popped?.key.startsWith(cat + ':') ? 'pop' : ''}`} style={{ ['--i' as string]: k }} draggable onDragStart={(e) => onDrag(e, cat)}>
+                <div key={cat} className={`buy-card ${isPopped(cat) || popped?.key.startsWith(cat + ':') ? 'pop' : ''}${hint?.category === cat ? ' hinted' : ''}`} style={{ ['--i' as string]: k }} draggable onDragStart={(e) => onDrag(e, cat)}>
                   <button className="buy-hit" onClick={() => place(entry)} aria-label={`Place ${article(name)} ${name.toLowerCase()}`}>
                     <span className="buy-thumb">
                       <ItemThumb category={cat} color={entry.color} size={78} />

@@ -16,7 +16,7 @@ import { downloadJSON, parseDoc } from '../storage'
 import { Scene3D, type SceneInset, type WallMode } from '../three/Scene3D'
 import { BuyDrawer, ShopSheet } from './BuyDrawer'
 import { ItemThumb } from './ItemThumb'
-import { GoalsSheet, VibeMeter } from './Goals'
+import { GoalsSheet, LevelUpCard, VibeMeter } from './Goals'
 import { useGame, type GameMode } from './gameStore'
 import * as I from './icons'
 import { Onboarding } from './Onboarding'
@@ -96,6 +96,7 @@ function GameApp() {
           <div className="hud-toast">
             <GameToast />
           </div>
+          <LevelUpCard />
         </>
       )}
       {sheet === 'goals' && <GoalsSheet />}
