@@ -36,19 +36,9 @@ const clickText = (p, t) => p.getByRole('button', { name: t }).first().click({ t
 async function scanJourney(p, step) {
   await step('welcome', async () => {});
   await step('scan-step', () => clickText(p, 'Scan my apartment'));
-  await step('sample-imported', async () => { await clickText(p, /sample scan/i); await p.waitForTimeout(3500) });
-  await step('measure-first-tap', async () => {
-    const box = await p.locator('.onb-plan svg').first().boundingBox();
-    await p.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.5);
-  });
-  await step('measured', async () => {
-    await p.evaluate(() => {
-      const { useStore, sample } = window.__apt; const s = useStore.getState(); const ref = s.doc.scans[0];
-      s.setUI({ scanDraft: null });
-      for (const r of sample.SAMPLE_TRUTH.references.slice(0, 2)) s.addScanReference(ref.id, { a: r.a, b: r.b, length: r.length }, { x: ref.x, y: ref.y });
-    }).catch(() => {});
-  });
-  await step('detecting', async () => { await clickText(p, /^Next$|That’s enough|Skip for now/); });
+  await step('sample-imported', async () => { await clickText(p, /Try ours/i); await p.waitForTimeout(1500) });
+  await step('sample-measured', async () => { await p.waitForTimeout(3500) });
+  await step('detecting', async () => { await clickText(p, /^Next$|That’s enough|Skip for now/).catch(() => {}) });
   await step('detected', async () => { await p.waitForTimeout(6000) });
   await step('welcome-home', async () => { await p.locator('.onb-row.sticky .g-btn.primary').click({ timeout: 4000 }).catch(() => clickText(p, /Trace walls myself/)) });
   await step('start-designing', () => clickText(p, 'Start designing'));
