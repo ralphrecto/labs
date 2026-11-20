@@ -6,7 +6,7 @@ import { PlanView } from '../components/PlanView'
 import { ScanReviewPanel } from '../components/ScanPanels'
 import { ScansPanel } from '../components/ScanImport'
 import { catalogEntry } from '../model/catalog'
-import { polygonArea } from '../model/geometry'
+import { pointInPolygon, polygonArea, v } from '../model/geometry'
 import { formatLength, parseLength, unitLabel } from '../model/units'
 import { toScanData } from '../scan/align'
 import { scanEntry } from '../scan/runtime'
@@ -22,6 +22,7 @@ import { GoalsSheet, LevelUpCard, VibeMeter } from './Goals'
 import { useGame, type GameMode } from './gameStore'
 import * as I from './icons'
 import { Onboarding } from './Onboarding'
+import { PhotoShutter } from './PhotoShutter'
 import { StylePicker, useStylePicker } from './StylePicker'
 import { useModal } from './useModal'
 import { reduceMotion } from '../motion'
@@ -75,17 +76,21 @@ function GameApp() {
   const gameRef = useRef<HTMLDivElement>(null)
   // The 3D view frames the home around the HUD only when the screen really changes (mode, view,
   // recenter, scan review, window size), never as the drawer and selection bar come and go.
-  const inset = useHudInset(gameRef, `${phase}:${mode}:${view}:${cam.resetKey}:${cam.eye}:${!!review}`)
+  // On a phone, the compact drawer leaves a small stage: frame the selected piece's room instead
+  // of the whole home (and the whole home again on deselect). Desktop never refits on select.
+  const focusRoom = useFocusRoom(showDrawer && view === '3d', selection?.kind === 'placement' ? selection.id : null)
+  const inset = useHudInset(gameRef, `${phase}:${mode}:${view}:${cam.resetKey}:${cam.eye}:${!!review}:${focusRoom}`)
   useGameShortcuts()
   return (
     <div ref={gameRef} className={`game mode-${mode}${tool ? ' tool-active' : ''}`}>
-      <Stage inset={inset} />
+      <Stage inset={inset} focusRoom={focusRoom} />
       {phase === 'onboarding' ? (
         <Onboarding />
       ) : (
         <>
           {mode !== 'look' && <TopBar />}
           {mode === 'look' && <LookControls />}
+          {mode === 'look' && <PhotoShutter />}
           {mode === 'look' && <StylePicker className="sty-look" />}
           <CameraControls />
           {showDrawer && (
@@ -159,7 +164,32 @@ function useCam(): CamState {
   return camState
 }
 
-function Stage({ inset }: { inset: SceneInset }) {
+const PHONE_QUERY = '(max-width: 700px) and (orientation: portrait)'
+function usePhone() {
+  const [phone, setPhone] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(PHONE_QUERY).matches)
+  useEffect(() => {
+    const mq = window.matchMedia?.(PHONE_QUERY)
+    if (!mq) return
+    const on = () => setPhone(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return phone
+}
+
+/** The room of the selected piece while a phone furnishes with the compact drawer, else null. */
+function useFocusRoom(drawer: boolean, placementId: string | null): string | null {
+  const phone = usePhone()
+  return useMemo(() => {
+    if (!phone || !drawer || !placementId) return null
+    // Read once at selection: dragging the piece into the next room doesn't swing the camera.
+    const doc = useStore.getState().doc
+    const p = activeLayout(doc).placements.find((x) => x.id === placementId)
+    return (p && doc.rooms.find((r) => pointInPolygon(v(p.x, p.y), r.polygon))?.id) ?? null
+  }, [phone, drawer, placementId])
+}
+
+function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | null }) {
   const view = useStageView()
   const phase = useGame((s) => s.phase)
   const mode = useGame((s) => s.mode)
@@ -175,8 +205,10 @@ function Stage({ inset }: { inset: SceneInset }) {
       eye: mode === 'look' && cam.eye,
       inset,
       hideFlags: mode === 'look',
+      fullFrame: mode === 'look',
+      focusRoom: mode === 'buy' ? focusRoom : null,
     }),
-    [cam, mode, style, inset],
+    [cam, mode, style, inset, focusRoom],
   )
   return (
     <div
@@ -199,7 +231,7 @@ function Stage({ inset }: { inset: SceneInset }) {
 }
 
 /** HUD pieces along the bottom and the top of the screen that cover the stage. */
-const BOTTOM_HUD = ['.buy-drawer', '.hud-ctx-wrap:not(.slim)', '.hud-tray', '.hud-dock', '.hud-review']
+const BOTTOM_HUD = ['.buy-drawer', '.hud-ctx-wrap', '.hud-tray', '.hud-dock', '.hud-review']
 /** After a framing change, how long the HUD may settle (pieces mounting) before the inset is held. */
 const INSET_SETTLE_MS = 700
 const TOP_HUD = ['.hud-top', '.hud-look-bar']
