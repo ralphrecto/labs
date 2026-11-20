@@ -149,7 +149,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     const room = hint?.category === entry.category && hint.roomId ? st.doc.rooms.find((r) => r.id === hint.roomId) : undefined
     const there = room ? dropIn(st.doc, item, room) : null
     // A goal about one piece ("A cozy reading corner") puts the lamp beside that piece (the armchair).
-    const nearId = !there?.ok && hint?.category === entry.category ? (hint as { near?: string }).near ?? (BESIDE.has(entry.category) ? nookTarget(st.doc, activeLayout(st.doc)) : undefined) : undefined
+    const nearId = !there?.ok && hint?.category === entry.category ? hint.near ?? (BESIDE.has(entry.category) ? nookTarget(st.doc, activeLayout(st.doc)) : undefined) : undefined
     const beside = nearId ? findDrop(st.doc, activeLayout(st.doc), item, { nextTo: nearId }) : null
     const spot = there?.ok ? there.spot : beside?.ok ? beside.spot : undefined
     // Otherwise the item goes to a free spot that suits it and is selected; when nothing fits, the store toasts why.

@@ -35,7 +35,7 @@ interface GameState {
   /** The player was away a while (WELCOME_BACK_MS) before this visit: greet them once. */
   welcomeBack: boolean
   /** The catalog piece the "Next" chip pointed at; the drawer gives its card a nudge until it's placed. */
-  buyHint: { category: string; roomId?: string } | null
+  buyHint: { category: string; roomId?: string; near?: string } | null
   /** The goal to scroll to when the goals sheet opens. */
   goalFocus: string | null
   /** A level just reached, for the celebration card. */
@@ -52,7 +52,7 @@ interface GameState {
   /** Remember a level reached in a home; lower levels are ignored. */
   noteLevel: (homeId: string, level: number) => void
   /** "Show me" for a goal: the drawer on a tab with a piece to point at, or the goals sheet at the goal. */
-  showGoal: (goal: { id: string; tab?: string; item?: string; placeIn?: string }) => void
+  showGoal: (goal: { id: string; tab?: string; item?: string; placeIn?: string; near?: string }) => void
   setBuyHint: (hint: { category: string; roomId?: string } | null) => void
   celebrateLevel: (index: number, name: string) => void
   clearLevelUp: () => void
@@ -201,7 +201,7 @@ export const useGame = create<GameState>((set) => ({
   showGoal: (goal) =>
     set(
       goal.tab
-        ? { mode: 'buy', buyTab: goal.tab, buyHint: goal.item ? { category: goal.item, roomId: goal.placeIn } : null, sheet: null, goalFocus: null }
+        ? { mode: 'buy', buyTab: goal.tab, buyHint: goal.item ? { category: goal.item, roomId: goal.placeIn, near: goal.near } : null, sheet: null, goalFocus: null }
         : { sheet: 'goals', goalFocus: goal.id },
     ),
   setBuyHint: (buyHint) => set({ buyHint }),
