@@ -10,7 +10,7 @@ import { useScanUI } from './scan/scanUi'
 import { exportPlanPNG } from './exporting'
 import { Scene3D } from './three/Scene3D'
 import { activeLayout, loadSample, newEmptyDoc, useStore, type Mode, type View } from './store'
-import { downloadJSON, parseDoc } from './storage'
+import { allHomeScanIds, downloadJSON, parseDoc } from './storage'
 import { parseLength, unitLabel } from './model/units'
 
 /** Set when built for an embedded preview where printing and downloads are unavailable. */
@@ -322,7 +322,8 @@ export function useScanFiles() {
     for (const r of scans ?? []) void ensureScanLoaded(r)
   }, [scans])
   useEffect(() => {
-    void pruneScanFiles((useStore.getState().doc.scans ?? []).map((r) => r.id))
+    // Keep the scan files of every saved home, not just the open one.
+    void pruneScanFiles(allHomeScanIds((useStore.getState().doc.scans ?? []).map((r) => r.id)))
   }, [])
 }
 

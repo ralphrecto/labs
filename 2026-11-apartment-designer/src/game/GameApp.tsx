@@ -11,7 +11,8 @@ import { formatLength, parseLength, unitLabel } from '../model/units'
 import { toScanData } from '../scan/align'
 import { scanEntry } from '../scan/runtime'
 import { useScanUI } from '../scan/scanUi'
-import { activeLayout, loadSample, useStore } from '../store'
+import { activeLayout, loadSample, openDocAsHome, useStore } from '../store'
+import { DesignsSheetBody } from './Designs'
 import { downloadJSON, parseDoc } from '../storage'
 import { Scene3D, type SceneInset, type WallMode } from '../three/Scene3D'
 import { BuyDrawer, ShopSheet } from './BuyDrawer'
@@ -289,7 +290,7 @@ function TopBar() {
     <header className="hud-top">
       <button className="hud-home" onClick={() => open('layouts')} aria-label="Your designs">
         <span className="hud-home-icon">
-          <I.IconHome />
+          <I.IconDesigns />
         </span>
         <span className="hud-home-text">
           <strong>{name}</strong>
@@ -769,57 +770,11 @@ function NewRoomSheet() {
 }
 
 function DesignsSheet() {
-  const doc = useStore((s) => s.doc)
+  const name = useStore((s) => s.doc.apartment.name)
   const s = useStore.getState()
-  const [editing, setEditing] = useState<string | null>(null)
   return (
-    <Sheet title={doc.apartment.name} sub="Try different designs for the same home and flip between them.">
-      <label className="g-field hud-homename">
-        Home name
-        <input value={doc.apartment.name} onChange={(e) => s.renameApartment(e.target.value)} />
-      </label>
-      <div className="hud-designs">
-        {doc.layouts.map((l) => {
-          const active = l.id === doc.activeLayoutId
-          return (
-            <div key={l.id} className={`hud-design g-card${active ? ' on' : ''}`}>
-              <button className="hud-design-main" onClick={() => s.setActiveLayout(l.id)}>
-                {editing === l.id ? (
-                  <input
-                    autoFocus
-                    defaultValue={l.name}
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={(e) => {
-                      s.renameLayout(l.id, e.target.value || l.name)
-                      setEditing(null)
-                    }}
-                    onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-                  />
-                ) : (
-                  <strong>{l.name}</strong>
-                )}
-                <small>
-                  {l.placements.length} piece{l.placements.length === 1 ? '' : 's'}
-                  {active && ' · playing'}
-                </small>
-              </button>
-              <div className="hud-design-actions">
-                <button className="g-icon sm" aria-label="Rename" onClick={() => setEditing(l.id)}>
-                  <I.IconPen />
-                </button>
-                <button className="g-icon sm" aria-label="Copy design" onClick={() => s.duplicateLayout(l.id)}>
-                  <I.IconCopy />
-                </button>
-                {doc.layouts.length > 1 && (
-                  <button className="g-icon sm danger" aria-label="Delete design" onClick={() => s.deleteLayout(l.id)}>
-                    <I.IconTrash />
-                  </button>
-                )}
-              </div>
-            </div>
-          )
-        })}
-      </div>
+    <Sheet title={name} sub="Try different designs for the same home and flip between them.">
+      <DesignsSheetBody />
       <button className="g-btn primary" onClick={() => s.addLayout()}>
         <I.IconPlus width={18} height={18} /> New empty design
       </button>
@@ -911,7 +866,7 @@ function SettingsSheet() {
           onClick={() => {
             loadSample()
             g.openSheet(null)
-            s.notify('Loaded the sample home. Undo to go back.')
+            s.notify('Moved into the sample home. Your other homes are in Your designs.')
           }}
         >
           <I.IconHome width={18} height={18} /> Load the sample home
@@ -939,8 +894,9 @@ function SettingsSheet() {
           try {
             const d = parseDoc(await f.text())
             if (!d) throw new Error('bad')
-            useStore.getState().replaceDoc(d)
+            openDocAsHome(d)
             g.openSheet(null)
+            s.notify(`Opened ${d.apartment.name}. Your other homes are in Your designs.`)
           } catch {
             s.notify("That file isn't a saved home.")
           }

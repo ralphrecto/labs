@@ -32,6 +32,13 @@ pasted text (M4), all wrapped in a game UI.
   The choice is remembered per browser; the classic editor keeps its plain look.
 - **Settings** (gear): units, overlays, snapping, saved designs, files, and the **Classic editor**
   with every panel and tool from the earlier milestones.
+- **Homes and designs** (the stacked-cards button top left, `src/game/Designs.tsx`): every home you
+  move into (a scan, the sample, an empty room, an opened file) gets its own save slot
+  (`src/storage.ts`: an `apartment-designer:homes` index plus `apartment-designer:home:<id>` per
+  home; the old single `doc:v1` save is migrated on first load and left in place). The sheet
+  switches, renames and deletes homes (never the last one), and shows each design as a small
+  top-down postcard with rename, copy and delete behind "…". Undo history is per session and
+  starts fresh when you switch or move into a home.
 
 Game state that isn't part of the document (phase, mode, camera, open sheet) is in
 `src/game/gameStore.ts`. Shared look: `src/game/theme.css` tokens and `.g-*` primitives; each game

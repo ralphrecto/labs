@@ -6,7 +6,7 @@ import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
 import type { Doc, Item, Layout, Opening, Placement, Room, ScanRef, ScanReference, Units, Vec2 } from './model/types'
 import { calibrate, rescaleAbout } from './scan/align'
-import { loadDoc, saveDoc } from './storage'
+import { deleteHome as dropHome, listHomes, loadDoc, loadHome, saveDoc, setCurrentHome } from './storage'
 
 export type Mode = 'select' | 'draw-room' | 'door' | 'window' | 'scan-measure' | 'scan-straighten' | 'scan-move'
 export type View = 'split' | 'plan' | '3d' | 'compare'
@@ -347,7 +347,7 @@ export const useStore = create<State>((set, get) => ({
   addLayout: () =>
     get().update((d) => {
       const id = uid()
-      return { ...d, layouts: [...d.layouts, { id, name: `Layout ${d.layouts.length + 1}`, placements: [] }], activeLayoutId: id }
+      return { ...d, layouts: [...d.layouts, { id, name: designName(d.layouts.map((l) => l.name)), placements: [] }], activeLayoutId: id }
     }),
   duplicateLayout: (id) =>
     get().update((d) => {
@@ -355,7 +355,7 @@ export const useStore = create<State>((set, get) => ({
       if (!src) return d
       const nid = uid()
       // Placements reference the shared item library, so a copy just needs new placement ids.
-      const copy: Layout = { id: nid, name: `${src.name} (copy)`, placements: src.placements.map((p) => ({ ...p, id: uid() })) }
+      const copy: Layout = { id: nid, name: designName(d.layouts.map((l) => l.name)), placements: src.placements.map((p) => ({ ...p, id: uid() })) }
       return { ...d, layouts: [...d.layouts, copy], activeLayoutId: nid }
     }),
   renameLayout: (id, name) => get().update((d) => ({ ...d, layouts: d.layouts.map((l) => (l.id === id ? { ...l, name } : l)) })),
@@ -402,18 +402,92 @@ function validSelection(d: Doc, s: Selection): Selection {
   return d.rooms.some((r) => r.id === s.roomId && r.openings.some((o) => o.id === s.id)) ? s : null
 }
 
+/** Is this home still a blank slate (nothing drawn, placed or scanned)? */
+const isBlank = (d: Doc) => !d.rooms.length && !d.items.length && !(d.scans ?? []).length
+
+/** A name no other home has: "Sample apartment", then "Sample apartment 2"... */
+function freshHomeName(base: string, except: string) {
+  const taken = new Set(listHomes().filter((h) => h.id !== except).map((h) => h.name))
+  if (!taken.has(base)) return base
+  for (let n = 2; ; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`
+}
+
+/**
+ * Open a brand new home in its own save slot. The home that was open stays saved and can be
+ * picked again from Your designs. A blank home being left (a scan that was abandoned) is dropped
+ * instead of piling up.
+ */
+function moveInto(d: Doc) {
+  const prev = useStore.getState().doc
+  const doc = { ...d, apartment: { ...d.apartment, name: freshHomeName(d.apartment.name, d.apartment.id) } }
+  useStore.setState({ doc, past: [], future: [], selection: null, activeScanId: null, scanDraft: null, mode: 'select' })
+  flushSave()
+  if (isBlank(prev)) dropHome(prev.apartment.id)
+}
+
 export function newEmptyDoc() {
-  useStore.getState().replaceDoc(emptyDoc())
+  const d = emptyDoc()
+  moveInto({ ...d, layouts: d.layouts.map((l) => ({ ...l, name: DESIGN_NAMES[0] })) })
 }
 export function loadSample() {
-  useStore.getState().replaceDoc(sampleDoc())
+  moveInto(sampleDoc())
+}
+
+/** Open a document from a file as a home of its own (a copy if that home is already saved). */
+export function openDocAsHome(d: Doc) {
+  const taken = listHomes().some((h) => h.id === d.apartment.id) || useStore.getState().doc.apartment.id === d.apartment.id
+  moveInto(taken ? { ...d, apartment: { ...d.apartment, id: uid() } } : d)
+}
+
+/** Open another saved home. Undo history belongs to the home it was made in, so it starts fresh. */
+export function switchHome(id: string): boolean {
+  if (useStore.getState().doc.apartment.id === id) return true
+  flushSave()
+  const d = loadHome(id)
+  if (!d) return false
+  useStore.setState({ doc: d, past: [], future: [], selection: null, activeScanId: null, scanDraft: null, mode: 'select' })
+  return true
+}
+
+/** Delete a saved home (never the last one). Deleting the open home switches to another first. */
+export function deleteHome(id: string): boolean {
+  const homes = listHomes()
+  if (homes.length <= 1 || !homes.some((h) => h.id === id)) return false
+  if (useStore.getState().doc.apartment.id === id) {
+    const other = homes.find((h) => h.id !== id)
+    if (!other || !switchHome(other.id)) return false
+  }
+  flushSave()
+  return dropHome(id)
+}
+
+/** Playful names for new designs and copies; numbered once they run out. */
+export const DESIGN_NAMES = ['First idea', 'Cozy idea', 'Plan B', 'Fresh start', 'Sunday shuffle', 'Big move', 'Wild card', 'Snug version', 'Open plan', 'Plan C', 'Dream version', 'One more idea']
+export function designName(taken: string[]) {
+  const t = new Set(taken)
+  const free = DESIGN_NAMES.find((n) => !t.has(n))
+  if (free) return free
+  for (let n = 2; ; n++) if (!t.has(`Idea ${n}`)) return `Idea ${n}`
 }
 export { catalogEntry }
 
-// Persist the document locally (debounced).
+// Persist the document locally (debounced), into the open home's own slot.
 let saveTimer: ReturnType<typeof setTimeout> | undefined
+let pending: Doc | null = null
+function flushSave() {
+  clearTimeout(saveTimer)
+  if (pending) saveDoc(pending)
+  pending = null
+}
 useStore.subscribe((s, prev) => {
   if (s.doc === prev.doc) return
+  // A different home: finish saving the one being left right away, then remember the new one.
+  if (s.doc.apartment.id !== prev.doc.apartment.id) {
+    flushSave()
+    setCurrentHome(s.doc.apartment.id)
+  }
   clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => saveDoc(s.doc), 300)
+  pending = s.doc
+  saveTimer = setTimeout(flushSave, 300)
 })
+if (typeof window !== 'undefined') window.addEventListener('pagehide', flushSave)
