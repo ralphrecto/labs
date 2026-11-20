@@ -92,9 +92,9 @@
 }
 
 /* Bed sizes as tiny chips inside the card. */
-.buy-presets { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; padding: 0 6px 8px; margin-top: -4px; }
+.buy-presets { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; padding: 0 4px 8px; margin-top: -4px; }
 .buy-preset {
-  border: none; border-radius: 99px; padding: 3px 7px; background: var(--g-paper-2); color: var(--g-ink);
+  border: none; border-radius: 99px; padding: 3px 5px; background: var(--g-paper-2); color: var(--g-ink);
   font: 800 10.5px/1 var(--g-font); cursor: pointer; transition: transform 0.15s var(--g-ease), background 0.15s;
 }
 .buy-preset:hover { background: var(--g-sky); color: #fff; transform: translateY(-1px); }

@@ -271,3 +271,41 @@
   .hud-ctx-text { display: none; } /* the thumbnail names it; there is no room for the text beside the dock */
   .g-sheet { max-height: 94vh; }
 }
+
+/* ==================== r3-c: drawer stays open, slim selection strip, shortcut list ==================== */
+/* Furnish keeps the drawer open while a piece is selected; its actions ride just above the drawer. */
+.buy-drawer > .hud-ctx-wrap.slim {
+  position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); z-index: 2;
+  width: max-content; max-width: calc(100vw - 16px);
+}
+.hud-ctx-wrap.slim .hud-ctx { flex-wrap: nowrap; width: auto; padding: 4px 6px 4px 4px; gap: 2px; border-radius: 999px; }
+.hud-ctx-wrap.slim .hud-ctx-id { width: auto; gap: 8px; padding: 0 6px 0 0; }
+.hud-ctx-wrap.slim .hud-ctx-thumb { width: 36px; height: 36px; border-radius: 50%; }
+.hud-ctx-wrap.slim .hud-ctx-roomicon { width: 28px; height: 28px; }
+.hud-ctx-wrap.slim .hud-ctx-text { max-width: 140px; }
+.hud-ctx-wrap.slim .hud-ctx-text strong { font-size: 14px; }
+.hud-ctx-wrap.slim .hud-ctx-text small { font-size: 11px; }
+.hud-ctx-wrap.slim .hud-act { width: 40px; height: 40px; padding: 0; justify-content: center; border-radius: 50%; }
+.hud-ctx-wrap.slim .hud-act > span { display: none; }
+.hud-ctx-wrap.slim .hud-ctx-warn { font-size: 12px; padding: 6px 12px; }
+@media (max-width: 520px) {
+  .hud-ctx-wrap.slim { width: max-content; }
+  .hud-ctx-wrap.slim .hud-ctx-text { max-width: 96px; }
+  .hud-ctx-wrap.slim .hud-ctx-text small { display: none; }
+  .hud-ctx-wrap.slim .hud-act { width: 38px; height: 38px; }
+}
+
+/* Keyboard shortcuts: a "?" at the bottom left and the list it opens (desktop pointers only). */
+.hud-keys-btn { position: absolute; left: max(16px, env(safe-area-inset-left)); bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 15; font: 900 16px var(--g-font); }
+.hud-keys {
+  position: absolute; left: max(16px, env(safe-area-inset-left)); bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 40;
+  padding: 14px 16px; border-radius: 18px; width: 330px; animation: g-pop 0.2s var(--g-ease); cursor: pointer;
+}
+.hud-keys strong { display: block; font-weight: 900; margin-bottom: 8px; }
+.hud-keys dl { margin: 0; display: grid; gap: 5px; }
+.hud-keys dl > div { display: grid; grid-template-columns: 128px 1fr; gap: 8px; align-items: baseline; }
+.hud-keys dt { margin: 0; }
+.hud-keys dd { margin: 0; font-size: 13px; font-weight: 700; color: var(--g-ink-2); }
+.hud-keys kbd { font: 800 12px var(--g-font); background: var(--g-paper-2); border-radius: 6px; padding: 2px 6px; white-space: nowrap; }
+@media (hover: none), (pointer: coarse), (max-width: 640px) { .hud-keys-btn, .hud-keys { display: none; } }
+/* ==================== end r3-c ==================== */

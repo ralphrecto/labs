@@ -30,6 +30,8 @@ export function useHomeScore(): HomeScore {
 
 const SPARKS = 10
 const PLACED_TOAST = /^Placed /
+/** The level-up card waits until placing has paused this long, so it never lands mid-burst. */
+const LEVEL_UP_QUIET_MS = 1200
 
 function Stars({ n, filled = true }: { n: number; filled?: boolean }) {
   return (
@@ -55,6 +57,9 @@ export function VibeMeter() {
   const [banner, setBanner] = useState<Banner | null>(null)
   const [shown, setShown] = useState<string | null>(null)
   const next = nextGoal(score)
+  const levelTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const pendingLevel = useRef<{ index: number; name: string } | null>(null)
+  useEffect(() => () => clearTimeout(levelTimer.current), [])
 
   // Layout effect, so a "Placed a sofa" toast that a goal or level-up replaces never paints.
   useLayoutEffect(() => {
@@ -62,22 +67,37 @@ export function VibeMeter() {
     const before = prev.current
     prev.current = { key: designKey, stars: score.stars, level: score.level.index, done }
     // First render, or another design or home: no fanfare.
-    if (!before || before.key !== designKey) return
+    if (!before || before.key !== designKey) {
+      clearTimeout(levelTimer.current)
+      pendingLevel.current = null
+      return
+    }
     // Any change to the home brings the chip back (with whatever is next now).
     setShown(null)
     const fresh = score.goals.filter((g) => g.done && !before.done.has(g.id))
     if (fresh.length > 4) return
     if (score.stars > before.stars) setPop({ key: Date.now(), delta: score.stars - before.stars })
     const leveled = score.level.index > before.level
-    if (leveled) useGame.getState().celebrateLevel(score.level.index, score.level.name)
-    else if (fresh.length) {
-      const best = [...fresh].sort((a, b) => b.stars - a.stars)[0]
-      setBanner({ key: Date.now(), kind: 'goal', goal: best, more: fresh.length - 1 })
+    // The level-up card waits for a pause in placing (each change pushes it back), so a burst of
+    // placements isn't covered up halfway.
+    if (leveled) pendingLevel.current = { index: score.level.index, name: score.level.name }
+    if (pendingLevel.current) {
+      clearTimeout(levelTimer.current)
+      levelTimer.current = setTimeout(() => {
+        const lv = pendingLevel.current
+        pendingLevel.current = null
+        if (lv) useGame.getState().celebrateLevel(lv.index, lv.name)
+      }, LEVEL_UP_QUIET_MS)
     }
-    // One message per action: the celebration says it, so the "Placed …" toast steps aside.
-    if (leveled || fresh.length) {
+    if (fresh.length) {
+      const best = [...fresh].sort((a, b) => b.stars - a.stars)[0]
       const toast = useStore.getState().toast
-      if (toast && PLACED_TOAST.test(toast)) useStore.setState({ toast: null })
+      // One line per action: "Placed a bed in the Bedroom · Goal: A restful bed +2★" rather than
+      // the goal banner replacing the room confirmation.
+      if (toast && PLACED_TOAST.test(toast) && !toast.includes(' · Goal: ')) {
+        const more = fresh.length > 1 ? ` (+${fresh.length - 1} more)` : ''
+        useStore.getState().notify(`${toast.replace(/\.$/, '')} · Goal: ${best.title} +${best.stars}★${more}`)
+      } else setBanner({ key: Date.now(), kind: 'goal', goal: best, more: fresh.length - 1 })
     }
   }, [score, designKey])
 
