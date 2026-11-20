@@ -9,6 +9,7 @@ import { snapPlacement } from '../model/snapping'
 import type { Item, Opening, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { ItemModel } from './ItemModel'
+import { viewFrame } from './viewFrame'
 import { scanCenter, scanCorners, useScanRuntime } from '../scan/runtime'
 
 // The scan backdrop pulls in the splat renderer, so it loads on first use.
@@ -357,6 +358,7 @@ function Scene({
     // Walking around is for looking: furniture isn't picked up, and taps go to walking.
     if (e.button !== 0 || eye) return
     e.stopPropagation()
+    floorDown.current = false
     const s = useStore.getState()
     s.select({ kind: 'placement', id: p.id })
     const w = hit(e)
@@ -383,6 +385,17 @@ function Scene({
     const proposed = { ...cur, x: w.x - d.grab.x, y: w.y - d.grab.y }
     const res = e.altKey ? { placement: proposed } : snapPlacement(item, proposed, s.doc.rooms, others, snap)
     s.updatePlacement(d.id, { x: res.placement.x, y: res.placement.y, rotation: res.placement.rotation })
+  }
+
+  // A click on the floor (not a drag to orbit) deselects, unless a piece is within a few pixels
+  // of it: small pieces are hard to hit, so a near miss picks the nearest one instead.
+  const floorDown = useRef(false)
+  const onFloorClick = (e: ThreeEvent<MouseEvent>) => {
+    const down = floorDown.current
+    floorDown.current = false
+    if (!down || e.delta >= 5 || eye) return
+    const near = nearestPlacementOnScreen(e, placed)
+    useStore.getState().select(near ? { kind: 'placement', id: near } : null)
   }
 
   const onUp = () => {
@@ -428,7 +441,14 @@ function Scene({
     <>
       <StyleLights target={target} extent={extent} />
       <StyleEnvironment />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[target.x, -0.01, target.z]} receiveShadow onPointerDown={() => useStore.getState().select(null)} visible={!scanOnly && stage.showGround}>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[target.x, -0.01, target.z]}
+        receiveShadow
+        onPointerDown={() => (floorDown.current = true)}
+        onClick={onFloorClick}
+        visible={!scanOnly && stage.showGround}
+      >
         <planeGeometry args={[200, 200]} />
         {style === 'toon' ? <meshToonMaterial color={stage.ground ?? ground} /> : <meshStandardMaterial color={stage.ground ?? ground} roughness={1} />}
       </mesh>
@@ -504,6 +524,41 @@ function Scene({
       )}
     </>
   )
+}
+
+/** Within this many CSS px of a missed click, a piece is picked anyway. */
+const NEAR_PICK_PX = 12
+
+/** The placement whose on-screen box (footprint and top) is nearest the click, if within NEAR_PICK_PX. */
+function nearestPlacementOnScreen(e: ThreeEvent<MouseEvent>, placed: { p: Placement; item: Item }[]): string | null {
+  const camera = e.camera
+  const el = e.nativeEvent.target as HTMLElement | null
+  const W = el?.clientWidth || 1
+  const H = el?.clientHeight || 1
+  const px = ((e.pointer.x + 1) / 2) * W
+  const py = ((1 - e.pointer.y) / 2) * H
+  const q = new THREE.Vector3()
+  let best: string | null = null
+  let bestD = NEAR_PICK_PX
+  for (const { p, item } of placed) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity
+    const c = Math.cos(p.rotation), s = Math.sin(p.rotation)
+    for (const [lx, ly] of [[-1, -1], [1, -1], [1, 1], [-1, 1]])
+      for (const h of [0, Math.max(item.height, 0.02)]) {
+        const ox = (lx * item.width) / 2, oy = (ly * item.depth) / 2
+        q.set(p.x + ox * c - oy * s, h, p.y + ox * s + oy * c).project(camera)
+        if (q.z > 1) continue
+        const sx = ((q.x + 1) / 2) * W, sy = ((1 - q.y) / 2) * H
+        x0 = Math.min(x0, sx); x1 = Math.max(x1, sx); y0 = Math.min(y0, sy); y1 = Math.max(y1, sy)
+      }
+    if (!Number.isFinite(x0)) continue
+    const d = Math.hypot(Math.max(x0 - px, 0, px - x1), Math.max(y0 - py, 0, py - y1))
+    if (d < bestD) {
+      bestD = d
+      best = p.id
+    }
+  }
+  return best
 }
 
 /** Screen space (CSS px) covered by HUD at the top and bottom of the pane: the visible stage is in between. */
@@ -649,7 +704,10 @@ function FitCamera({ inset, spin }: { inset?: SceneInset; spin?: boolean }) {
     } else goal.current = fit
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, controls, size.width, size.height, inset?.top, inset?.bottom, rooms, scans, spin])
+  // The game's arrow keys follow this view (see viewFrame); the classic editor (no inset) keeps plan axes.
+  useEffect(() => () => void (viewFrame.azimuth = null), [])
   useFrame((_, dt) => {
+    if (controls && inset) viewFrame.azimuth = Math.atan2(controls.target.x - camera.position.x, -(controls.target.z - camera.position.z))
     const g = goal.current
     if (!g || !controls) return
     const k = 1 - Math.exp(-Math.min(dt, 0.05) * 12)
