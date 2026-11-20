@@ -52,15 +52,15 @@ async function play(p, step) {
   for (let i = 1; i < Math.min(nt, 3); i++) await step(`drawer-tab-${i}`, () => tabs.nth(i).click());
   await step('place-item-1', () => p.locator('.buy-hit').first().click());
   const reopen = async () => { await p.getByRole('button', { name: 'Done' }).first().click({ timeout: 3000 }).catch(() => {}); await p.waitForTimeout(400) };
-  await step('place-item-2', async () => { await reopen(); await tabs.nth(0).click(); await p.locator('.buy-hit').nth(2).click() });
-  await step('place-item-3', async () => { await reopen(); await p.locator('.buy-hit').nth(4).click() });
+  await step('place-item-2', async () => { await p.keyboard.press('Escape'); await reopen(); await tabs.nth(0).click(); await p.locator('.buy-hit').nth(2).click() });
+  await step('place-item-3', async () => { await p.keyboard.press('Escape'); await reopen(); await p.locator('.buy-hit').nth(3).click() });
   await step('click-canvas-select', async () => {
     const c = await p.locator('canvas').first().boundingBox();
     await p.mouse.click(c.x + c.width / 2, c.y + c.height / 2);
   });
-  await step('goals', async () => { await p.locator('[class*="goal"]').first().click({ timeout: 3000 }) });
+  await step('goals', async () => { await p.keyboard.press('Escape'); await p.locator('[class*="goal"]').first().click({ timeout: 3000 }) });
   await step('goals-closed', async () => { await p.keyboard.press('Escape'); });
-  await step('style-picker', async () => { await p.locator('.sty-btn').first().click({ timeout: 3000 }) });
+  await step('style-picker', async () => { await p.keyboard.press('Escape'); await p.locator('.sty-btn').first().click({ timeout: 3000 }) });
   for (const st of ['Lifelike', 'Clay', 'Blueprint', 'Scan', 'Cartoon']) await step(`style-${st.toLowerCase()}`, async () => { if (!(await p.locator('.sty-pop').count())) await p.locator('.sty-btn').first().click(); await p.locator('.sty-pop [role=menuitemradio], .sty-pop button').filter({ hasText: st }).first().click({ timeout: 3000 }); await p.waitForTimeout(800) });
   await step('build-mode', async () => { await p.keyboard.press('Escape'); await clickText(p, /^Build/) });
   await step('look-mode', () => clickText(p, /^Look/));
