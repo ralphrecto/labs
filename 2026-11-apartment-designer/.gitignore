@@ -24,3 +24,4 @@ dist-ssr
 *.sw?
 dist-single
 scan-check-*.png
+playthrough/
