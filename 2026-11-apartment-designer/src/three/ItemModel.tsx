@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import { Component, Suspense, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import * as THREE from 'three'
 import type { Item } from '../model/types'
+import { reduceMotion } from '../motion'
 import { legs, PAL, PartMesh, rng, shade, type Part } from './furnitureKit'
 import { restyle, useStyle } from './style'
 
@@ -446,7 +447,8 @@ function Arrival({ id, children }: { id: string; children: ReactNode }) {
   useLayoutEffect(() => {
     if (seen.has(id)) return
     seen.add(id)
-    if (performance.now() > 2500) born.current = PENDING
+    // With "reduce motion" on, new items simply appear in place.
+    if (performance.now() > 2500 && !reduceMotion) born.current = PENDING
   }, [id])
   useFrame(() => {
     const g = ref.current
