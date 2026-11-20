@@ -69,3 +69,42 @@ review was cut off by a usage limit and moves to round 3. 24 findings.
 - Placement sounds; catalog presets and more items; more design goals (rug size, TV distance).
 - Landscape: the room centres on the full width, partly behind the side drawer.
 - Playthrough harness: the Scan style stalls headless SwiftShader, so later desktop steps time out.
+
+## Round 3 (2026-11-20)
+
+Reviewers: power user (speedrun), art director re-check, interior designer re-check. 24 findings.
+
+**Fixed this round**
+- Furnishing speed: furnishing 13 pieces went from 29 clicks to 16. The drawer stays open after
+  placing, with the piece's actions in a slim strip (on phones the drawer shrinks to one row of
+  thumbnails so the room stays visible). Selecting no longer refits the camera, orbiting no
+  longer deselects, near-miss clicks pick the closest piece. Rotate is 90° (`,`/`.` for 15°) and
+  slides the piece to a clear spot if the turn collides. Arrows follow the camera; nudge runs are
+  one undo step. Shortcuts B/F/L, P, Home, 1-6, Enter, and a "?" list on desktop.
+- Size chips for sofas, rugs, dining tables, desks and lamps from the retail catalog; a table lamp.
+- Placement: chairs and nightstands stay with their table, desk or bed (or are refused with a
+  reason); dresser is bedroom-only; living-room pieces avoid the kitchen; full front clearance
+  for beds, wardrobes, dressers and desks; lamps go to the seat without one; plants go to an
+  empty room.
+- Honest levels: Next points at layout problems first (overlaps, walkways, TV off-axis); the
+  level is capped at Cozy while there's a snag; companions no longer cost stars. Fullness "just
+  right" is 35% (38% bedrooms). New bonus goals: room to get into bed, rug big enough,
+  comfortable TV distance.
+- Looks: warm Lifelike and Clay stages with value separation; one softer coral (#e0603a) with
+  terracotta only on fills; the toast sits below the Next chip; the level-up card gets a warm dim,
+  sun header and badge; selected pieces keep their material with an outline and a pulsing floor
+  ring and a small hop; baseboards and wall caps.
+
+**Backlog (next rounds)**
+- Phone: after the drawer shrinks the camera doesn't reframe, so the house stays small; consider
+  refitting once when the drawer changes height by a lot.
+- Photo/share moment from Look mode; weekly challenges and badges after the top level; room
+  focus ("Redo the bedroom").
+- Desktop layout: the room is small above the drawer; consider a side-panel drawer from ~1100 px.
+- Your designs: 3D snapshot thumbnails, 2-up cards, "<level> living room" names.
+- Non-companion pieces that can't keep walkways clear are still placed (console, small desk);
+  desk can float mid-room; armchair can sit tight against the sofa.
+- Double-click a room to frame it; Tab to cycle pieces; keyboard selection.
+- Walk-in: furniture collision; Lifelike walk-in walls still neutral.
+- Dev note: restart the dev server after big merges; stale HMR state caused bogus splat shader
+  errors in the Scan style during round 3 testing.

@@ -316,3 +316,19 @@
 .hud-keys kbd { font: 800 12px var(--g-font); background: var(--g-paper-2); border-radius: 6px; padding: 2px 6px; white-space: nowrap; }
 @media (hover: none), (pointer: coarse), (max-width: 640px) { .hud-keys-btn, .hud-keys { display: none; } }
 /* ==================== end r3-c ==================== */
+
+/* Phones: while a piece is selected the drawer stays open but shrinks to one row of small
+   thumbnails (no names, sizes or tabs), so the room isn't hidden behind it. */
+@media (max-width: 700px) and (orientation: portrait) {
+  .buy-drawer:has(> .hud-ctx-wrap.slim) { padding: 6px 0 4px; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-tabs,
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-name,
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-size,
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-presets,
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-tag { display: none; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-grid { padding: 6px 12px 4px; gap: 8px; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-card { width: 64px; animation: none; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-hit { padding: 4px; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-thumb { height: 52px; margin: 0; border-radius: 10px; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-thumb svg { width: 46px !important; height: 46px !important; }
+}
