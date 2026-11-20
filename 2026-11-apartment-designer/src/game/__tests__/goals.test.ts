@@ -34,8 +34,17 @@ describe('scoreHome', () => {
     expect(s.goals.every((g) => !g.done)).toBe(true)
   })
 
-  it('scores the sample apartment', () => {
+  it('starts the sample home on move-in day, with plenty to fill (round 4)', () => {
     const s = score(sampleDoc())
+    expect(s.level.name).toBe('Lived-in')
+    expect(s.errors).toBe(0)
+    // Several core goals still open: storage, a table, light, a plant, the bathroom...
+    expect(s.goals.filter((g) => !g.done && !g.bonus).length).toBeGreaterThanOrEqual(6)
+    expect(s.level.toNext).toBeGreaterThanOrEqual(3)
+  })
+
+  it('scores the sample apartment', () => {
+    const s = score(sampleDoc({ settled: true }))
     expect(s.stars).toBeGreaterThan(3)
     expect(s.stars).toBeLessThan(s.maxStars)
     expect(s.level.index).toBeGreaterThan(0)
@@ -124,7 +133,7 @@ describe('scoreHome', () => {
   })
 
   it('only counts pieces inside a room and free of errors', () => {
-    const d = sampleDoc()
+    const d = sampleDoc({ settled: true })
     d.rooms[0].name = 'Living room'
     const rug = layoutOf(d).placements.find((p) => d.items.find((i) => i.id === p.itemId)!.category === 'rug')!
     expect(goal(d, (g) => g.id === 'rug')!.done).toBe(true)
@@ -158,13 +167,13 @@ describe('scoreHome', () => {
   })
 
   it('bases level thresholds on core goals, so buying furniture never lowers the level', () => {
-    const d = sampleDoc()
+    const d = sampleDoc({ settled: true })
     const before = score(d)
     // The sample starts part way, with room to grow.
     expect(before.level.index).toBeGreaterThanOrEqual(1)
     expect(before.level.index).toBeLessThanOrEqual(3)
     // A desk away from the window adds a bonus goal it doesn't meet.
-    place(d, 'desk', 0.36, 1.0, -Math.PI / 2)
+    place(d, 'desk', 0.36, 1.0, -Math.PI / 2, { clearance: { front: 0, back: 0, left: 0, right: 0 } })
     place(d, 'side-table', 8.5, 2.6)
     const after = score(d)
     expect(after.maxStars).toBeGreaterThanOrEqual(before.maxStars)
@@ -248,9 +257,17 @@ describe('scoreHome', () => {
     const ids = s.goals.map((g) => g.id)
     // No dining room and too small for a table on the side: no dining goal.
     expect(ids).not.toContain('eat')
+    // One room called "Living room" is a living room, not a studio: no bed goals, and Next
+    // starts on the sofa (round 4).
+    expect(ids).not.toContain('sleep')
+    expect(s.livingFirst).toBe(true)
+    expect(nextGoal(s)!.id).toBe('sit')
+    room.name = 'Studio'
+    const st = score(d)
+    expect(st.livingFirst).toBe(false)
     // A studio takes the bed anywhere, and nothing mentions a bedroom it doesn't have.
-    expect(s.goals.find((g) => g.id === 'sleep')!.title).toBe('A cozy corner to sleep')
-    expect(s.goals.every((g) => !/the bedroom(?! tab)/i.test(g.hint))).toBe(true)
+    expect(st.goals.find((g) => g.id === 'sleep')!.title).toBe('A cozy corner to sleep')
+    expect(st.goals.every((g) => !/the bedroom(?! tab)/i.test(g.hint))).toBe(true)
     // The only door is the front door.
     expect(s.goals.find((g) => g.id === 'walkways')!.hint).not.toMatch(/front door/)
     // Flow goals waiting on furniture are marked locked; the next goal is never one of them.
@@ -418,4 +435,46 @@ describe('scoreHome', () => {
     layoutOf(d).placements[1].y = 1.9 // 1.4 m: too close
     expect(goal(d, (g) => g.id === 'tv-distance')!.done).toBe(false)
   }, 30000)
+})
+
+describe('nextGoal never dead-ends (round 4)', () => {
+  it('suggests a stand-in when the hinted piece has no room, or moves on', () => {
+    const s = score(sampleDoc())
+    const storage: Goal = { id: 'storage', title: 'A place for your things', hint: '', done: false, stars: 1, category: 'basics', tab: 'bedroom', item: 'dresser' }
+    const plant: Goal = { id: 'plant', title: 'Greenery', hint: '', done: false, stars: 1, category: 'style', tab: 'decor', item: 'plant' }
+    const g = nextGoal({ ...s, goals: [storage, plant] }, (c) => c !== 'dresser' && c !== 'wardrobe')!
+    expect(g.id).toBe('storage')
+    expect(g.item).toBe('bookshelf')
+    expect(g.tab).toBe('work')
+    // Nothing for storage fits: the next goal instead.
+    expect(nextGoal({ ...s, goals: [storage, plant] }, (c) => c === 'plant')!.id).toBe('plant')
+    // Nothing fits at all: the goal, without a drawer trip (Show me opens the sheet).
+    const last = nextGoal({ ...s, goals: [storage] }, () => false)!
+    expect(last.tab).toBeUndefined()
+  })
+
+  it('suggests only pieces that fit, on the sample home', () => {
+    const d = sampleDoc()
+    const l = layoutOf(d)
+    const fits = (c: string) => findDrop(d, l, itemFromCatalog(catalogEntry(c), 'probe')).ok
+    for (let i = 0; i < 12; i++) {
+      const g = nextGoal(score(d), fits)
+      if (!g?.item || !g.tab) break
+      const item = itemFromCatalog(catalogEntry(g.item), `n${i}`)
+      const r = findDrop(d, l, item)
+      expect(r.ok).toBe(true)
+      if (!r.ok) break
+      d.items.push(item)
+      l.placements.push({ id: `np${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
+    }
+  }, 30000)
+
+  it('never awards a bed that has no room to get in', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Studio', 0, 0, 3, 2.8))
+    place(d, 'bed', 0.8, 1.05)
+    const s = score(d)
+    expect(s.goals.find((g) => g.id === 'sleep')!.done).toBe(false)
+    expect(s.goals.find((g) => g.id === 'headboard')!.done).toBe(false)
+  })
 })

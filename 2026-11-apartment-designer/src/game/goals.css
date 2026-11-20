@@ -124,3 +124,14 @@
   .goal-confetti, .goal-burst i, .goal-spark { display: none; }
   .goal-plus { top: -26px; }
 }
+
+/* Round 4: the best level as a small note beside the honest one; the phone level-up banner. */
+.goal-meter-level { display: inline-flex; align-items: baseline; gap: 6px; }
+.goal-meter-best { font-size: 10px; font-weight: 800; color: var(--g-ink-2); }
+.goal-levelup-goal { margin-top: 6px; font-style: normal; font-weight: 800; font-size: 13px; color: #8a5a00; }
+.goal-levelup-mini { pointer-events: auto; cursor: pointer; border: none; font: inherit; color: var(--g-ink); text-align: left; z-index: 70;
+  background: linear-gradient(90deg, #ffe7a8, var(--g-paper) 60%); animation: goal-banner 3.6s var(--g-ease) forwards; }
+.goal-levelup-mini .goal-banner-check { background: var(--g-sun); color: #6b4300; }
+.goal-levelup-mini .goal-banner-check svg { fill: #fff6dc; stroke: #b07a12; stroke-width: 1.6; }
+.goal-levelup-mini .goal-banner-text small { color: #c98700; }
+.goal-levelup-mini .goal-banner-text em { font-style: normal; font-size: 12px; font-weight: 800; color: var(--g-ink-2); }

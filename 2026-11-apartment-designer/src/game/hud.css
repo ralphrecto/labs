@@ -332,3 +332,14 @@
   .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-thumb { height: 52px; margin: 0; border-radius: 10px; }
   .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-thumb svg { width: 46px !important; height: 46px !important; }
 }
+
+/* ==================== r4-b: goals and rewards ==================== */
+/* The level-up carries the goal line, so no toast sits over it. */
+.game:has(.goal-levelup, .goal-levelup-mini) .hud-toast { display: none; }
+@media (max-width: 700px) {
+  /* The Next chip is the first thing a phone shows (no first-run camera labels there). */
+  .game:has(.hud-cam.labelled) .goal-next { visibility: visible; opacity: 1; }
+  /* Size chips crowd phone cards: only the card the Next chip pointed at keeps them. */
+  .buy-grid:has(.buy-card.hinted) .buy-card:not(.hinted) .buy-presets { display: none; }
+}
+/* ==================== end r4-b ==================== */
