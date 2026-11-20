@@ -3,7 +3,7 @@ import { analyze } from '../../analysis'
 import { catalogEntry, itemFromCatalog } from '../catalog'
 import { checkLayout } from '../checks'
 import { clearanceZones, convexOverlap, doorSwing, footprint, pointInPolygon, polygonInsideRoom, v, wallInwardNormal, wallSegments, closestPointOnSegment } from '../geometry'
-import { findDrop, polygonGap } from '../placement'
+import { findDrop, MIN_DRAWER_FRONT, polygonGap } from '../placement'
 import { emptyDoc, rectRoom, sampleDoc } from '../sample'
 import type { Doc, Item, Opening, Placement } from '../types'
 import { scoreHome } from '../../game/goals'
@@ -236,13 +236,33 @@ describe('findDrop', () => {
       for (const p of l.placements) {
         const item = d.items.find((i) => i.id === p.itemId)!
         if (!['wardrobe', 'dresser', 'desk'].includes(item.category) || !p.id.startsWith('tp')) continue
-        const fz = clearanceZones(item, p).find((z) => z.side === 'front')!
+        // A desk keeps its whole front; a dresser or wardrobe at least 75 cm (90 cm is the ideal).
+        const front = item.category === 'desk' ? item.clearance.front : MIN_DRAWER_FRONT
+        const fz = clearanceZones({ ...item, clearance: { ...item.clearance, front } }, p).find((z) => z.side === 'front')!
         expect(polygonInsideRoom(fz.poly, roomOf(d, p).polygon, 0.01), item.name).toBe(true)
+        for (const q of l.placements) {
+          const o = d.items.find((i) => i.id === q.itemId)!
+          if (q === p || o.floorLevel || (item.category === 'desk' && o.category === 'office-chair')) continue
+          expect(convexOverlap(fz.poly, footprint(o, q), 0.005), `${o.name} in front of the ${item.name}`).toBe(false)
+        }
       }
       const msgs = checkLayout(d, l).map((i) => i.message)
-      expect(msgs.filter((m) => /^(Wardrobe|Dresser) needs .* in front/.test(m))).toEqual([])
+      expect(msgs.filter((m) => /^Desk needs .* in front/.test(m))).toEqual([])
     }
   }, 30000)
+
+  it('fits a dresser beside the sample bed with 75 cm in front, preferring 90 cm (round 5)', () => {
+    const d = sampleDoc()
+    const { item, p } = drop(d, 'dresser')
+    expect(p).not.toBeNull()
+    expect(roomOf(d, p!).name).toBe('Bedroom')
+    expect(item.clearance.front).toBe(0.9)
+    // In an empty bedroom the full 90 cm wins.
+    const e = emptySample()
+    const r = drop(e, 'dresser')
+    const fz = clearanceZones(r.item, r.p!).find((z) => z.side === 'front')!
+    expect(polygonInsideRoom(fz.poly, roomOf(e, r.p!).polygon, 0.01)).toBe(true)
+  })
 
   it('puts a lamp by the armchair when the sofa already has one (round 3)', () => {
     const d = emptySample()
@@ -279,4 +299,75 @@ describe('findDrop', () => {
       }
     }
   }, 30000)
+})
+
+describe('findDrop round 5', () => {
+  /** A living room with a sofa facing a TV across it. */
+  function tvRoom(w = 5, h = 4.5): Doc {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, w, h))
+    drop(d, 'sofa')
+    drop(d, 'tv-stand')
+    return d
+  }
+  const pieceAt = (d: Doc, c: string) => {
+    const l = layoutOf(d)
+    return l.placements.filter((p) => d.items.find((i) => i.id === p.itemId)!.category === c).map((p) => ({ p, item: d.items.find((i) => i.id === p.itemId)! }))
+  }
+  /** The rectangle between the sofa's front and the TV. */
+  function viewRect(d: Doc) {
+    const [s] = pieceAt(d, 'sofa')
+    const [t] = pieceAt(d, 'tv-stand')
+    const fr = v(-Math.sin(s.p.rotation), Math.cos(s.p.rotation))
+    const reach = (t.p.x - s.p.x) * fr.x + (t.p.y - s.p.y) * fr.y - t.item.depth / 2 - s.item.depth / 2
+    expect(reach).toBeGreaterThan(1)
+    return footprint({ ...s.item, width: s.item.width - 0.1, depth: reach }, { ...s.p, x: s.p.x + fr.x * (s.item.depth / 2 + reach / 2), y: s.p.y + fr.y * (s.item.depth / 2 + reach / 2) })
+  }
+
+  it('never puts a desk, office chair, armchair or bookshelf between the sofa and the TV', () => {
+    const d = tvRoom()
+    const zone = viewRect(d)
+    for (const c of ['desk', 'office-chair', 'armchair', 'bookshelf', 'dining-table', 'dining-chair', 'desk', 'wardrobe']) {
+      const r = drop(d, c)
+      if (r.p) expect(convexOverlap(footprint(r.item, r.p), zone, 0.005), c).toBe(false)
+    }
+    const s = scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)))
+    expect(s.goals.find((g) => g.id === 'sofa-tv')?.done).toBe(true)
+  })
+
+  it('refuses a wall piece kindly when no wall is free, rather than standing it in the room', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Office', 0, 0, 2.2, 2.2))
+    drop(d, 'desk')
+    const second = drop(d, 'desk')
+    expect(second.p).toBeNull()
+    expect(second.reason).toMatch(/No free wall for a desk/)
+    for (const c of ['bookshelf', 'sideboard', 'wardrobe']) {
+      const r = drop(d, c)
+      if (!r.p) expect(r.reason, c).toMatch(/No free wall|full/)
+      else {
+        // Backed onto a wall.
+        const room = d.rooms[0]
+        const back = footprint(r.item, r.p).map((q) => Math.min(...wallSegments(room).map(([a, b]) => closestPointOnSegment(q, a, b).distance)))
+        expect(Math.min(...back), c).toBeLessThan(0.02)
+      }
+    }
+  })
+
+  it('keeps 75 cm free along both long sides of a table for four, off the wall', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Dining room', 0, 0, 4, 3.6))
+    const { item, p } = drop(d, 'dining-table')
+    expect(p).not.toBeNull()
+    const room = d.rooms[0]
+    const sides = [1, -1].map((sd) =>
+      footprint({ ...item, depth: 0.75 }, { ...p!, x: p!.x - Math.sin(p!.rotation) * sd * (item.depth / 2 + 0.375), y: p!.y + Math.cos(p!.rotation) * sd * (item.depth / 2 + 0.375) }),
+    )
+    for (const z of sides) expect(polygonInsideRoom(z, room.polygon, 0.01)).toBe(true)
+    // Chairs pulled up count, and nothing else lands in the pull-out space.
+    for (const c of ['dining-chair', 'dining-chair', 'sideboard', 'bookshelf', 'armchair', 'plant']) {
+      const r = drop(d, c)
+      if (r.p && c !== 'dining-chair') for (const z of sides) expect(convexOverlap(footprint(r.item, r.p), z, 0.005), c).toBe(false)
+    }
+  })
 })

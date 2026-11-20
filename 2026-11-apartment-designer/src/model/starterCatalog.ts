@@ -96,7 +96,7 @@ const groups: Record<string, Row[]> = {
     ['desk-standing', 'Standing desk', 'desk', 152, 76, 74, { tags: 'sit stand adjustable' }],
     ['desk-l', 'Corner desk (long side)', 'desk', 152, 61, 76, { tags: 'l-shaped' }],
     ['office-chair', 'Office chair', 'office-chair', 66, 66, 107, { tags: 'task chair' }],
-    ['file-cabinet', 'Filing cabinet', 'nightstand', 38, 51, 66, { tags: 'file drawers' }],
+    ['file-cabinet', 'Filing cabinet', 'bookshelf', 38, 51, 66, { tags: 'file drawers' }],
   ],
   'Rugs': [
     ['rug-5x8', "Rug 5' × 8'", 'rug', 244, 152, 1, { tags: '150 x 240' }],
@@ -118,7 +118,7 @@ const groups: Record<string, Row[]> = {
     ['fridge', 'Refrigerator', 'box', 91, 76, 178, { color: '#d9dcdf', tags: 'fridge kitchen' }],
     ['washer', 'Washer or dryer', 'box', 69, 76, 99, { color: '#e6e8ea', tags: 'laundry' }],
     ['piano', 'Upright piano', 'box', 150, 60, 125, { color: '#2b2522' }],
-    ['tv-65', '65" TV on a stand', 'box', 145, 30, 90, { color: '#1f1f1f', tags: 'television' }],
+    ['tv-65', '65" TV on a stand', 'tv-stand', 145, 30, 90, { color: '#1f1f1f', tags: 'television' }],
   ],
 }
 
