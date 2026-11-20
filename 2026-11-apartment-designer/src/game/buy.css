@@ -18,7 +18,7 @@
 /* ---------------------------------------------------------------- category tabs */
 
 .buy-tabs {
-  display: flex; gap: 4px; padding: 0 12px 8px; overflow-x: auto; scrollbar-width: none; flex: none;
+  display: flex; gap: 4px; padding: 6px 12px 8px; overflow-x: auto; scrollbar-width: none; flex: none;
   scroll-snap-type: x proximity;
 }
 .buy-tabs::-webkit-scrollbar { display: none; }
@@ -92,7 +92,14 @@
 }
 
 /* Bed sizes as tiny chips inside the card. */
-.buy-presets { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; padding: 0 4px 8px; margin-top: -4px; }
+.buy-presets {
+  display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 3px; padding: 0 6px 2px; margin: -4px 0 8px;
+  overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; scroll-snap-type: x proximity;
+  /* one row that scrolls sideways; the soft fade on the right says there are more */
+  mask-image: linear-gradient(90deg, #000 85%, transparent); -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent);
+}
+.buy-presets::-webkit-scrollbar { display: none; }
+.buy-preset { flex: none; scroll-snap-align: start; white-space: nowrap; }
 .buy-preset {
   border: none; border-radius: 99px; padding: 3px 5px; background: var(--g-paper-2); color: var(--g-ink);
   font: 800 10.5px/1 var(--g-font); cursor: pointer; transition: transform 0.15s var(--g-ease), background 0.15s;

@@ -186,7 +186,7 @@ function RoomMesh({ room, wallMode, selected, doorways }: { room: Room; wallMode
   const { style, palette } = useStyle()
   const floor = useFloorLook(room, floorGeom, style, palette)
   const wallColors = palette?.walls[room.id]
-  const wallBase = palette?.wallColor[room.id] ?? (style === 'toon' ? '#f6ecdf' : style === 'real' ? '#f1e8da' : '#f2f0eb')
+  const wallBase = palette?.wallColor[room.id] ?? (style === 'toon' ? '#f6ecdf' : style === 'real' ? '#ddcfbb' : '#f2f0eb')
   const pick = style === 'toon' || style === 'real'
   const hl = selected && style !== 'classic' ? '#2f6fde' : undefined
 
@@ -304,7 +304,7 @@ function flagBadge(flag: 'error' | 'warning') {
 const noRaycast = () => null
 
 /** A selected piece: an outline in this color, a warm ring on the floor and a small hop. */
-const SELECT_LINE = '#4f8be8'
+const SELECT_LINE = '#e0603a'
 const SELECT_RING = '#e8643c'
 const SELECT_GLOW = '#fff3d6'
 
@@ -455,7 +455,7 @@ function PlacedItem({
           <mesh position={[0, h / 2, 0]} raycast={noRaycast}>
             <boxGeometry args={[item.width + 0.02, h + 0.01, item.depth + 0.02]} />
             <meshBasicMaterial visible={false} />
-            <Edges color={SELECT_LINE} lineWidth={2.4} raycast={noRaycast} />
+            <Edges color={SELECT_LINE} lineWidth={1.8} raycast={noRaycast} />
           </mesh>
         )}
       </Hop>

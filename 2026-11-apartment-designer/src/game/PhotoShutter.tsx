@@ -1,6 +1,7 @@
 // Look mode's photo moment: one shutter button that snaps the 3D view, frames it as a polaroid
 // with the home's name, level and stars, and offers to share or save it.
 import { useEffect, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useStore } from '../store'
 import { useHomeScore } from './Goals'
 import { reduceMotion } from '../motion'
@@ -23,12 +24,12 @@ const roundRect = (g: CanvasRenderingContext2D, x: number, y: number, w: number,
 }
 
 /** Draw the polaroid: the shot cropped to a 4:3-ish window, a paper frame and the caption. */
-export function composePolaroid(shot: HTMLCanvasElement, name: string, level: string, stars: number): HTMLCanvasElement {
+export function composePolaroid(shot: HTMLCanvasElement, name: string, level: string, stars: number, date = new Date()): HTMLCanvasElement {
   const W = 1080
   const pad = 48
   const photoW = W - pad * 2
   const photoH = Math.round(photoW * 0.92)
-  const capH = 210
+  const capH = 262
   const out = document.createElement('canvas')
   out.width = W
   out.height = pad + photoH + capH
@@ -55,17 +56,21 @@ export function composePolaroid(shot: HTMLCanvasElement, name: string, level: st
   while (g.measureText(title).width > photoW && title.length > 4) title = title.slice(0, -2)
   if (title !== name) title = title.trimEnd() + '…'
   g.fillText(title, pad + 4, y0)
+  // the date, hand-written small under the home's name, then the level
+  g.font = `700 34px ${font}`
+  g.fillStyle = '#a89282'
+  g.fillText(date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }), pad + 4, y0 + 52)
   g.font = `700 40px ${font}`
   g.fillStyle = '#8a7465'
-  g.fillText(level, pad + 4, y0 + 66)
+  g.fillText(level, pad + 4, y0 + 112)
   const starTxt = `★ ${stars}`
   g.font = `800 48px ${font}`
   const tw = g.measureText(starTxt).width
   g.fillStyle = '#f3b53c'
-  roundRect(g, W - pad - tw - 44, y0 + 18, tw + 44, 66, 33)
+  roundRect(g, W - pad - tw - 44, y0 + 64, tw + 44, 66, 33)
   g.fill()
   g.fillStyle = '#5a3a08'
-  g.fillText(starTxt, W - pad - tw - 22, y0 + 68)
+  g.fillText(starTxt, W - pad - tw - 22, y0 + 114)
   return out
 }
 
@@ -84,12 +89,19 @@ export function PhotoShutter() {
     if (!canvas) return
     // The renderer keeps its drawing buffer (preserveDrawingBuffer), so the last frame is still there.
     const level = `Level ${score.level.index + 1} · ${score.level.name}`
-    const card = composePolaroid(canvas, name, level, score.stars)
-    if (!reduceMotion) setFlash((f) => f + 1)
-    card.toBlob((blob) => {
-      const url = blob ? URL.createObjectURL(blob) : card.toDataURL('image/png')
-      setSnap({ url, blob, file: fileName(name) })
-    }, 'image/png')
+    // Flash first, on the frame of the tap: composing the polaroid (reading the WebGL canvas back)
+    // is slow on phones, so it waits until the flash has painted. The DOM flash never touches the
+    // 3D canvas, and the renderer keeps its drawing buffer, so the shot is the room as it was.
+    if (!reduceMotion) flushSync(() => setFlash((f) => f + 1))
+    const compose = () => {
+      const card = composePolaroid(canvas, name, level, score.stars)
+      card.toBlob((blob) => {
+        const url = blob ? URL.createObjectURL(blob) : card.toDataURL('image/png')
+        setSnap({ url, blob, file: fileName(name) })
+      }, 'image/png')
+    }
+    if (reduceMotion) compose()
+    else requestAnimationFrame(() => requestAnimationFrame(compose))
   }
 
   const file = snap?.blob ? new File([snap.blob], snap.file, { type: 'image/png' }) : null
