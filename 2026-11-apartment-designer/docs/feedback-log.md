@@ -146,3 +146,44 @@ A usage limit paused the round from 09:00 to 10:50 UTC. 24 findings.
 - Challenges after the top level; room focus; desktop side-panel drawer; cap pieces per design.
 - Playthrough harness: on phones the tabs hide while a piece is selected, so the scripted
   tab switch after placing fails; deselect first.
+
+## Round 5 (2026-11-20, 17:27-18:00 UTC)
+
+Reviewers: interior designer re-check, art director re-check, returning player (two sessions on one profile).
+
+**Fixed**
+- Fairer scoring. Nothing solid can land between the sofa and the TV, and a desk in that spot is a snag. Wall pieces no longer fall back to the middle of the room.
+- Levels are capped at Designer home while any warning shows. Dream home also needs a few bonus stars, and the level thresholds are stricter.
+- A dresser fits at the foot of the sample bed (0.75 m hard minimum). Chairs only count at the table when they can be pulled out, and a table for 4 or more comes off the wall.
+- The reading-corner Next chip now places the lamp beside the armchair, so it no longer loops. Armchairs get spots at the ends of the coffee table.
+- Visuals:
+  - Fixed the Blueprint lines staying on walls and windows after switching style.
+  - The selection outline is coral and thinner.
+  - The tab ring is no longer clipped, and size chips stay on one row.
+  - Toasts are paper pills that replace the Next chip while they show.
+  - Lifelike and Clay are darker.
+  - The Scan style is hidden when the home has no scan.
+  - Bolder photo shutter, instant flash, and a date on the polaroid.
+  - The dining table has plates and a vase, the moving boxes are cardboard, and the Build tiles are terracotta.
+- Saves: a failed save keeps retrying and shows a "storage full, download a backup" toast.
+- Undo no longer switches designs.
+- Your designs: "Try a variation" is the main button, each card shows its stars and level, the best has a crown, copies are named after their source, and the sample's design is "Move-in day".
+- Deleting a home can be undone.
+- Welcome back: shows the home, design and level, stays until you act, and leads with "Try a variation" at the top level. The design name shows in the phone top bar.
+- Harness: the phone run deselects before switching tabs and skips the link card.
+
+**Backlog (next rounds)**
+- The sample house fills only about 45% of the phone screen width. Refit it between the Next pill and the drawer, and refit after sizing.
+- Phone HUD has about 11 floating controls. Merge map and home into one view button, and show undo and redo only after the first edit.
+- The chair-back rule in checks.ts (0.75 m behind the chair) disagrees with the table's 0.75 m pull-out, so the first sample chairs land against the wall and don't count.
+- Lighting:
+  - Table lamps are floor pieces; they should sit on side tables, nightstands and desks.
+  - Add bedside and desk light goals.
+  - No pendant lights yet.
+- Conversation-seating goal. Rugs under the dining table and the bed.
+- Catalog roles: benches, counter stools, shoe cabinet, chaise and L-sectional.
+- After the top level: a mastery set and weekly room challenges.
+- Trash is only restorable right after a delete; add a "Recently deleted" row.
+- Lifelike is still light in the small dollhouse view.
+- Real iPhone finger-drag check.
+- Harness: the first style tap after opening the picker sometimes misses.
