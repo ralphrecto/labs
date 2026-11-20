@@ -818,7 +818,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
                   {b && <line x1={scanDraft.a.x} y1={scanDraft.a.y} x2={b.x} y2={b.y} stroke="#7a3fc2" strokeWidth={2 * px} strokeDasharray={`${5 * px} ${3 * px}`} />}
                   <circle cx={scanDraft.a.x} cy={scanDraft.a.y} r={4 * px} fill="#7a3fc2" />
                   {b && <circle cx={b.x} cy={b.y} r={4 * px} fill="#7a3fc2" />}
-                  {b && (
+                  {b && dist(scanDraft.a, b) > 0.05 && (
                     <text x={(scanDraft.a.x + b.x) / 2} y={(scanDraft.a.y + b.y) / 2 - 7 * px} fontSize={fs * 0.9} textAnchor="middle" fill="#7a3fc2" fontFamily="system-ui, sans-serif" fontWeight={600} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
                       {formatLength(dist(scanDraft.a, b), units)} on the scan
                     </text>

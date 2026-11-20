@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { PlanView } from '../components/PlanView'
-import { formatLength, parseLength } from '../model/units'
+import { formatLength, formatLengths, isWildScale, parseLengthNear, suggestLength } from '../model/units'
 import { calibrate, planToScan, toScanData } from '../scan/align'
 import { SCAN_ACCEPT, isScanFileName } from '../scan/importers'
 import { importScanFile, scanCenter, scanEntry, useScanRuntime } from '../scan/runtime'
@@ -73,7 +73,16 @@ export function Onboarding() {
           />
         }
         {step === 'measure' && scanId && <MeasureStep scanId={scanId} onNext={() => setStep('detect')} />}
-        {step === 'detect' && scanId && <DetectStep scanId={scanId} onNext={() => setStep('done')} />}
+        {step === 'detect' && scanId && (
+          <DetectStep
+            scanId={scanId}
+            onNext={() => setStep('done')}
+            onRemeasure={() => {
+              useScanUI.getState().cancel()
+              setStep('measure')
+            }}
+          />
+        )}
         {step === 'done' && <Done />}
       </main>
     </div>
@@ -209,7 +218,7 @@ function ScanStep({ onImported }: { onImported: (id: string) => void }) {
   }
   const pick = (f: File | undefined) => {
     if (!f) return
-    if (!isScanFileName(f.name)) return setError({ name: f.name, message: 'That isn’t a scan file. Look for one ending in .ply, .spz, .glb or .obj.' })
+    if (!isScanFileName(f.name)) return setError({ name: f.name, message: 'That isn’t a scan file. Export from Scaniverse and pick the file it makes (it ends in .ply, .spz, .glb or .obj).' })
     void run({ name: f.name, type: f.type, blob: f })
   }
 
@@ -226,18 +235,18 @@ function ScanStep({ onImported }: { onImported: (id: string) => void }) {
 
   return (
     <div className="onb-scroll">
-      <Title kicker="Step 1 · Scan" sub="Use the free Scaniverse app on your iPhone. No LiDAR needed.">
+      <Title kicker="Step 1 · Scan" sub="Use the free Scaniverse app on your phone. Any phone camera works.">
         Scan your place
       </Title>
       <ol className="onb-tips">
-        <Tip n={1} art={<TipArtSplat />} title="Choose Splat mode">
-          Start a new scan and pick <b>Splat</b>. It builds your room from the camera alone.
+        <Tip n={1} art={<TipArtSplat />} title="Start a new scan">
+          Pick the <b>Splat</b> option. It’s the one that works with just your camera.
         </Tip>
         <Tip n={2} art={<TipArtWalk />} title="Walk the edges, slowly">
           Phone at chest height, circle the room along the walls. Catch the floor and every corner.
         </Tip>
-        <Tip n={3} art={<TipArtExport />} title="Export PLY or SPZ">
-          Share › Export as <b>PLY</b> or <b>SPZ</b>, then AirDrop it here or Save to Files.
+        <Tip n={3} art={<TipArtExport />} title="Send it here">
+          Tap <b>Share</b>, then <b>Export</b>, and pick the file here (AirDrop or Save to Files works).
         </Tip>
       </ol>
 
@@ -270,7 +279,10 @@ function ScanStep({ onImported }: { onImported: (id: string) => void }) {
         <button className="g-btn primary big onb-wide" onClick={() => fileRef.current?.click()}>
           {error ? 'Try another file' : 'Choose scan file'}
         </button>
-        <span className="onb-formats">PLY · SPZ · GLB · OBJ</span>
+        <details className="onb-formats">
+          <summary>Which files work?</summary>
+          Scaniverse exports ending in .ply or .spz (splats), or .glb or .obj (meshes).
+        </details>
       </div>
       <div className="onb-alt">
         <button className="onb-link" onClick={() => void run({ name: 'Sample living room.ply', type: 'application/octet-stream', blob: new Blob([samplePly() as BlobPart]) })}>
@@ -378,9 +390,19 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
   if (!ref) return null
   const draft = scanDraft?.scanId === scanId ? scanDraft : null
   const cal = calibrate(ref.references)
-  const m = parseLength(text, units)
-  const ok = m != null && m > 0.05
   const fmt = (v: number) => formatLength(v, units)
+  // A bare number is read in whichever unit (m or cm, ft or in) lands nearest the scan length,
+  // and a length that would shrink or grow the home past belief is refused with a suggestion.
+  const scanLen = draft?.b ? Math.hypot(draft.b.x - draft.a.x, draft.b.y - draft.a.y) : 0
+  const typed = text.trim().length > 0
+  const reading = typed ? parseLengthNear(text, units, scanLen) : null
+  const m = reading?.m ?? null
+  const tooShort = m != null && m <= 0.05
+  const wild = m != null && !tooShort && isWildScale(m, scanLen)
+  const ok = m != null && !tooShort && !wild
+  const suggestion = wild || tooShort ? suggestLength(text, scanLen) : null
+  const times = m && scanLen ? (m > scanLen ? m / scanLen : scanLen / m) : 1
+  const timesText = times >= 10 ? `${Math.round(times)}×` : `${times.toFixed(1)}×`
 
   const addLength = () => {
     if (!ok || !draft?.b) return
@@ -407,10 +429,10 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
         </div>
         <div className="onb-units" role="group" aria-label="Units">
           <button className={`g-chip${units === 'metric' ? ' on' : ''}`} onClick={() => useStore.getState().setUnits('metric')}>
-            m
+            meters
           </button>
           <button className={`g-chip${units === 'imperial' ? ' on' : ''}`} onClick={() => useStore.getState().setUnits('imperial')}>
-            ft
+            feet
           </button>
         </div>
       </div>
@@ -429,7 +451,7 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
             }}
           >
             <label htmlFor="onb-length-input">
-              How long is it really? <span>({fmt(Math.hypot(draft.b.x - draft.a.x, draft.b.y - draft.a.y))} on the scan)</span>
+              How long is it really? <span>({fmt(scanLen)} on the scan)</span>
             </label>
             <div className="onb-length-row">
               <input
@@ -438,12 +460,33 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
                 inputMode="decimal"
                 autoComplete="off"
                 value={text}
-                placeholder={units === 'metric' ? '412 cm or 4.12m' : `13' 6"`}
+                placeholder={units === 'metric' ? '4.12 or 412 cm' : `13' 6" or 13.5`}
                 onChange={(e) => setText(e.target.value)}
               />
               <button type="submit" className="g-btn primary" disabled={!ok}>
                 <IconCheck /> Use it
               </button>
+            </div>
+            <div className={`onb-readout${ok ? '' : typed ? ' warn' : ''}`} aria-live="polite">
+              {!typed ? (
+                '\u00a0'
+              ) : m == null ? (
+                <>Hmm, that doesn’t look like a length. Try {units === 'metric' ? '5.2 or 520 cm' : `17' or 17' 6"`}.</>
+              ) : ok ? (
+                <>= {formatLength(m, units, { precise: units === 'metric' && m < 1 })}</>
+              ) : (
+                <>
+                  That would make your home {timesText} {m > scanLen ? 'bigger' : 'smaller'}.{' '}
+                  {suggestion != null ? (
+                    <button type="button" className="onb-fix" onClick={() => setText(formatLength(suggestion.m, suggestion.units))}>
+                      Did you mean {formatLength(suggestion.m, suggestion.units)}
+                      {suggestion.units !== units && ` (${formatLength(suggestion.m, units)})`}?
+                    </button>
+                  ) : (
+                    'Check the number?'
+                  )}
+                </>
+              )}
             </div>
             <button type="button" className="onb-link" onClick={() => useStore.getState().setUI({ scanDraft: null })}>
               Oops, tap again
@@ -459,12 +502,7 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
                   return (
                     <span key={r.id} className={`onb-ref${bad ? ' bad' : ''}`}>
                       <IconRuler /> {fmt(r.length)}
-                      {ref.references.length > 1 && (
-                        <small>
-                          {dev >= 0 ? '+' : ''}
-                          {(dev * 100).toFixed(1)}%
-                        </small>
-                      )}
+                      {bad && <small>disagrees by {Math.max(1, Math.round(Math.abs(dev) * 100))}%</small>}
                       <button aria-label="Remove this length" onClick={() => useStore.getState().deleteScanReference(ref.id, r.id, scanCenter(ref) ?? { x: ref.x, y: ref.y })}>
                         ×
                       </button>
@@ -473,12 +511,14 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
                 })}
               </div>
             )}
-            {cal && <Confidence count={ref.references.length} spread={cal.spread} />}
+            {cal && <Confidence count={ref.references.length} spread={cal.spread} bad={cal.deviations.filter((d) => Math.abs(d) > 0.02).length} />}
             {!cal && isSample && <p className="onb-note">Psst, sample tape measures: {SAMPLE_TRUTH.references.map((r) => `${r.label.toLowerCase()} ${fmt(r.length)}`).join(', ')}.</p>}
             <div className="onb-row">
-              <button className="g-btn ghost" onClick={onNext}>
-                {cal ? 'That’s enough' : 'Skip for now'}
-              </button>
+              {!cal && (
+                <button className="g-btn ghost" onClick={onNext}>
+                  Skip for now
+                </button>
+              )}
               <button className="g-btn primary big" disabled={!cal} onClick={onNext}>
                 Next
               </button>
@@ -490,7 +530,7 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
   )
 }
 
-function Confidence({ count, spread }: { count: number; spread: number }) {
+function Confidence({ count, spread, bad }: { count: number; spread: number; bad: number }) {
   if (count === 1)
     return (
       <p className="onb-conf">
@@ -508,15 +548,18 @@ function Confidence({ count, spread }: { count: number; spread: number }) {
         {'★'.repeat(stars)}
         <i>{'★'.repeat(3 - stars)}</i>
       </span>
-      {good ? `Your lengths agree within ${(spread * 100).toFixed(1)}%. Spot on!` : `These disagree by ${(spread * 100).toFixed(1)}%. Re-measure the red one, or check its ends sit on the walls.`}
+      {good
+        ? 'Your lengths agree. Spot on!'
+        : `${bad > 1 ? 'Some lengths disagree' : 'One length disagrees'} by up to ${Math.round(spread * 100)}%. Re-measure the red ${bad > 1 ? 'ones' : 'one'}, or check its ends sit on the walls.`}
     </p>
   )
 }
 
 // ---------------------------------------------------------------- 4 · find your rooms
 
-function DetectStep({ scanId, onNext }: { scanId: string; onNext: () => void }) {
+function DetectStep({ scanId, onNext, onRemeasure }: { scanId: string; onNext: () => void; onRemeasure: () => void }) {
   const review = useScanUI((s) => s.review)
+  const sized = useStore((s) => ((s.doc.scans ?? []).find((r) => r.id === scanId)?.references.length ?? 0) > 0)
   const units = useStore((s) => s.doc.apartment.units)
   const [phase, setPhase] = useState<'ask' | 'running' | 'done' | 'failed'>(() => (useScanUI.getState().review?.estimate.scanId === scanId ? 'done' : 'ask'))
   const [error, setError] = useState<string | null>(null)
@@ -588,13 +631,23 @@ function DetectStep({ scanId, onNext }: { scanId: string; onNext: () => void }) 
         <div className="onb-shrug" aria-hidden>
           ¯\_(ツ)_/¯
         </div>
-        <Title kicker="Step 3 · Rooms" sub="Your scan is in, at the right size. You can trace the walls over it yourself in Build mode.">
+        <Title
+          kicker="Step 3 · Rooms"
+          sub={
+            sized
+              ? 'Your scan is in, at the size you measured. Trace the walls over it in Build mode, or measure again if the size looks off.'
+              : 'Your scan is in, but not sized yet. Measure one length so it’s true to size, or trace the walls over it yourself in Build mode.'
+          }
+        >
           Couldn’t spot the walls this time
         </Title>
         {error && <p className="onb-note">{error}</p>}
         <div className="onb-actions">
           <button className="g-btn primary big onb-wide" onClick={skip}>
             Trace walls myself later
+          </button>
+          <button className="g-btn ghost onb-wide" onClick={onRemeasure}>
+            <IconRuler /> {sized ? 'Re-measure' : 'Measure a length'}
           </button>
           <button className="onb-link" onClick={() => void run()}>
             Try detecting again
@@ -638,7 +691,7 @@ function DetectStep({ scanId, onNext }: { scanId: string; onNext: () => void }) 
               <span className="onb-found-ico" style={{ background: o.color ?? undefined }} />
               {o.category === 'box' ? 'Something (not sure)' : o.name}
               <small>
-                {formatLength(o.width, units)} × {formatLength(o.depth, units)}
+                {formatLengths([o.width, o.depth], units)}
               </small>
             </span>
             <input type="checkbox" checked={o.accepted} onChange={(e) => useScanUI.getState().setObject(o.id, { accepted: e.target.checked })} />
@@ -732,7 +785,7 @@ function Done() {
         <IconSparkle className="onb-spark s2" />
         <IconSparkle className="onb-spark s3" />
       </div>
-      <Title kicker="Keys are yours" sub="Tap Buy to furnish, Build to change walls.">
+      <Title kicker="Keys are yours" sub="Tap Furnish to add furniture, Build to change walls.">
         Welcome home!
       </Title>
       <div className="onb-actions">
