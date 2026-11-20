@@ -20,7 +20,8 @@ import { floorTexture, Ink, StyleContext, StyleEnvironment, StyleLights, STYLE_S
 import { scanPalette, toonFloor, type ScanPalette } from '../scan/palette'
 import { toScanData } from '../scan/align'
 import { WindowModel, type WindowSpec } from './WindowModel'
-import { routeTo, sharedDoorways, walkStep, wallSegmentsForWalking, type WallSeg } from './walkCollision'
+import { clearOfItems, routeTo, sharedDoorways, walkObstacles, walkStep, walkTarget, wallSegmentsForWalking, type ItemBox, type WallSeg } from './walkCollision'
+import { dragConflictBase, isCleanPose, settleDrop, type Conflicts } from '../game/editActions'
 
 const FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 
@@ -385,18 +386,58 @@ function Hop({ on, children }: { on: boolean; children: ReactNode }) {
   return <group ref={ref}>{children}</group>
 }
 
+const WOBBLE_MS = 420
+/** A gentle side-to-side shake ("no room there") each time `kick` goes up (not with reduced motion). */
+function Wobble({ kick, children }: { kick: number; children: ReactNode }) {
+  const ref = useRef<THREE.Group>(null)
+  const start = useRef(0)
+  useEffect(() => {
+    if (kick && !reduceMotion) start.current = -1
+  }, [kick])
+  useFrame(() => {
+    const g = ref.current
+    if (!g || !start.current) return
+    if (start.current < 0) start.current = performance.now()
+    const t = (performance.now() - start.current) / WOBBLE_MS
+    if (t >= 1) {
+      g.rotation.y = 0
+      start.current = 0
+      return
+    }
+    g.rotation.y = 0.07 * Math.sin(t * Math.PI * 4) * (1 - t)
+  })
+  return <group ref={ref}>{children}</group>
+}
+
+const DRAG_OK = '#4cbf6b'
+const DRAG_BAD = '#e0484e'
+/** While dragging: the piece's footprint on the floor, green where it fits and red where it would collide. */
+function DragFootprint({ w, d, ok }: { w: number; d: number; ok: boolean }) {
+  return (
+    <mesh position={[0, 0.035, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={noRaycast} renderOrder={3}>
+      <planeGeometry args={[w + 0.04, d + 0.04]} />
+      <meshBasicMaterial color={ok ? DRAG_OK : DRAG_BAD} transparent opacity={0.42} depthWrite={false} polygonOffset polygonOffsetFactor={-6} toneMapped={false} />
+    </mesh>
+  )
+}
+
 function PlacedItem({
   item,
   p,
   selected,
   flag,
   onGrab,
+  dragOk,
+  wobble = 0,
 }: {
   item: Item
   p: Placement
   selected: boolean
   flag?: 'error' | 'warning'
   onGrab: (e: ThreeEvent<PointerEvent>, p: Placement) => void
+  /** Set while this piece is being dragged: whether it fits where it is. */
+  dragOk?: boolean
+  wobble?: number
 }) {
   const { style } = useStyle()
   // The classic editor tints problem pieces. In the game a tint reads as red furniture, so the
@@ -406,6 +447,7 @@ function PlacedItem({
   const h = Math.max(item.height, 0.02)
   return (
     <group position={[p.x, 0, p.y]} rotation={[0, -p.rotation, 0]} onPointerDown={(e) => onGrab(e, p)}>
+      <Wobble kick={wobble}>
       <Hop on={selected}>
         <ItemModel item={item} highlight={highlight} />
         {/* Models from a URL draw their own materials, so their outline is the bounding box. */}
@@ -417,6 +459,8 @@ function PlacedItem({
           </mesh>
         )}
       </Hop>
+      </Wobble>
+      {dragOk !== undefined && <DragFootprint w={item.width} d={item.depth} ok={dragOk} />}
       {selected && (tint ? (
         <mesh position={[0, 0.003, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[item.width + 0.06, item.depth + 0.06]} />
@@ -448,6 +492,8 @@ function Scene({
   ground = '#e9e6df',
   inset,
   hideFlags,
+  focusRoom,
+  fullFrame,
 }: {
   wallMode: WallMode
   eye: EyeSpot | null
@@ -455,6 +501,8 @@ function Scene({
   ground?: string
   inset?: SceneInset
   hideFlags?: boolean
+  focusRoom?: string | null
+  fullFrame?: boolean
 }) {
   const { style } = useStyle()
   const stage = STYLE_STAGE[style]
@@ -470,7 +518,11 @@ function Scene({
   // to the scan only while there are no rooms yet. The classic editor keeps its own setting.
   const scanOnly = style === 'classic' ? scan3d === 'scan-only' && hasVisibleScan : style === 'scan' && hasVisibleScan
   const showScan = style === 'classic' ? scan3d !== 'off' : style === 'scan' || !doc.rooms.length
-  const drag = useRef<{ id: string; grab: Vec2; moved: boolean } | null>(null)
+  const drag = useRef<{ id: string; grab: Vec2; moved: boolean; sx: number; sy: number; slop: number; start: Placement; lastClean: Placement; base: Conflicts | null } | null>(null)
+  /** The piece being dragged and whether it fits where it is (drives the floor footprint). */
+  const [dragFx, setDragFx] = useState<{ id: string; ok: boolean } | null>(null)
+  /** Pieces that just bounced back from a bad drop, and how many times (each bump wobbles once). */
+  const [wobbles, setWobbles] = useState<Record<string, number>>({})
 
   const byId = useMemo(() => new Map(doc.items.map((i) => [i.id, i])), [doc.items])
   const placed = layout.placements.flatMap((p) => {
@@ -492,7 +544,10 @@ function Scene({
     s.select({ kind: 'placement', id: p.id })
     const w = hit(e)
     if (!w) return
-    drag.current = { id: p.id, grab: sub(w, v(p.x, p.y)), moved: false }
+    // A finger jitters: it has to travel a few pixels before a tap turns into a drag.
+    const ne = e.nativeEvent
+    const slop = ne.pointerType === 'touch' ? 8 : 3
+    drag.current = { id: p.id, grab: sub(w, v(p.x, p.y)), moved: false, sx: ne.clientX, sy: ne.clientY, slop, start: p, lastClean: p, base: null }
     if (controls.current) controls.current.enabled = false
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
@@ -506,14 +561,22 @@ function Scene({
     const cur = activeLayout(s.doc).placements.find((x) => x.id === d.id)
     const item = cur && byId.get(cur.itemId)
     if (!cur || !item) return
+    const others = placed.filter((x) => x.p.id !== d.id)
+    const solid = others.map((x) => ({ id: x.p.id, item: x.item, p: x.p }))
     if (!d.moved) {
+      if (Math.hypot(e.nativeEvent.clientX - d.sx, e.nativeEvent.clientY - d.sy) < d.slop) return
       s.beginGesture()
       d.moved = true
+      d.base = dragConflictBase(item, cur, solid, s.doc.rooms)
     }
-    const others = placed.filter((x) => x.p.id !== d.id)
+    // The grab point stays under the pointer, so the piece tracks the finger 1:1 on the floor.
     const proposed = { ...cur, x: w.x - d.grab.x, y: w.y - d.grab.y }
     const res = e.altKey ? { placement: proposed } : snapPlacement(item, proposed, s.doc.rooms, others, snap)
-    s.updatePlacement(d.id, { x: res.placement.x, y: res.placement.y, rotation: res.placement.rotation })
+    const next = { ...cur, x: res.placement.x, y: res.placement.y, rotation: res.placement.rotation }
+    const ok = !!d.base && isCleanPose(item, next, solid, s.doc.rooms, d.base)
+    if (ok) d.lastClean = next
+    setDragFx((was) => (was?.id === d.id && was.ok === ok ? was : { id: d.id, ok }))
+    s.updatePlacement(d.id, { x: next.x, y: next.y, rotation: next.rotation })
   }
 
   // A click on the floor (not a drag to orbit) deselects, unless a piece is within a few pixels
@@ -528,10 +591,42 @@ function Scene({
   }
 
   const onUp = () => {
-    if (drag.current?.moved) useStore.getState().endGesture()
+    const d = drag.current
+    if (d?.moved) {
+      // Let go somewhere it doesn't fit: slide to the nearest clean spot close by, or go back to the
+      // last clean one, with a little wobble. Fiddling never costs stars.
+      const s = useStore.getState()
+      const cur = activeLayout(s.doc).placements.find((x) => x.id === d.id)
+      const item = cur && byId.get(cur.itemId)
+      if (cur && item && d.base) {
+        const solid = placed.filter((x) => x.p.id !== d.id).map((x) => ({ id: x.p.id, item: x.item, p: x.p }))
+        const r = settleDrop(item, cur, d.lastClean, solid, s.doc.rooms, d.base)
+        if (r.bounced) {
+          s.updatePlacement(d.id, { x: r.placement.x, y: r.placement.y, rotation: r.placement.rotation })
+          setWobbles((w) => ({ ...w, [d.id]: (w[d.id] ?? 0) + 1 }))
+        }
+      }
+      s.endGesture()
+    }
+    if (dragFx) setDragFx(null)
     drag.current = null
     if (controls.current) controls.current.enabled = true
   }
+
+  // A drop that lands off the furniture (or a lost pointer capture) still ends the drag.
+  const upRef = useRef(onUp)
+  upRef.current = onUp
+  useEffect(() => {
+    const end = () => {
+      if (drag.current) upRef.current()
+    }
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+    return () => {
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+    }
+  }, [])
 
   const entries = useScanRuntime((s) => s.entries)
   const { target, extent } = useMemo(() => {
@@ -548,6 +643,12 @@ function Scene({
   // Walking in: doors open through to the room behind them, and the walls stop you.
   const doorways = useMemo(() => sharedDoorways(doc.rooms), [doc.rooms])
   const walls = useMemo(() => wallSegmentsForWalking(doc.rooms, doorways), [doc.rooms, doorways])
+  // Furniture you walk around (rugs you walk over).
+  const boxes = useMemo<ItemBox[]>(
+    () => placed.filter(({ item }) => !item.floorLevel).map(({ p, item }) => ({ x: p.x, y: p.y, hw: item.width / 2, hd: item.depth / 2, rotation: p.rotation })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layout.placements, doc.items],
+  )
   /** Where a tap-to-walk is heading: the points still to pass, through doorways when needed. */
   const glide = useRef<Vec2[] | null>(null)
   // Lifelike and Clay sit furniture on soft contact shadows. They're added a moment after the style
@@ -613,6 +714,8 @@ function Scene({
             const last = route.length > 1 ? route[route.length - 2] : from
             const len = dist(last, pt)
             if (len > 1) route[route.length - 1] = add(last, scale(norm(sub(pt, last)), len - 0.5))
+            // ...and never inside a piece of furniture: stop about 0.3 m short of it.
+            route[route.length - 1] = walkTarget(route[route.length - 1], last, boxes, walls)
             glide.current = route
           }}
         >
@@ -629,7 +732,7 @@ function Scene({
         </Suspense>
       )}
       {(style === 'classic' || style === 'scan') && <ScanPoints />}
-      <group onPointerMove={onMove} onPointerUp={onUp}>
+      <group onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
         {placed.map(({ p, item }) => (
           <PlacedItem
             key={p.id}
@@ -638,15 +741,17 @@ function Scene({
             selected={selection?.kind === 'placement' && selection.id === p.id}
             flag={hideFlags ? undefined : analysis.flagged.get(p.id)}
             onGrab={onGrab}
+            dragOk={dragFx?.id === p.id ? dragFx.ok : undefined}
+            wobble={wobbles[p.id]}
           />
         ))}
       </group>
-      {!eye && <FitCamera key={(doc.scans ?? []).length} inset={inset} spin={autoRotate} />}
-      <ViewOffset inset={eye ? undefined : inset} />
+      {!eye && <FitCamera key={(doc.scans ?? []).length} inset={inset} spin={autoRotate} focus={focusRoom} full={fullFrame} />}
+      <ViewOffset inset={eye || fullFrame ? undefined : inset} />
       {eye ? (
         <>
           <OrbitControls ref={controls} makeDefault target={eyeTarget(eye)} enableZoom={false} enablePan={false} rotateSpeed={-0.4} />
-          <EyeWalk controls={controls} glide={glide} rooms={doc.rooms} walls={walls} />
+          <EyeWalk controls={controls} glide={glide} rooms={doc.rooms} walls={walls} boxes={boxes} />
         </>
       ) : (
         <OrbitControls ref={controls} target={target} makeDefault maxPolarAngle={Math.PI / 2 - 0.02} minDistance={0.3} maxDistance={60} autoRotate={autoRotate} autoRotateSpeed={0.6} />
@@ -701,6 +806,8 @@ const visibleHeight = (h: number, inset?: SceneInset) => Math.max(h * 0.25, h - 
 
 /** How much of the visible stage the home spans across its tighter direction: about a 10% margin each side. */
 const FILL = 0.8
+/** Look mode: nearly edge to edge. */
+const FULL_FILL = 0.94
 /** The overview looks down from the front, a little to the right. */
 const OVERVIEW_DIR = new THREE.Vector3(0.15, 1.0, 0.75).normalize()
 const UP = new THREE.Vector3(0, 1, 0)
@@ -709,10 +816,11 @@ const UP = new THREE.Vector3(0, 1, 0)
  * The 3D points the overview has to keep in view: every room corner (pushed out by the wall
  * thickness) at the floor and at the ceiling. With no rooms yet, the visible scans' footprints.
  */
-function framePoints(doc: ReturnType<typeof useStore.getState>['doc']): THREE.Vector3[] {
+function framePoints(doc: ReturnType<typeof useStore.getState>['doc'], focus?: string | null): THREE.Vector3[] {
   const out: THREE.Vector3[] = []
   if (doc.rooms.length) {
-    for (const r of doc.rooms) {
+    const only = focus ? doc.rooms.filter((r) => r.id === focus) : []
+    for (const r of only.length ? only : doc.rooms) {
       const t = r.wallThickness
       for (const p of r.polygon)
         for (const [dx, dz] of [[-t, -t], [t, -t], [t, t], [-t, t]])
@@ -738,10 +846,11 @@ function fitView(
   height: number,
   inset?: SceneInset,
   spin = false,
+  fill = FILL,
 ): { target: THREE.Vector3; dist: number } {
   const t = Math.tan((fovDeg * Math.PI) / 360)
-  const ky = t * (visibleHeight(height, inset) / height) * FILL
-  const kx = t * (width / height) * FILL
+  const ky = t * (visibleHeight(height, inset) / height) * fill
+  const kx = t * (width / height) * fill
   const box = new THREE.Box3().setFromPoints(pts)
   let target = new THREE.Vector3((box.min.x + box.max.x) / 2, 0, (box.min.z + box.max.z) / 2)
   const axes = (d: THREE.Vector3) => {
@@ -799,7 +908,7 @@ function fitView(
  * drawer and selection bar come and go (easing over about 300 ms), until the player moves the
  * camera themselves. Recentering (a new Canvas) starts it again.
  */
-function FitCamera({ inset, spin }: { inset?: SceneInset; spin?: boolean }) {
+function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: boolean; focus?: string | null; full?: boolean }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
   const controls = useThree((s) => s.controls) as OrbitControlsImpl | null
@@ -808,6 +917,12 @@ function FitCamera({ inset, spin }: { inset?: SceneInset; spin?: boolean }) {
   const touched = useRef(false)
   const placed = useRef(false)
   const goal = useRef<{ target: THREE.Vector3; dist: number } | null>(null)
+  // Focusing on a room (or back on the whole home) is a deliberate reframe, even after orbiting.
+  const lastFocus = useRef(focus)
+  if (lastFocus.current !== focus) {
+    lastFocus.current = focus
+    touched.current = false
+  }
   useEffect(() => {
     if (!controls) return
     const stop = () => {
@@ -819,10 +934,11 @@ function FitCamera({ inset, spin }: { inset?: SceneInset; spin?: boolean }) {
   }, [controls])
   useLayoutEffect(() => {
     if (touched.current || size.width < 10 || !controls) return
-    const pts = framePoints(useStore.getState().doc)
+    const pts = framePoints(useStore.getState().doc, focus)
     if (!pts.length) return
     const dir = placed.current ? camera.position.clone().sub(controls.target).normalize() : OVERVIEW_DIR.clone()
-    const fit = fitView(pts, dir, camera.fov, size.width, size.height, inset, spin)
+    // Look mode has no drawer: the home fills the whole screen, under the floating buttons.
+    const fit = fitView(pts, dir, camera.fov, size.width, size.height, full ? undefined : inset, spin, full ? FULL_FILL : FILL)
     if (!placed.current) {
       placed.current = true
       controls.target.copy(fit.target)
@@ -832,7 +948,7 @@ function FitCamera({ inset, spin }: { inset?: SceneInset; spin?: boolean }) {
       goal.current = null
     } else goal.current = fit
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [camera, controls, size.width, size.height, inset?.top, inset?.bottom, rooms, scans, spin])
+  }, [camera, controls, size.width, size.height, inset?.top, inset?.bottom, rooms, scans, spin, focus, full])
   // The game's arrow keys follow this view (see viewFrame); the classic editor (no inset) keeps plan axes.
   useEffect(() => () => void (viewFrame.azimuth = null), [])
   useFrame((_, dt) => {
@@ -917,6 +1033,14 @@ export function eyeSpot(doc: ReturnType<typeof useStore.getState>['doc']): EyeSp
   }
   // Too close to the middle to see much (a tiny room): step back from it along the same line.
   if (dist(p, c) < 0.8) p = add(c, scale(dist(p, c) > 1e-3 ? norm(sub(p, c)) : v(0, 1), 0.8))
+  // Never start inside a piece of furniture.
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const boxes = layout.placements.flatMap((pl) => {
+    const it = items.get(pl.itemId)
+    return it && !it.floorLevel ? [{ x: pl.x, y: pl.y, hw: it.width / 2, hd: it.depth / 2, rotation: pl.rotation }] : []
+  })
+  const clear = clearOfItems(p, boxes, c)
+  if (pointInPolygon(clear, room.polygon)) p = clear
   return { pos: [p.x, EYE_HEIGHT, p.y], look: [c.x, LOOK_HEIGHT, c.y] }
 }
 
@@ -931,11 +1055,13 @@ function EyeWalk({
   glide,
   rooms,
   walls,
+  boxes,
 }: {
   controls: RefObject<OrbitControlsImpl | null>
   glide: RefObject<Vec2[] | null>
   rooms: Room[]
   walls: WallSeg[]
+  boxes: ItemBox[]
 }) {
   const stuck = useRef(0)
   const camera = useThree((s) => s.camera)
@@ -1003,7 +1129,7 @@ function EyeWalk({
     }
     if (move.lengthSq() > 0) {
       const from = v(camera.position.x, camera.position.z)
-      let next = walkStep(from, v(move.x, move.z), walls)
+      let next = walkStep(from, v(move.x, move.z), walkObstacles(from, walls, boxes))
       if (box) next = v(THREE.MathUtils.clamp(next.x, box.minX + 0.2, box.maxX - 0.2), THREE.MathUtils.clamp(next.y, box.minY + 0.2, box.maxY - 0.2))
       // A glide that's pressed against a wall and getting nowhere gives up.
       const got = dist(from, next)
@@ -1044,6 +1170,10 @@ export interface SceneControl {
   inset?: SceneInset
   /** Hide the problem outlines and badges (Look mode is for admiring). */
   hideFlags?: boolean
+  /** Frame just this room (a phone furnishing a piece in it); null frames the whole home. */
+  focusRoom?: string | null
+  /** Frame the home on the whole screen, ignoring the HUD inset (Look mode). */
+  fullFrame?: boolean
 }
 
 export function Scene3D({ control }: { control?: SceneControl } = {}) {
@@ -1095,7 +1225,7 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
       >
         <color attach="background" args={[stage.sky ?? control?.sky ?? '#f6f4ef']} />
         <StyleContext.Provider value={styleEnv}>
-          <Scene wallMode={wallMode} eye={eye} autoRotate={control?.autoRotate && !eye} ground={control?.ground} inset={control?.inset} hideFlags={control?.hideFlags} />
+          <Scene wallMode={wallMode} eye={eye} autoRotate={control?.autoRotate && !eye} ground={control?.ground} inset={control?.inset} hideFlags={control?.hideFlags} focusRoom={control?.focusRoom} fullFrame={control?.fullFrame} />
         </StyleContext.Provider>
       </Canvas>
       {control && eye && <EyeHint />}

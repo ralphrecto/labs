@@ -3,7 +3,7 @@
 // turns is one undo step.
 import { add, orientedRect, polygonInsideRoom, polygonsOverlap, rot, v } from '../model/geometry'
 import { snapPlacement } from '../model/snapping'
-import type { Item, Placement, Vec2 } from '../model/types'
+import type { Item, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { viewFrame } from '../three/viewFrame'
 
@@ -36,11 +36,11 @@ function inEditRun(fn: () => void) {
 
 const body = (item: Item, p: Pick<Placement, 'x' | 'y' | 'rotation'>) => orientedRect(v(p.x, p.y), item.width / 2, item.depth / 2, p.rotation)
 
-type Others = { id: string; item: Item; p: Placement }[]
+export type Others = { id: string; item: Item; p: Placement }[]
+export type Conflicts = { outside: boolean; hits: Set<string> }
 
 /** What a pose runs into: out of every room, and which solid pieces it overlaps (rugs never block). */
-function conflicts(item: Item, p: Placement, others: Others): { outside: boolean; hits: Set<string> } {
-  const { rooms } = useStore.getState().doc
+function conflicts(item: Item, p: Placement, others: Others, rooms: Room[] = useStore.getState().doc.rooms): Conflicts {
   const b = body(item, p)
   const outside = rooms.length > 0 && !rooms.some((r) => polygonInsideRoom(b, r.polygon))
   const hits = new Set(item.floorLevel ? [] : others.filter((o) => !o.item.floorLevel && polygonsOverlap(b, body(o.item, o.p))).map((o) => o.id))
@@ -48,8 +48,8 @@ function conflicts(item: Item, p: Placement, others: Others): { outside: boolean
 }
 
 /** A pose is fine if it's no worse than where the piece was: no new wall crossing, no new overlap. */
-const fineAt = (item: Item, p: Placement, others: Others, base: ReturnType<typeof conflicts>) => {
-  const c = conflicts(item, p, others)
+const fineAt = (item: Item, p: Placement, others: Others, base: Conflicts, rooms?: Room[]) => {
+  const c = conflicts(item, p, others, rooms)
   return (!c.outside || base.outside) && [...c.hits].every((h) => base.hits.has(h))
 }
 
@@ -57,10 +57,10 @@ const fineAt = (item: Item, p: Placement, others: Others, base: ReturnType<typeo
  * The closest fine spot to `p` (same rotation) within 2 m, nearest rings first. With `walls`, only
  * staying inside the room counts (the fallback when every nearby spot touches a neighbour).
  */
-function nearestFine(item: Item, p: Placement, others: Others, base: ReturnType<typeof conflicts>, walls = false): Placement | null {
+function nearestFine(item: Item, p: Placement, others: Others, base: Conflicts, walls = false, rooms?: Room[], maxRings = 40): Placement | null {
   const step = 0.05
-  const ok = walls ? (q: Placement) => !conflicts(item, q, others).outside : (q: Placement) => fineAt(item, q, others, base)
-  for (let ring = 1; ring <= 40; ring++) {
+  const ok = walls ? (q: Placement) => !conflicts(item, q, others, rooms).outside : (q: Placement) => fineAt(item, q, others, base, rooms)
+  for (let ring = 1; ring <= maxRings; ring++) {
     let best: Placement | null = null
     let bestD = Infinity
     for (let i = -ring; i <= ring; i++)
@@ -76,6 +76,38 @@ function nearestFine(item: Item, p: Placement, others: Others, base: ReturnType<
     if (best) return best
   }
   return null
+}
+
+/**
+ * Dragging a piece: `start` is where it was picked up. A pose is clean when it's no worse than the
+ * start (no new wall crossing, no new overlap), which is what the floor footprint shows green.
+ */
+export function dragConflictBase(item: Item, start: Placement, others: Others, rooms: Room[]): Conflicts {
+  return conflicts(item, start, others, rooms)
+}
+export function isCleanPose(item: Item, p: Placement, others: Others, rooms: Room[], base: Conflicts): boolean {
+  return fineAt(item, p, others, base, rooms)
+}
+
+/** How far (m) a dropped piece may slide to the nearest clean spot before it goes back instead. */
+export const DROP_SLIDE = 0.35
+
+/**
+ * Where a dragged piece settles when it's let go at `drop`: right there when that's clean; else
+ * the nearest clean spot within DROP_SLIDE (like Rotate's slide); else back to `lastClean`, the
+ * last clean pose the drag passed through. `bounced` says the piece didn't stay where it was dropped.
+ */
+export function settleDrop(
+  item: Item,
+  drop: Placement,
+  lastClean: Placement,
+  others: Others,
+  rooms: Room[],
+  base: Conflicts,
+): { placement: Placement; bounced: boolean } {
+  if (fineAt(item, drop, others, base, rooms)) return { placement: drop, bounced: false }
+  const near = nearestFine(item, drop, others, base, false, rooms, Math.round(DROP_SLIDE / 0.05))
+  return { placement: near ?? lastClean, bounced: true }
 }
 
 const TAU = Math.PI * 2

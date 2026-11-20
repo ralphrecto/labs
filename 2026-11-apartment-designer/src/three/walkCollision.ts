@@ -204,3 +204,97 @@ export function routeTo(from: Vec2, tapped: Vec2, rooms: Room[], segs: WallSeg[]
   }
   return (best as { len: number; path: Vec2[] } | null)?.path ?? [to]
 }
+
+// ---------------------------------------------------------------- furniture
+
+/** How far the eye, and a tap-to-walk target, keep from a piece of furniture (m). */
+export const ITEM_GAP = 0.3
+
+/** A piece's footprint on the floor: centre, half sizes and turn (as in orientedRect). */
+export interface ItemBox {
+  x: number
+  y: number
+  hw: number
+  hd: number
+  rotation: number
+}
+
+/** Where `p` sits in a box's own frame. */
+const toLocal = (p: Vec2, b: ItemBox) => {
+  const c = Math.cos(-b.rotation)
+  const s = Math.sin(-b.rotation)
+  const dx = p.x - b.x
+  const dy = p.y - b.y
+  return v(dx * c - dy * s, dx * s + dy * c)
+}
+const toWorld = (l: Vec2, b: ItemBox) => {
+  const c = Math.cos(b.rotation)
+  const s = Math.sin(b.rotation)
+  return v(b.x + l.x * c - l.y * s, b.y + l.x * s + l.y * c)
+}
+
+/** Whether `p` is within `gap` of the box (inside it counts). */
+export function nearBox(p: Vec2, b: ItemBox, gap = 0): boolean {
+  const l = toLocal(p, b)
+  return Math.abs(l.x) < b.hw + gap && Math.abs(l.y) < b.hd + gap
+}
+
+/** The box's edges pushed out by `gap`, as wall-like segments to slide along. */
+export function boxSegments(b: ItemBox, gap = 0): WallSeg[] {
+  const w = b.hw + gap
+  const d = b.hd + gap
+  const c = [v(-w, -d), v(w, -d), v(w, d), v(-w, d)].map((q) => toWorld(q, b))
+  return c.map((q, i) => [q, c[(i + 1) % 4]] as WallSeg)
+}
+
+/**
+ * Keep a point out of every box (plus `gap`): a spot in or by a piece moves to just outside its
+ * nearest side, preferring the side facing `from` when it's about as close. A few passes settle
+ * spots between two pieces.
+ */
+export function clearOfItems(p: Vec2, boxes: ItemBox[], from?: Vec2, gap = ITEM_GAP): Vec2 {
+  let cur = p
+  for (let pass = 0; pass < 4; pass++) {
+    let moved = false
+    for (const b of boxes) {
+      if (!nearBox(cur, b, gap - 1e-6)) continue
+      const l = toLocal(cur, b)
+      const w = b.hw + gap
+      const d = b.hd + gap
+      const f = from ? toLocal(from, b) : null
+      // Distance to each side; a side facing where you're coming from gets a small head start.
+      const opts = [
+        { q: v(w, l.y), cost: w - l.x - (f && f.x > w ? 0.15 : 0) },
+        { q: v(-w, l.y), cost: w + l.x - (f && f.x < -w ? 0.15 : 0) },
+        { q: v(l.x, d), cost: d - l.y - (f && f.y > d ? 0.15 : 0) },
+        { q: v(l.x, -d), cost: d + l.y - (f && f.y < -d ? 0.15 : 0) },
+      ]
+      opts.sort((a, c) => a.cost - c.cost)
+      cur = toWorld(opts[0].q, b)
+      moved = true
+    }
+    if (!moved) break
+  }
+  return cur
+}
+
+/**
+ * Where a tap-to-walk ends: stop `gap` short of any piece (so you never stand inside the sofa),
+ * and inside the walls. Taking `from` into account, it prefers the side you're walking up to.
+ */
+export function walkTarget(tapped: Vec2, from: Vec2, boxes: ItemBox[], segs: WallSeg[], gap = ITEM_GAP): Vec2 {
+  let p = clearOfItems(tapped, boxes, from, gap)
+  p = pushOut(p, from, segs, WALL_GAP)
+  return clearOfItems(p, boxes, from, gap)
+}
+
+/**
+ * The obstacles for one step of walking: the walls plus the edges of every piece the eye isn't
+ * already standing in (so an eye that starts inside one can still walk out of it).
+ */
+export function walkObstacles(at: Vec2, walls: WallSeg[], boxes: ItemBox[], gap = ITEM_GAP - WALL_GAP): WallSeg[] {
+  const out = walls.slice()
+  // "Standing in" a piece means well inside its halo: an eye resting on the halo edge still collides.
+  for (const b of boxes) if (!nearBox(at, b, gap + WALL_GAP - 0.02)) out.push(...boxSegments(b, gap))
+  return out
+}
