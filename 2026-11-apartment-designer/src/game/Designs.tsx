@@ -59,6 +59,10 @@ function MoreMenu({ label, items }: { label: string; items: MenuItem[] }) {
   const [open, setOpen] = useState(false)
   const [asking, setAsking] = useState<MenuItem | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const close = () => {
+    setOpen(false)
+    setAsking(null)
+  }
   useEffect(() => {
     if (!open) return
     const off = (e: PointerEvent) => {
@@ -67,10 +71,6 @@ function MoreMenu({ label, items }: { label: string; items: MenuItem[] }) {
     document.addEventListener('pointerdown', off)
     return () => document.removeEventListener('pointerdown', off)
   }, [open])
-  const close = () => {
-    setOpen(false)
-    setAsking(null)
-  }
   return (
     <div className="dz-more" ref={ref}>
       <button className="g-icon sm dz-more-btn" aria-label={label} aria-expanded={open} onClick={() => (open ? close() : setOpen(true))}>
