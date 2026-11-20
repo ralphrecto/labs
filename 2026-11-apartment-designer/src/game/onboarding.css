@@ -84,6 +84,22 @@
 .onb-drop { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 16px 14px; border: 3px dashed #dccbb3; border-radius: var(--g-r); background: rgba(255, 250, 242, 0.6); transition: border-color 0.15s, background 0.15s, transform 0.2s var(--g-ease); }
 .onb-drop.over { border-color: var(--g-coral); background: rgba(255, 122, 89, 0.08); transform: scale(1.02); }
 .onb-drop-hint { font-weight: 800; color: var(--g-ink-2); }
+/* Phones can't drag files in: no "Drop your scan here", and a calmer box around the button. */
+@media (pointer: coarse) {
+  .onb-drop-hint { display: none; }
+  .onb-drop { border-style: solid; border-width: 2px; }
+}
+
+/* "No scan yet? Try ours": first thing under the title, so it's in view on a phone. */
+.onb-try { display: flex; align-items: center; gap: 12px; width: 100%; margin: 14px 0 0; padding: 12px 14px; border: none; text-align: left; font: inherit; color: var(--g-ink); cursor: pointer; box-shadow: 0 0 0 2px var(--g-sun), var(--g-shadow-sm); animation: g-pop 0.4s var(--g-ease) both; transition: transform 0.15s var(--g-ease); }
+.onb-try:hover:not(:disabled) { transform: translateY(-1px); background: var(--g-paper); border: none; }
+.onb-try:active { transform: scale(0.98); }
+.onb-try-ico { width: 40px; height: 40px; flex: none; border-radius: 12px; background: var(--g-sun); color: #fff; display: inline-flex; align-items: center; justify-content: center; }
+.onb-try-ico svg { width: 24px; height: 24px; }
+.onb-try-text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.onb-try-text b { font-weight: 900; font-size: 16px; }
+.onb-try-text small { font-weight: 700; font-size: 13px; color: var(--g-ink-2); }
+.onb-try-go { font-weight: 900; font-size: 26px; line-height: 1; color: var(--g-coral-dk); }
 .onb-formats { font-size: 13px; font-weight: 700; color: var(--g-ink-2); text-align: center; max-width: 320px; }
 .onb-formats summary { cursor: pointer; font-weight: 800; color: #b5a48e; list-style-position: inside; }
 .onb-formats[open] summary { margin-bottom: 4px; }
@@ -138,6 +154,23 @@
 .onb-stars { color: var(--g-sun); font-size: 20px; letter-spacing: 1px; flex: none; text-shadow: 0 1px 0 #e6a52c; }
 .onb-stars i { font-style: normal; color: #e3d6c3; text-shadow: none; }
 
+/* ---- sample scan: measured for you */
+.onb-auto { gap: 18px; }
+.onb-auto .onb-title h1 { font-size: 28px; }
+.onb-auto-len { font-weight: 900; color: var(--g-ink); font-variant-numeric: tabular-nums; }
+.onb-tape { position: relative; width: min(280px, 80vw); height: 70px; }
+.onb-tape-wall { position: absolute; left: 0; right: 0; bottom: 8px; height: 8px; border-radius: 4px; background: #d9c7ad; }
+.onb-tape-strip { position: absolute; left: 0; bottom: 18px; height: 14px; width: 100%; border-radius: 3px; transform-origin: left center; background: repeating-linear-gradient(90deg, var(--g-ink) 0 2px, transparent 2px 14px) bottom / 100% 6px no-repeat, var(--g-sun); box-shadow: 0 2px 0 #e6a52c; animation: onb-tape 0.9s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+.onb-tape-case { position: absolute; left: -10px; bottom: 12px; width: 42px; height: 42px; border-radius: 12px; background: var(--g-coral); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: var(--g-shadow-sm); }
+.onb-tape-case svg { width: 24px; height: 24px; }
+.onb-tape.landed .onb-tape-strip { animation: onb-tape 0.9s cubic-bezier(0.2, 0.7, 0.3, 1) both, onb-tape-land 0.35s var(--g-ease) 0.9s; }
+@keyframes onb-tape { from { transform: scaleX(0.04); } }
+@keyframes onb-tape-land { 50% { transform: scaleY(1.35); } }
+.onb-auto-stars { justify-content: center; margin: 0; min-height: 28px; }
+.onb-auto-stars .onb-stars { opacity: 0.25; transition: opacity 0.2s; }
+.onb-auto-stars.on .onb-stars { opacity: 1; animation: g-pop 0.4s var(--g-ease); }
+@media (prefers-reduced-motion: reduce) { .onb-tape-strip, .onb-tape.landed .onb-tape-strip { animation: none; } }
+
 /* ---- detect */
 .onb-detecting { position: relative; width: 200px; }
 .onb-detecting > svg:first-child { width: 100%; height: auto; display: block; }
@@ -175,6 +208,11 @@
 .onb-confetti i:nth-child(3n) { width: 11px; height: 11px; border-radius: 50%; }
 @keyframes onb-fall { 0% { opacity: 1; translate: 0 0; rotate: 0deg; } 100% { opacity: 0; translate: 30px 105vh; rotate: 540deg; } }
 .onb-done .onb-title h1 { font-size: 40px; }
+/* The first goal, so the game starts with something to do. */
+.onb-goal { display: flex; align-items: center; gap: 12px; padding: 12px 18px; text-align: left; font-weight: 900; font-size: 18px; animation: g-rise 0.4s var(--g-ease) 0.3s both; }
+.onb-goal > span:last-child { display: flex; flex-direction: column; }
+.onb-goal small { font-size: 12px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--g-coral-dk); }
+.onb-goal-star { width: 38px; height: 38px; flex: none; border-radius: 50%; background: var(--g-sun); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 22px; text-shadow: 0 1px 0 #e6a52c; }
 
 @media (min-width: 700px) {
   .onb-stage { padding-top: 24px; padding-bottom: 32px; }

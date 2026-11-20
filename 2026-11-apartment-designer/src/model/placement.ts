@@ -46,6 +46,10 @@ export const WALL_BACKED = new Set(['bed', 'wardrobe', 'dresser', 'desk', 'sofa'
 const CENTER_PIECES = new Set(['dining-table', 'coffee-table', 'rug', 'ottoman'])
 /** Pieces that belong between a sofa and the TV. */
 const VIEW_OK = new Set(['coffee-table', 'ottoman', 'rug', 'tv-stand', 'side-table', 'floor-lamp', 'plant', 'sofa'])
+/** Pieces that only go in a bedroom when the home has one (never next to the sofa). */
+export const BEDROOM_ONLY = new Set(['bed', 'nightstand', 'wardrobe'])
+/** Pieces whose front must stay open: someone gets in, or doors and drawers swing out. */
+const FRONT_OPEN = new Set(['bed', 'wardrobe', 'dresser'])
 /** Small things that may go in a bathroom or hall. */
 const UTILITY_OK = new Set(['plant', 'box', 'rug'])
 
@@ -106,8 +110,12 @@ interface Cand {
 export const facing = (d: Vec2) => Math.atan2(-d.x, d.y)
 const normAngle = (a: number) => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)
 
+const isBedroom = (r: Room) => BEDROOM.test(r.name) && !UTILITY_ROOM.test(r.name) && polygonArea(r.polygon) >= MIN_ROOM_AREA
+
 /** Room suitability for a category: >0 good, 0 neutral, -Infinity not allowed. */
 export function roomAffinity(room: Room, category: string, allRooms: Room[]): number {
+  // A bed, nightstand or wardrobe never lands in the living room when there's a bedroom for it.
+  if (BEDROOM_ONLY.has(category) && allRooms.some(isBedroom) && !isBedroom(room)) return -Infinity
   const small = polygonArea(room.polygon) < MIN_ROOM_AREA
   if ((small || UTILITY_ROOM.test(room.name)) && !UTILITY_OK.has(category)) {
     // Only when there is nowhere else (a plan made of one "Hall").
@@ -173,6 +181,7 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
   const hw = item.width / 2
   const hd = item.depth / 2
   const solid = !item.floorLevel
+  const frontZone = FRONT_OPEN.has(cat) ? Math.min(item.clearance?.front ?? 0, 0.6) : 0
   const affinity = new Map(rooms.map((r) => [r.id, roomAffinity(r, cat, rooms)]))
   const cands: Cand[] = []
 
@@ -187,6 +196,12 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     if (solid) {
       for (const o of solids) if (convexOverlap(body, o.body, 0.002)) return null
       for (const k of keepOut) if (convexOverlap(body, k, 0.005)) return null
+      // A bed or wardrobe with furniture right up against its front reads as jammed in (and
+      // looks overlapping in 3D): its front clearance must be clear of other pieces.
+      if (frontZone) {
+        const fz = orientedRect(c, hw, frontZone / 2, rotation, v(0, hd + frontZone / 2))
+        for (const o of solids) if (convexOverlap(fz, o.body, 0.005) && !sideCompanion(cat, 'front', o.item.category)) return null
+      }
     } else {
       for (const o of rugs) if (convexOverlap(body, o.body, 0.01)) return null
     }
@@ -339,6 +354,14 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     }
   }
 
+  if (!cands.length && BEDROOM_ONLY.has(cat) && rooms.some(isBedroom)) {
+    const many = rooms.filter(isBedroom).length > 1
+    const where = many ? "The bedrooms are full" : "The bedroom's full"
+    return {
+      ok: false,
+      reason: cat === 'bed' ? `${where}. Make some room there, or remove the old bed to swap it.` : `${where}. Make some room there for the ${item.name.toLowerCase()}.`,
+    }
+  }
   if (!cands.length)
     return {
       ok: false,

@@ -4,7 +4,7 @@ import { formatLength, formatLengths, isWildScale, parseLengthNear, suggestLengt
 import { calibrate, planToScan, toScanData } from '../scan/align'
 import { SCAN_ACCEPT, isScanFileName } from '../scan/importers'
 import { importScanFile, scanCenter, scanEntry, useScanRuntime } from '../scan/runtime'
-import { SAMPLE_TRUTH, samplePly } from '../scan/sampleScan'
+import { SAMPLE_TRUTH, sampleFilePoint, samplePly } from '../scan/sampleScan'
 import { placementShift } from '../scan/apply'
 import { reviewChoice, useScanUI, type ReviewObject } from '../scan/scanUi'
 import { loadSample, newEmptyDoc, useStore } from '../store'
@@ -40,6 +40,8 @@ function finish() {
 export function Onboarding() {
   const [step, setStep] = useState<Step>('welcome')
   const [scanId, setScanId] = useState<string | null>(null)
+  // The sample scan comes with its tape lengths, so the player doesn't measure it by hand.
+  const [isSample, setIsSample] = useState(false)
   const idx = STEPS.indexOf(step)
 
   const back = () => {
@@ -66,13 +68,14 @@ export function Onboarding() {
         {step === 'welcome' && <Welcome onScan={() => setStep('scan')} />}
         {step === 'scan' &&
           <ScanStep
-            onImported={(id) => {
+            onImported={(id, sample) => {
               setScanId(id)
+              setIsSample(sample)
               setStep('measure')
             }}
           />
         }
-        {step === 'measure' && scanId && <MeasureStep scanId={scanId} onNext={() => setStep('detect')} />}
+        {step === 'measure' && scanId && (isSample ? <SampleMeasured scanId={scanId} onNext={() => setStep('detect')} /> : <MeasureStep scanId={scanId} onNext={() => setStep('detect')} />)}
         {step === 'detect' && scanId && (
           <DetectStep
             scanId={scanId}
@@ -187,7 +190,7 @@ function HouseArt({ small }: { small?: boolean }) {
 
 // ---------------------------------------------------------------- 2 · how to scan + import
 
-function ScanStep({ onImported }: { onImported: (id: string) => void }) {
+function ScanStep({ onImported }: { onImported: (id: string, sample: boolean) => void }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<{ name: string; message: string } | null>(null)
   const [over, setOver] = useState(false)
@@ -202,7 +205,7 @@ function ScanStep({ onImported }: { onImported: (id: string) => void }) {
   }, [])
   const progress = useScanRuntime((s) => Object.values(s.entries).find((e) => e.status === 'loading')?.message)
 
-  const run = async (file: { name: string; type?: string; blob: Blob }) => {
+  const run = async (file: { name: string; type?: string; blob: Blob }, sample = false) => {
     setError(null)
     setBusy(file.name)
     try {
@@ -210,7 +213,7 @@ function ScanStep({ onImported }: { onImported: (id: string) => void }) {
       newEmptyDoc()
       const [ref] = await Promise.all([importScanFile(file, placeNextToRooms), wait(900)])
       useStore.getState().addScan(ref)
-      if (alive.current) onImported(ref.id)
+      if (alive.current) onImported(ref.id, sample)
     } catch (err) {
       setError({ name: file.name, message: errText(err) })
       setBusy(null)
@@ -238,6 +241,21 @@ function ScanStep({ onImported }: { onImported: (id: string) => void }) {
       <Title kicker="Step 1 · Scan" sub="Use the free Scaniverse app on your phone. Any phone camera works.">
         Scan your place
       </Title>
+      <button
+        className="onb-try g-card"
+        onClick={() => void run({ name: 'Sample living room.ply', type: 'application/octet-stream', blob: new Blob([samplePly() as BlobPart]) }, true)}
+      >
+        <span className="onb-try-ico" aria-hidden>
+          <IconSparkle />
+        </span>
+        <span className="onb-try-text">
+          <b>No scan yet? Try ours</b>
+          <small>A sample living room, already measured</small>
+        </span>
+        <span className="onb-try-go" aria-hidden>
+          ›
+        </span>
+      </button>
       <ol className="onb-tips">
         <Tip n={1} art={<TipArtSplat />} title="Start a new scan">
           Pick the <b>Splat</b> option. It’s the one that works with just your camera.
@@ -283,11 +301,6 @@ function ScanStep({ onImported }: { onImported: (id: string) => void }) {
           <summary>Which files work?</summary>
           Scaniverse exports ending in .ply or .spz (splats), or .glb or .obj (meshes).
         </details>
-      </div>
-      <div className="onb-alt">
-        <button className="onb-link" onClick={() => void run({ name: 'Sample living room.ply', type: 'application/octet-stream', blob: new Blob([samplePly() as BlobPart]) })}>
-          No scan handy? Use our sample scan
-        </button>
       </div>
       <input
         ref={fileRef}
@@ -526,6 +539,72 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * The sample scan's tape lengths are known, so measuring it would be homework: put them in and
+ * show a quick tape-measure moment, then move on by itself.
+ */
+function SampleMeasured({ scanId, onNext }: { scanId: string; onNext: () => void }) {
+  const units = useStore((s) => s.doc.apartment.units)
+  const sized = useStore((s) => ((s.doc.scans ?? []).find((r) => r.id === scanId)?.references.length ?? 0) > 0)
+  const long = SAMPLE_TRUTH.references[0]
+  const [shown, setShown] = useState(0)
+  const [landed, setLanded] = useState(false)
+
+  useEffect(() => {
+    const s = useStore.getState()
+    const ref = (s.doc.scans ?? []).find((r) => r.id === scanId)
+    if (ref && !ref.references.length) {
+      const anchor = scanCenter(ref) ?? { x: ref.x, y: ref.y }
+      for (const r of SAMPLE_TRUTH.references) {
+        const cur = (useStore.getState().doc.scans ?? []).find((x) => x.id === scanId)!
+        useStore.getState().addScanReference(cur.id, { a: sampleFilePoint(r.a), b: sampleFilePoint(r.b), length: r.length }, anchor)
+      }
+    }
+    // Count the tape up to the long wall, then let it land and carry on.
+    const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    const run = reduce ? 1 : 900
+    const t0 = performance.now()
+    let raf = 0
+    const tick = () => {
+      const k = Math.min(1, (performance.now() - t0) / run)
+      setShown(long.length * (1 - (1 - k) ** 3))
+      if (k < 1) raf = requestAnimationFrame(tick)
+      else setLanded(true)
+    }
+    raf = requestAnimationFrame(tick)
+    const go = setTimeout(onNext, run + 1700)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(go)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanId])
+
+  return (
+    <div className="onb-center onb-auto">
+      <div className={`onb-tape${landed ? ' landed' : ''}`} aria-hidden>
+        <div className="onb-tape-wall" />
+        <div className="onb-tape-strip" />
+        <div className="onb-tape-case">
+          <IconRuler />
+        </div>
+      </div>
+      <Title kicker="Step 2 · Size it up" sub={<span className="onb-auto-len">{long.label}: {formatLength(landed ? long.length : shown, units)}</span>}>
+        We measured this one for you
+      </Title>
+      <p className={`onb-conf good onb-auto-stars${landed ? ' on' : ''}`} aria-live="polite">
+        <span className="onb-stars" aria-label="3 of 3 stars">
+          ★★★
+        </span>
+        {landed ? 'True to size. Spot on!' : '\u00a0'}
+      </p>
+      <button className="g-btn primary big onb-wide" onClick={onNext} disabled={!sized}>
+        Next
+      </button>
     </div>
   )
 }
@@ -785,9 +864,16 @@ function Done() {
         <IconSparkle className="onb-spark s2" />
         <IconSparkle className="onb-spark s3" />
       </div>
-      <Title kicker="Keys are yours" sub="Tap Furnish to add furniture, Build to change walls.">
-        Welcome home!
-      </Title>
+      <Title kicker="Keys are yours">Welcome home!</Title>
+      <div className="onb-goal g-card">
+        <span className="onb-goal-star" aria-hidden>
+          ★
+        </span>
+        <span>
+          <small>First up</small>
+          Make the living room cozy
+        </span>
+      </div>
       <div className="onb-actions">
         <button className="g-btn primary big onb-wide" onClick={finish}>
           Start designing

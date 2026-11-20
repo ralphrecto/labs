@@ -59,6 +59,44 @@ describe('findDrop', () => {
     } else expect(reason).toMatch(/No free spot/)
   })
 
+  it('never puts a bed in the living room of the sample home (round 2 regression)', () => {
+    // The sample as shipped: a queen bed already fills the bedroom. A player adds a sofa, then
+    // taps Bed in the Bedroom tab. It used to wedge the bed between the TV stand and the coffee
+    // table in the living room, 4 cm from each, blocking the sofa.
+    const d = sampleDoc()
+    const sofa = drop(d, 'sofa')
+    expect(sofa.p).not.toBeNull()
+    const before = layoutOf(d).placements.length
+    const bed = drop(d, 'bed')
+    expect(bed.p).toBeNull()
+    expect(bed.reason).toMatch(/bedroom's full/i)
+    expect(layoutOf(d).placements.length).toBe(before)
+    for (const c of ['nightstand', 'wardrobe']) {
+      const r = drop(d, c)
+      if (r.p) expect(r.roomName).toBe('Bedroom')
+      else expect(r.reason).toMatch(/bedroom's full/i)
+    }
+  })
+
+  it('puts a bed in the sample bedroom, clear of everything, once the old one is gone', () => {
+    const d = sampleDoc()
+    const l = layoutOf(d)
+    const old = d.items.find((i) => i.category === 'bed')!
+    l.placements = l.placements.filter((p) => p.itemId !== old.id)
+    const { item, p, roomName } = drop(d, 'bed')
+    expect(p).not.toBeNull()
+    expect(roomName).toBe('Bedroom')
+    const body = footprint(item, p!)
+    for (const q of l.placements) {
+      if (q === p) continue
+      const other = d.items.find((i) => i.id === q.itemId)!
+      if (other.floorLevel) continue
+      expect(convexOverlap(body, footprint(other, q), 0.002), other.name).toBe(false)
+    }
+    expect(checkLayout(d, l).filter((i) => i.severity === 'error')).toEqual([])
+    expect(checkLayout(d, l).filter((i) => /^Bed needs .* in front/.test(i.message))).toEqual([])
+  })
+
   it('furnishes a one-bedroom with no errors and sensible rooms', () => {
     const d = emptySample()
     const rooms: Record<string, string> = {}
