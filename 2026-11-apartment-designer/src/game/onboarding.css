@@ -223,3 +223,9 @@
   .onb-house { width: 170px; }
   .onb-welcome { gap: 18px; }
 }
+
+/* Ceiling sanity check after sizing */
+.onb-ceiling { margin: 10px auto 0; max-width: 34em; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 10px; padding: 8px 14px; border-radius: 14px; background: color-mix(in srgb, var(--g-sun) 22%, var(--g-paper)); color: var(--g-ink); font-size: 13px; font-weight: 700; text-align: center; }
+.onb-ceiling .onb-fix { display: inline-flex; align-items: center; gap: 4px; }
+.onb-ceiling .onb-fix svg { width: 14px; height: 14px; }
+.onb-back-home { margin-top: 4px; font-size: 13px; opacity: 0.85; }

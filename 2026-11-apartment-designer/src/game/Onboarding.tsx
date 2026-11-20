@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { PlanView } from '../components/PlanView'
 import { formatLength, formatLengths, isWildScale, parseLengthNear, suggestLength } from '../model/units'
 import { calibrate, planToScan, toScanData } from '../scan/align'
@@ -7,7 +7,10 @@ import { importScanFile, scanCenter, scanEntry, useScanRuntime } from '../scan/r
 import { SAMPLE_TRUTH, sampleFilePoint, samplePly } from '../scan/sampleScan'
 import { placementShift } from '../scan/apply'
 import { reviewChoice, useScanUI, type ReviewObject } from '../scan/scanUi'
-import { loadSample, newEmptyDoc, useStore } from '../store'
+import { useAnalysis } from '../analysis'
+import { activeLayout, loadSample, newEmptyDoc, switchHome, useStore } from '../store'
+import { listHomes } from '../storage'
+import { nextGoal, scoreHome } from './goals'
 import { useGame } from './gameStore'
 import { IconCheck, IconHome, IconRuler, IconScan, IconSparkle } from './icons'
 import './onboarding.css'
@@ -131,6 +134,12 @@ function Title({ kicker, children, sub }: { kicker?: string; children: ReactNode
 // ---------------------------------------------------------------- 1 · welcome
 
 function Welcome({ onScan }: { onScan: () => void }) {
+  // Came here from "Move into a new place"? Offer a quiet way back to the home that's still open.
+  const [back] = useState(() => {
+    const d = useStore.getState().doc
+    const saved = listHomes().some((h) => h.id === d.apartment.id)
+    return saved && (d.rooms.length > 0 || d.items.length > 0) ? { id: d.apartment.id, name: d.apartment.name || 'my home' } : null
+  })
   return (
     <div className="onb-welcome">
       <HouseArt />
@@ -147,7 +156,7 @@ function Welcome({ onScan }: { onScan: () => void }) {
               finish()
             }}
           >
-            Try a sample home
+            Explore a furnished home
           </button>
           <span aria-hidden>·</span>
           <button
@@ -161,6 +170,16 @@ function Welcome({ onScan }: { onScan: () => void }) {
             Start with an empty room
           </button>
         </div>
+        {back && (
+          <button
+            className="onb-link onb-back-home"
+            onClick={() => {
+              if (switchHome(back.id)) finish()
+            }}
+          >
+            Back to {back.name}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -525,6 +544,16 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
               </div>
             )}
             {cal && <Confidence count={ref.references.length} spread={cal.spread} bad={cal.deviations.filter((d) => Math.abs(d) > 0.02).length} />}
+            {cal && (
+              <CeilingCheck
+                height={scanCeiling(ref)}
+                onRemeasure={() => {
+                  const s = useStore.getState()
+                  for (const r of ref.references) s.deleteScanReference(ref.id, r.id, scanCenter(ref) ?? { x: ref.x, y: ref.y })
+                }}
+                second={ref.references.length === 1}
+              />
+            )}
             {!cal && isSample && <p className="onb-note">Psst, sample tape measures: {SAMPLE_TRUTH.references.map((r) => `${r.label.toLowerCase()} ${fmt(r.length)}`).join(', ')}.</p>}
             <div className="onb-row">
               {!cal && (
@@ -606,6 +635,30 @@ function SampleMeasured({ scanId, onNext }: { scanId: string; onNext: () => void
         Next
       </button>
     </div>
+  )
+}
+
+/** The scan's ceiling height in meters at its current size, when the import found a ceiling. */
+function scanCeiling(ref: { ceiling?: number; floor: number; scale: number }) {
+  return ref.ceiling != null ? ref.scale * (ref.ceiling - ref.floor) : null
+}
+
+/** Most ceilings are 2.25–2.75 m: one far outside that hints the tape length was off. */
+export const ceilingLooksOff = (h: number | null | undefined) => h != null && (h < 2.25 || h > 2.75)
+
+function CeilingCheck({ height, onRemeasure, second }: { height: number | null | undefined; onRemeasure: () => void; second?: boolean }) {
+  const units = useStore((s) => s.doc.apartment.units)
+  if (!ceilingLooksOff(height)) return null
+  return (
+    <p className="onb-ceiling" role="status">
+      <span>
+        Your ceiling comes out at {formatLength(height!, units)}. Most are about {units === 'metric' ? '2.4–2.6 m' : `${formatLength(2.4, units)}–${formatLength(2.6, units)}`}.
+        {second && ' Check both ends sit in the corners, or add a second length to double-check.'}
+      </span>
+      <button type="button" className="onb-fix" onClick={onRemeasure}>
+        <IconRuler /> Re-measure?
+      </button>
+    </p>
   )
 }
 
@@ -740,6 +793,7 @@ function DetectStep({ scanId, onNext, onRemeasure }: { scanId: string; onNext: (
   const room = estimate.room
   const roomOn = review.includeRoom && !!room
   const nothing = !roomOn && accepted.length === 0
+  const scanRef = (useStore.getState().doc.scans ?? []).find((r) => r.id === scanId)
 
   return (
     <div className="onb-detect">
@@ -749,6 +803,7 @@ function DetectStep({ scanId, onNext, onRemeasure }: { scanId: string; onNext: (
       <div className="onb-preview g-card">
         <PlanView />
       </div>
+      <CeilingCheck height={(scanRef && scanCeiling(scanRef)) ?? (roomOn ? room.ceilingHeight : null)} onRemeasure={onRemeasure} />
       <div className="onb-found g-card">
         {room && (
           <label className="g-toggle onb-found-row room">
@@ -842,6 +897,11 @@ function DetectArt() {
 const CONFETTI = ['var(--g-coral)', 'var(--g-sun)', 'var(--g-sage)', 'var(--g-sky)', 'var(--g-plum)']
 
 function Done() {
+  // The same goal the Next chip shows once the home opens.
+  const doc = useStore((s) => s.doc)
+  const layout = activeLayout(doc)
+  const analysis = useAnalysis(doc, layout)
+  const first = useMemo(() => nextGoal(scoreHome(doc, layout, analysis)), [doc, layout, analysis])
   return (
     <div className="onb-center onb-done">
       <div className="onb-confetti" aria-hidden>
@@ -871,7 +931,7 @@ function Done() {
         </span>
         <span>
           <small>First up</small>
-          Make the living room cozy
+          {first?.title ?? 'Make the living room cozy'}
         </span>
       </div>
       <div className="onb-actions">
