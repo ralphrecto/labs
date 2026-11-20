@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } 
 import { CATALOG, itemFromCatalog, type CatalogEntry } from '../model/catalog'
 import { checkLayout } from '../model/checks'
 import { centroid } from '../model/geometry'
-import { findDrop, type DropResult } from '../model/placement'
+import { findDrop, nookTarget, type DropResult } from '../model/placement'
 import { STARTER_CATALOG } from '../model/starterCatalog'
 import { uid } from '../model/sample'
 import type { Doc, Item, Room, Units } from '../model/types'
@@ -96,6 +96,9 @@ function dropIn(doc: Doc, item: Item, room: Room): DropResult | null {
   return issues.some((i) => i.severity !== 'info' && i.placementIds.includes(id)) ? null : only
 }
 
+/** Pieces the Next chip puts beside the piece its goal is about (a reading lamp by the armchair). */
+const BESIDE = new Set(['floor-lamp', 'side-table'])
+
 const article = (name: string) => (/^[aeiou]/i.test(name) ? 'an' : 'a')
 
 /** `top` rides just above the drawer: the selected piece's actions, so the drawer can stay open. */
@@ -145,11 +148,15 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     // A goal about one room ("Nothing in the Bathroom yet") puts the piece it pointed at in that room, if it fits there.
     const room = hint?.category === entry.category && hint.roomId ? st.doc.rooms.find((r) => r.id === hint.roomId) : undefined
     const there = room ? dropIn(st.doc, item, room) : null
+    // A goal about one piece ("A cozy reading corner") puts the lamp beside that piece (the armchair).
+    const nearId = !there?.ok && hint?.category === entry.category ? (hint as { near?: string }).near ?? (BESIDE.has(entry.category) ? nookTarget(st.doc, activeLayout(st.doc)) : undefined) : undefined
+    const beside = nearId ? findDrop(st.doc, activeLayout(st.doc), item, { nextTo: nearId }) : null
+    const spot = there?.ok ? there.spot : beside?.ok ? beside.spot : undefined
     // Otherwise the item goes to a free spot that suits it and is selected; when nothing fits, the store toasts why.
-    let res = there?.ok ? st.addItem(item, there.spot) : st.addItem(item)
-    if (res.ok && there?.ok) {
-      if (Math.abs(there.spot.rotation) > 1e-3) st.updatePlacement(res.placementId, { rotation: there.spot.rotation })
-      res = { ...res, roomName: room!.name }
+    let res = spot ? st.addItem(item, spot) : st.addItem(item)
+    if (res.ok && spot) {
+      if (Math.abs(spot.rotation) > 1e-3) st.updatePlacement(res.placementId, { rotation: spot.rotation })
+      res = { ...res, roomName: there?.ok ? room!.name : spot.roomName }
     }
     if (!res.ok) return
     if (hint) useGame.getState().setBuyHint(null)

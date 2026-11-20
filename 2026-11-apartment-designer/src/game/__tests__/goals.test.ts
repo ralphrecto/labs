@@ -4,7 +4,7 @@ import { catalogEntry, itemFromCatalog } from '../../model/catalog'
 import { emptyDoc, rectRoom, sampleDoc } from '../../model/sample'
 import type { Doc, Item, Placement } from '../../model/types'
 import { findDrop } from '../../model/placement'
-import { bankableLevel, bestLevelKey, inferEntrance, levelThresholds, nextGoal, scoreHome, SNAG_LEVEL_CAP, withBestLevel, type Goal } from '../goals'
+import { bankableLevel, bestLevelKey, DREAM_BONUS_STARS, inferEntrance, LEVEL_FRACTIONS, LEVELS, levelThresholds, nextGoal, scoreHome, SNAG_LEVEL_CAP, WARNING_LEVEL_CAP, withBestLevel, type Goal } from '../goals'
 
 const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
 const score = (d: Doc) => scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)))
@@ -107,9 +107,13 @@ describe('scoreHome', () => {
     const d = bedroomDoc()
     d.rooms[0].name = 'Living room'
     const sofa = place(d, 'sofa', 2, 3.5, Math.PI) // faces -y, front edge at y = 3.04
-    const t = place(d, 'coffee-table', 2, 3.04 - 0.4 - 0.3)
+    const t = place(d, 'coffee-table', 2, 3.04 - 0.47 - 0.3)
     const g = () => goal(d, (g) => g.id === `coffee:${sofa.id}`)!
     expect(g().done).toBe(true)
+    // Inside the sofa's 45 cm knee room it blocks the sofa's clearance: it doesn't count (round 5).
+    t.y = 3.04 - 0.4 - 0.3
+    expect(g().done).toBe(false)
+    expect(g().hint).toMatch(/knees/)
     t.y = 3.04 - 0.7 - 0.3
     expect(g().done).toBe(false)
   })
@@ -476,5 +480,114 @@ describe('nextGoal never dead-ends (round 4)', () => {
     const s = score(d)
     expect(s.goals.find((g) => g.id === 'sleep')!.done).toBe(false)
     expect(s.goals.find((g) => g.id === 'headboard')!.done).toBe(false)
+  })
+})
+
+describe('round 5 (play-test review)', () => {
+  let m = 0
+  function put(d: Doc, category: string, x: number, y: number, rotation = 0, over: Partial<Item> = {}): Placement {
+    const item = itemFromCatalog(catalogEntry(category), `r5i${++m}`, over)
+    const p = { id: `r5p${m}`, itemId: item.id, x, y, rotation }
+    d.items.push(item)
+    layoutOf(d).placements.push(p)
+    return p
+  }
+  function tvLiving() {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 5, 5))
+    put(d, 'sofa', 2.5, 0.47, 0) // faces +y
+    put(d, 'tv-stand', 2.5, 4.0, Math.PI)
+    return d
+  }
+
+  it('makes the sofa-TV goal a snag when a desk or office chair stands in the way', () => {
+    const d = tvLiving()
+    expect(goal(d, (g) => g.id === 'sofa-tv')!.done).toBe(true)
+    const desk = put(d, 'desk', 2.5, 2.5)
+    const g = goal(d, (g) => g.id === 'sofa-tv')!
+    expect(g.done).toBe(false)
+    expect(g.snag).toBe(true)
+    expect(g.hint).toMatch(/desk is in the way/i)
+    expect(nextGoal(score(d))!.id).toBe('sofa-tv')
+    desk.x = 0.6 // aside, off the line of sight
+    expect(goal(d, (g) => g.id === 'sofa-tv')!.done).toBe(true)
+    put(d, 'office-chair', 2.0, 2.4)
+    expect(goal(d, (g) => g.id === 'sofa-tv')!.snag).toBe(true)
+  })
+
+  it('a coffee table, rug, ottoman or side table between them is fine', () => {
+    const d = tvLiving()
+    put(d, 'coffee-table', 2.5, 0.93 + 0.47 + 0.3)
+    put(d, 'rug', 2.5, 1.6)
+    put(d, 'ottoman', 2.5, 2.8)
+    expect(goal(d, (g) => g.id === 'sofa-tv')!.done).toBe(true)
+  })
+
+  it('holds the level at Designer home while a warning is on screen, and Dream home needs bonus stars', () => {
+    const d = tvLiving()
+    const a = analyze(d, layoutOf(d))
+    const s = scoreHome(d, layoutOf(d), a)
+    // Pretend every star is earned: the level is set by the caps alone.
+    const all = { ...a, issues: [...a.issues, { id: 'clear:x:front:y', severity: 'warning' as const, kind: 'clearance' as const, message: 'Sofa needs 45 cm in front', placementIds: ['x'] }] }
+    const warned = scoreHome(d, layoutOf(d), all)
+    expect(warned.level.index).toBeLessThanOrEqual(WARNING_LEVEL_CAP)
+    expect(s.level.index).toBeLessThan(LEVELS.length - 1)
+    expect(LEVEL_FRACTIONS[4]).toBeGreaterThan(0.9)
+  })
+
+  it('never reaches Dream home with warnings or without bonus stars while furnishing by the Next chip', () => {
+    const d = sampleDoc()
+    const fits = (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
+    const levels: string[] = []
+    for (let i = 0; i < 30; i++) {
+      const a = analyze(d, layoutOf(d))
+      const s = scoreHome(d, layoutOf(d), a)
+      levels.push(s.level.name)
+      if (s.level.index === LEVELS.length - 1) {
+        expect(a.issues.filter((x) => x.severity !== 'info' && !(x.kind === 'clearance' && /^(Dresser|Wardrobe) needs/.test(x.message)))).toEqual([])
+        expect(s.goals.filter((g) => g.bonus && g.done).reduce((t, g) => t + g.stars, 0)).toBeGreaterThanOrEqual(DREAM_BONUS_STARS)
+      }
+      const next = nextGoal(s, fits)
+      if (!next?.item || !next.tab) break
+      const item = itemFromCatalog(catalogEntry(next.item), `nx${i}`)
+      const r = findDrop(d, layoutOf(d), item, { nextTo: next.item === 'floor-lamp' ? next.near : undefined })
+      if (!r.ok) break
+      d.items.push(item)
+      layoutOf(d).placements.push({ id: `nxp${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
+    }
+    // The sample takes a good few placements to go from Lived-in to Designer home.
+    const designer = levels.indexOf('Designer home')
+    expect(designer === -1 || designer >= 8, levels.join(' > ')).toBe(true)
+    expect(score(d).errors).toBe(0)
+  }, 60000)
+
+  it('counts a dining chair only when it can be pulled out', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Dining room', 0, 0, 4, 4))
+    put(d, 'dining-table', 2, 2)
+    // Jammed against the wall: its back 75 cm runs into the wall.
+    const chair = put(d, 'dining-chair', 2, 0.25, 0)
+    const t = () => goal(d, (g) => g.id === 'eat')!
+    expect(t().done).toBe(false)
+    // Pulled up to the table from the open side, with room behind.
+    chair.y = 2 + 0.45 + 0.05 + 0.25
+    chair.rotation = Math.PI
+    expect(t().done).toBe(true)
+  })
+
+  it('gives the reading-corner goal the armchair as its target, and the lamp lands beside it', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 5, 4))
+    put(d, 'sofa', 2.5, 0.47)
+    const chair = put(d, 'armchair', 4.2, 2.6, Math.PI / 2) // faces -x, into the room
+    const g = goal(d, (g) => g.id === 'nook')!
+    expect(g.near).toBe(chair.id)
+    const lamp = itemFromCatalog(catalogEntry('floor-lamp'), 'lamp')
+    const r = findDrop(d, layoutOf(d), lamp, { nextTo: g.near })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    d.items.push(lamp)
+    layoutOf(d).placements.push({ id: 'lampP', itemId: lamp.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
+    expect(goal(d, (g) => g.id === 'nook')!.done).toBe(true)
   })
 })

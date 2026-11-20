@@ -2,7 +2,7 @@
 // turned into goals, stars, a level and a "vibe" number for the game HUD. Pure logic, no React.
 import type { Analysis } from '../analysis'
 import { COMFORTABLE_WALKWAY, MIN_WALKWAY, placedItems, walkingPaths, type PathReport } from '../model/checks'
-import { BEDROOM, DINING, LIVING, OFFICE, polygonGap, UTILITY_ROOM } from '../model/placement'
+import { BEDROOM, DINING, LIVING, MIN_DRAWER_FRONT, nookTarget, OFFICE, polygonGap, UTILITY_ROOM, VIEW_OK } from '../model/placement'
 import { add as add2, closestPointOnSegment, convexOverlap, orientedRect, dist, dot, lerp, norm, openingEndpoints, pointInPolygon, polygonArea, polygonInsideRoom, rot, scale, sub, v, wallInwardNormal, wallSegments } from '../model/geometry'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 
@@ -36,6 +36,8 @@ export interface Goal {
    * can't see): Next points here before suggesting anything to buy.
    */
   snag?: boolean
+  /** The placement the suggested piece belongs beside (the armchair a reading lamp is for). */
+  near?: string
 }
 
 export interface HomeScore {
@@ -66,7 +68,8 @@ export const CATEGORY_LABEL: Record<GoalCategory, string> = { basics: 'The basic
 /** Rule-of-thumb numbers, in meters. */
 export const RULES = {
   nightstandGap: 0.6,
-  coffeeMin: 0.35,
+  /** The sofa keeps 45 cm of knee room in front; the coffee table sits just beyond it. */
+  coffeeMin: 0.45,
   coffeeMax: 0.5,
   densityMin: 0.15,
   /** Designers aim for about a third of the floor; a bedroom can take a little more. */
@@ -94,6 +97,7 @@ export const RULES = {
 const SEATING = new Set(['sofa', 'armchair'])
 /** Pieces you use from the front or sides: short of that space, they don't count toward goals. */
 const NEEDS_ROOM = new Set(['bed', 'wardrobe', 'dresser', 'desk'])
+const DRAWERS = new Set(['dresser', 'wardrobe'])
 const STORAGE = new Set(['dresser', 'wardrobe', 'bookshelf', 'sideboard', 'console-table'])
 /** Flow goals only count once the home has this many solid pieces. */
 export const MIN_PIECES = 4
@@ -152,8 +156,16 @@ export { polygonGap }
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x))
 const cm = (m: number) => `${Math.round(m * 100)} cm`
 
-/** Fractions of the core stars needed for each of LEVELS (level 2 takes one star). Early levels come quickly; bonus stars help with the last ones. */
-export const LEVEL_FRACTIONS = [0, 0, 0.35, 0.75, 0.9, 1]
+/**
+ * Fractions of the core stars needed for each of LEVELS (level 2 takes one star). Early levels come
+ * quickly; Designer home takes nearly every core star, and Dream home all of them plus some bonus
+ * stars (DREAM_BONUS_STARS) and a layout with no warnings.
+ */
+export const LEVEL_FRACTIONS = [0, 0, 0.35, 0.75, 0.92, 1]
+/** Bonus stars Dream home also needs (or all the bonus stars on offer, when there are fewer). */
+export const DREAM_BONUS_STARS = 3
+/** The highest level a layout with warnings (a blocked clearance, say) can reach: Designer home. */
+export const WARNING_LEVEL_CAP = 4
 /** The highest level a layout with snags (errors, a tight walkway, a blocked door) can reach: Cozy. */
 export const SNAG_LEVEL_CAP = 3
 /** Goals about the layout working at all: while one is open the level stays capped, and Next points at it first. */
@@ -289,8 +301,21 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   // (A coffee table inside the sofa's knee room is the point of a coffee table, so only a wall in
   // the way counts there; beds, wardrobes, dressers and desks need their space whatever blocks it.)
   const catOf = new Map(placed.map((x) => [x.id, x.category]))
+  // A dresser or wardrobe needs 75 cm in front to open; 75–90 cm is snug but fine (no snag).
+  const snugFront = new Set(
+    placed
+      .filter((x) => DRAWERS.has(x.category) && x.room)
+      .filter((x) => {
+        const zone = orientedRect(x.center, x.hw, MIN_DRAWER_FRONT / 2, x.rotation, v(0, x.hd + MIN_DRAWER_FRONT / 2))
+        return polygonInsideRoom(zone, x.room!.polygon, 0.01) && !placed.some((o) => o.id !== x.id && !o.floor && convexOverlap(zone, o.body, 0.005))
+      })
+      .map((x) => x.id),
+  )
+  const soft = (i: Analysis['issues'][number]) => i.kind === 'clearance' && i.id.split(':')[2] === 'front' && snugFront.has(i.placementIds[0])
+  const issues = analysis.issues.filter((i) => !soft(i))
+  const clearanceSnag = (id: string) => issues.some((i) => i.kind === 'clearance' && i.severity !== 'info' && i.placementIds[0] === id)
   const cramped = new Set(
-    analysis.issues
+    issues
       .filter((i) => i.kind === 'clearance' && i.severity !== 'info' && (i.id.startsWith('clearwall:') || NEEDS_ROOM.has(catOf.get(i.placementIds[0]) ?? '')))
       .map((i) => i.placementIds[0]),
   )
@@ -300,7 +325,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   /** Any pieces of these categories, for hints. */
   const ofAny = (...cats: string[]) => placed.filter((x) => cats.includes(x.category))
   const inRoom = (room: Room) => placed.filter((x) => x.clean && x.room?.id === room.id)
-  const issuesOf = (kind: string) => analysis.issues.filter((i) => i.kind === kind && i.severity !== 'info')
+  const issuesOf = (kind: string) => issues.filter((i) => i.kind === kind && i.severity !== 'info')
   const goals: Goal[] = []
   const add = (g: Omit<Goal, 'progress'> & { progress?: number }) => goals.push({ ...g, progress: g.done ? 1 : g.progress })
   const rooms = doc.rooms.filter((r) => polygonArea(r.polygon) >= RULES.minRoomArea)
@@ -360,7 +385,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     category: 'basics',
   })
   const tables = of('dining-table')
-  const chairs = of('dining-chair', 'bench')
+  // A chair jammed against a wall or another piece (no room to pull it out) doesn't count.
+  const chairs = of('dining-chair', 'bench').filter((c) => !clearanceSnag(c.id))
   const servedTable = tables.some((t) => chairs.some((c) => polygonGap(t.body, c.body) <= RULES.chairToTable))
   if (canEat) add({
     id: 'eat',
@@ -519,22 +545,23 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const sofas = of('sofa')
   for (const sofa of sofas.slice(0, 2)) {
     const ahead = of('coffee-table', 'ottoman')
-      .map((t) => ({ t, l: toLocal(sofa, t.center), gap: polygonGap(sofa.body, t.body) }))
+      .map((t) => ({ t, l: toLocal(sofa, t.center), gap: polygonGap(sofa.body, t.body), blocks: issues.some((i) => i.id === `clear:${sofa.id}:front:${t.id}` && i.severity !== 'info') }))
       .filter((x) => x.l.y > sofa.hd && Math.abs(x.l.x) < sofa.hw)
       .sort((a, b) => a.gap - b.gap)[0]
     const gap = ahead?.gap
+    const tooClose = gap !== undefined && (ahead!.blocks || gap < RULES.coffeeMin - 0.005)
     add({
       id: `coffee:${sofa.id}`,
       title: 'Coffee table within reach',
       hint:
         gap === undefined
-          ? 'Put a coffee table in front of the sofa, 35–50 cm from the seat.'
-          : gap < RULES.coffeeMin
-            ? `It's ${cm(gap)} from the sofa; give your knees room (35–50 cm).`
-            : `It's ${cm(gap)} from the sofa; pull it closer (35–50 cm).`,
+          ? `Put a coffee table in front of the sofa, ${cm(RULES.coffeeMin)}–${cm(RULES.coffeeMax)} from the seat.`
+          : tooClose
+            ? `It's ${cm(gap)} from the sofa; give your knees room (${cm(RULES.coffeeMin)}–${cm(RULES.coffeeMax)}).`
+            : `It's ${cm(gap)} from the sofa; pull it closer (${cm(RULES.coffeeMin)}–${cm(RULES.coffeeMax)}).`,
       tab: gap === undefined ? 'living' : undefined,
       item: 'coffee-table',
-      done: gap !== undefined && gap >= RULES.coffeeMin - 0.005 && gap <= RULES.coffeeMax + 0.005,
+      done: gap !== undefined && !tooClose && gap <= RULES.coffeeMax + 0.005,
       progress: gap === undefined ? 0 : 0.6,
       stars: 1,
       roomId: sofa.room?.id,
@@ -700,6 +727,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     })
   }
   const armchairs = of('armchair')
+  const nookFor = ofAny('armchair').length ? nookTarget(doc, layout) : undefined
   const nook = armchairs.some((a) => of('floor-lamp', 'side-table', 'bookshelf').some((x) => polygonGap(a.body, x.body) <= 0.5))
   add({
     id: 'nook',
@@ -707,6 +735,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     hint: ofAny('armchair').length ? 'Tuck a floor lamp, side table or bookshelf next to the armchair.' : 'Add an armchair with a lamp or bookshelf beside it.',
     tab: ofAny('armchair').length ? 'decor' : 'living',
     item: ofAny('armchair').length ? 'floor-lamp' : 'armchair',
+    near: nookFor,
     done: nook,
     progress: ofAny('armchair').length ? 0.5 : 0,
     stars: 2,
@@ -715,18 +744,33 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const tvs = of('tv-stand')
   if (sofas.length && tvs.length) {
     let bestDeg = 180
+    let pair: [P, P] = [sofas[0], tvs[0]]
     for (const s of sofas)
       for (const t of tvs) {
         const c = Math.max(-1, Math.min(1, dot(front(s), norm(sub(t.center, s.center)))))
-        bestDeg = Math.min(bestDeg, (Math.acos(c) * 180) / Math.PI)
+        const deg = (Math.acos(c) * 180) / Math.PI
+        if (deg < bestDeg) {
+          bestDeg = deg
+          pair = [s, t]
+        }
       }
+    // Nothing solid (a desk, a chair) stands between the sofa and the screen.
+    const [vs, vt] = pair
+    const reach = toLocal(vs, vt.center).y - vt.hd - vs.hd
+    const view = reach > 0.05 ? orientedRect(vs.center, vs.hw - 0.05, reach / 2, vs.rotation, v(0, vs.hd + reach / 2)) : null
+    const blocker = view && bestDeg <= RULES.tvAngleDeg ? placed.find((x) => !x.floor && x.id !== vs.id && x.id !== vt.id && !VIEW_OK.has(x.category) && convexOverlap(view, x.body, 0.005)) : undefined
+    const faces = bestDeg <= RULES.tvAngleDeg
     add({
       id: 'sofa-tv',
       title: 'Sofa faces the TV',
-      hint: bestDeg <= RULES.tvAngleDeg ? 'Movie night is ready.' : `The sofa is turned ${Math.round(bestDeg)}° away from the TV; rotate it to face the screen.`,
-      done: bestDeg <= RULES.tvAngleDeg,
-      snag: bestDeg > RULES.tvAngleDeg,
-      progress: clamp01(1 - bestDeg / 180),
+      hint: blocker
+        ? `The ${blocker.name.toLowerCase()} is in the way between the sofa and the TV; move it aside.`
+        : faces
+          ? 'Movie night is ready.'
+          : `The sofa is turned ${Math.round(bestDeg)}° away from the TV; rotate it to face the screen.`,
+      done: faces && !blocker,
+      snag: !faces || !!blocker,
+      progress: clamp01(1 - bestDeg / 180) * (blocker ? 0.8 : 1),
       stars: 1,
       category: 'style',
       bonus: true,
@@ -790,10 +834,19 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const errors = analysis.issues.filter((i) => i.severity === 'error').length
   // A layout with snags can't be more than Cozy, however many stars it has.
   const capped = errors > 0 || goals.some((g) => g.snag && CAPPING.has(g.id))
+  const warnings = issues.filter((i) => i.severity === 'warning').length
+  const bonusMax = goals.reduce((a, g) => a + (g.bonus ? g.stars : 0), 0)
+  const bonusStars = goals.reduce((a, g) => a + (g.bonus && g.done ? g.stars : 0), 0)
   const uncapped = levelAt(stars, thresholds)
-  const level = capped && uncapped.index > SNAG_LEVEL_CAP ? levelAt(stars, thresholds, SNAG_LEVEL_CAP) : uncapped
+  // Snags hold the level at Cozy; warnings on screen, an open snag goal (a blocked view of the TV)
+  // or too few bonus stars hold it at Designer home.
+  const cap = capped
+    ? SNAG_LEVEL_CAP
+    : warnings > 0 || goals.some((g) => g.snag) || bonusStars < Math.min(DREAM_BONUS_STARS, bonusMax)
+      ? WARNING_LEVEL_CAP
+      : LEVELS.length - 1
+  const level = uncapped.index > cap ? levelAt(stars, thresholds, cap) : uncapped
 
-  const warnings = analysis.issues.filter((i) => i.severity === 'warning').length
   const vibe = maxStars ? Math.round(Math.max(0, Math.min(100, (100 * stars) / maxStars - 8 * errors - 3 * warnings))) : 0
 
   const headline =
