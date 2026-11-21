@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { activeLayout, useStore } from '../store'
+import { useStore } from '../store'
 import { analyzeScan } from './analyze'
 import { applyEstimate, type ApplyChoice } from './apply'
 import { displayName } from './classify'
@@ -129,7 +129,8 @@ export const useScanUI = create<ScanUIState>((set, get) => ({
     })
     set({ review: null })
     if (roomId) main.select({ kind: 'room', id: roomId })
-    main.notify(`Added ${roomId ? 'the room and ' : ''}${count} piece${count === 1 ? '' : 's'} to "${activeLayout(useStore.getState().doc).name}". Drag anything to fix it; Ctrl+Z undoes the whole import.`)
+    const what = [roomId ? 'the room' : '', count ? `${count} piece${count === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ') || 'your scan'
+    main.notify(`Moved in ${what}! Drag anything to fix it.`)
   },
   cancel: () => set({ review: null }),
 

@@ -25,7 +25,7 @@ import { snapDrawPoint, snapPlacement, type SnapGuide } from '../model/snapping'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 import { formatLength, parseLength } from '../model/units'
 import { activeLayout, useStore } from '../store'
-import { planToScan, rotateAbout, scanToPlan, snapAxes, straightenFromLine, svgTransform, underlayAt } from '../scan/align'
+import { planToScan, rotateAbout, scanToPlan, snapAxes, snapCorner, straightenFromLine, svgTransform, underlayAt } from '../scan/align'
 import { scanCenter, scanCorners, underlayOf, useScanRuntime } from '../scan/runtime'
 import type { ScanRef } from '../model/types'
 import { PlanScanLayer } from './ScanPanels'
@@ -69,9 +69,14 @@ export interface PlanViewProps {
   readOnly?: boolean
   svgRef?: React.RefObject<SVGSVGElement | null>
   title?: string
+  /**
+   * Screen space (CSS px) the game HUD covers at the top, bottom and right: the plan is fitted into
+   * what's left, with a tighter margin. Leave out for the classic editor (whole pane).
+   */
+  inset?: { top: number; bottom: number; right?: number }
 }
 
-export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: PlanViewProps) {
+export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset }: PlanViewProps) {
   const doc = useStore((s) => s.doc)
   const mode = useStore((s) => (readOnly ? 'select' : s.mode))
   const selection = useStore((s) => s.selection)
@@ -122,9 +127,18 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
       return
     }
     const b = bounds(pts)
-    const w = b.maxX - b.minX + 1.6
-    const h = b.maxY - b.minY + 1.6
-    setView({ cx: (b.minX + b.maxX) / 2, cy: (b.minY + b.maxY) / 2, k: Math.min(size.w / w, size.h / h) })
+    const pad = inset ? 0.8 : 1.6
+    const w = b.maxX - b.minX + pad
+    const h = b.maxY - b.minY + pad
+    const top = inset?.top ?? 0
+    const right = inset?.right ?? 0
+    const availW = Math.max(size.w * 0.5, size.w - right)
+    const availH = Math.max(size.h * 0.25, size.h - top - (inset?.bottom ?? 0))
+    const k = Math.min(availW / w, availH / h)
+    // Centre the plan in the part of the pane the HUD leaves visible, not the middle of the pane.
+    const dx = (availW - size.w) / 2
+    const dy = top + availH / 2 - size.h / 2
+    setView({ cx: (b.minX + b.maxX) / 2 - dx / k, cy: (b.minY + b.maxY) / 2 - dy / k, k })
   }
   // Fit on first layout and when the container size first becomes known.
   const fitted = useRef(false)
@@ -135,6 +149,12 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])
+  // Re-fit when the HUD around the game's plan settles into a new shape.
+  const insetKey = inset ? `${Math.round(inset.top)}:${Math.round(inset.bottom)}:${Math.round(inset.right ?? 0)}` : ''
+  useEffect(() => {
+    if (fitted.current) fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insetKey])
   // Re-fit when the whole document is replaced (new apartment, import).
   const aptId = doc.apartment.id
   useEffect(() => {
@@ -187,7 +207,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
    * Pull a plan point onto walls seen by a visible scan (within ~12 px): onto both walls at a corner,
    * onto the one wall along a wall. Walls are found along the plan axes, so square the scan up first.
    */
-  const scanSnap = (p: Vec2, only?: ScanRef): Vec2 | null => {
+  const scanSnap = (p: Vec2, only?: ScanRef): Vec2 | null => scanMagnet(p, only)?.p ?? null
+
+  /**
+   * scanSnap, plus a corner magnet: within ~25 px, a corner of the scan's wall outline (or the end
+   * of a wall line) wins over the plain wall snap, so "wall to wall" taps reach the corners.
+   */
+  const scanMagnet = (p: Vec2, only?: ScanRef): { p: Vec2; corner: boolean } | null => {
     const refs = (only ? [only] : visibleScans).flatMap((ref) => {
       const img = underlayOf(ref, 'walls')
       return img ? [{ ref, u: img.underlay }] : []
@@ -199,10 +225,15 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
       return m
     }
     const step = Math.max(0.005, Math.min(...refs.map(({ ref, u }) => u.pixel * ref.scale)))
+    const corner = snapCorner(strength, p, Math.min(0.6, Math.max(0.08, 25 * px)), step)
+    if (corner) return { p: corner, corner: true }
     const hit = snapAxes(strength, p, Math.min(0.25, Math.max(0.06, 10 * px)), step)
     if (hit.x == null && hit.y == null) return null
-    return v(hit.x ?? p.x, hit.y ?? p.y)
+    return { p: v(hit.x ?? p.x, hit.y ?? p.y), corner: false }
   }
+  /** A length label sits just above its line, or below it near the top edge (under the hint pill). */
+  const labelY = (y: number) => (y - vb.y < 64 * px ? y + 18 * px : y - 7 * px)
+  const cornerRing = (q: Vec2) => <circle cx={q.x} cy={q.y} r={9 * px} fill="none" stroke="#7a3fc2" strokeWidth={1.5 * px} opacity={0.85} pointerEvents="none" className="corner-ring" />
 
   /** Corner placement while tracing: walls from the scan first, then keep walls square to the previous corner. */
   const traceSnap = (last: Vec2 | null, w: Vec2, free: boolean): Vec2 => {
@@ -628,7 +659,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
 
         {/* Items, floor-level ones (rugs) first */}
         {[...placementsWithItems]
-          .sort((a, b) => Number(!!b.item.floorLevel) - Number(!!a.item.floorLevel))
+          .sort((a, b) => Number(!!b.item.floorLevel) - Number(!!a.item.floorLevel) || Number(!!a.p.on) - Number(!!b.p.on))
           .map(({ p, item }) => {
             const selected = selection?.kind === 'placement' && selection.id === p.id
             const flag = analysis.flagged.get(p.id)
@@ -783,9 +814,10 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
           </g>
         )}
 
-        {/* Scan reference lengths and the one being drawn */}
+        {/* Scan reference lengths and the one being drawn: only while measuring, or while that scan is
+            selected (its inspector is open). Elsewhere, such as the onboarding room review, they'd be clutter. */}
         {scans
-          .filter((r) => r.visible && (r.id === activeScanId || mode === 'scan-measure'))
+          .filter((r) => r.visible && (mode === 'scan-measure' || (selection?.kind === 'scan' && selection.id === r.id)))
           .map((ref) => (
             <g key={ref.id} pointerEvents="none" fontFamily="system-ui, sans-serif" fontSize={fs * 0.9} fontWeight={600}>
               {ref.references.map((r) => {
@@ -800,7 +832,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
                     <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={color} strokeWidth={2 * px} />
                     <circle cx={a.x} cy={a.y} r={3.5 * px} fill={color} />
                     <circle cx={b.x} cy={b.y} r={3.5 * px} fill={color} />
-                    <text x={m.x} y={m.y - 7 * px} textAnchor="middle" fill={color} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
+                    <text x={m.x} y={labelY(m.y)} textAnchor="middle" fill={color} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
                       {formatLength(r.length, units)}
                       {off > 0.005 ? ` (scan ${formatLength(measured, units)})` : ''}
                     </text>
@@ -812,14 +844,16 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
         {scanDraft && (
           <g pointerEvents="none">
             {(() => {
-              const b = scanDraft.b ?? (mode === 'scan-measure' && cursor ? ((activeScan && scanSnap(cursor, activeScan)) || cursor) : null)
+              const live = !scanDraft.b && mode === 'scan-measure' && cursor && activeScan ? scanMagnet(cursor, activeScan) : null
+              const b = scanDraft.b ?? (mode === 'scan-measure' && cursor ? live?.p ?? cursor : null)
               return (
                 <>
+                  {live?.corner && cornerRing(live.p)}
                   {b && <line x1={scanDraft.a.x} y1={scanDraft.a.y} x2={b.x} y2={b.y} stroke="#7a3fc2" strokeWidth={2 * px} strokeDasharray={`${5 * px} ${3 * px}`} />}
                   <circle cx={scanDraft.a.x} cy={scanDraft.a.y} r={4 * px} fill="#7a3fc2" />
                   {b && <circle cx={b.x} cy={b.y} r={4 * px} fill="#7a3fc2" />}
-                  {b && (
-                    <text x={(scanDraft.a.x + b.x) / 2} y={(scanDraft.a.y + b.y) / 2 - 7 * px} fontSize={fs * 0.9} textAnchor="middle" fill="#7a3fc2" fontFamily="system-ui, sans-serif" fontWeight={600} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
+                  {b && dist(scanDraft.a, b) > 0.05 && (
+                    <text x={(scanDraft.a.x + b.x) / 2} y={labelY((scanDraft.a.y + b.y) / 2)} fontSize={fs * 0.9} textAnchor="middle" fill="#7a3fc2" fontFamily="system-ui, sans-serif" fontWeight={600} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
                       {formatLength(dist(scanDraft.a, b), units)} on the scan
                     </text>
                   )}
@@ -829,8 +863,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
           </g>
         )}
         {mode === 'scan-measure' && !scanDraft && cursor && activeScan && (() => {
-          const p = scanSnap(cursor, activeScan)
-          return p ? <circle cx={p.x} cy={p.y} r={4 * px} fill="#7a3fc2" pointerEvents="none" /> : null
+          const hit = scanMagnet(cursor, activeScan)
+          return hit ? (
+            <>
+              <circle cx={hit.p.x} cy={hit.p.y} r={4 * px} fill="#7a3fc2" pointerEvents="none" />
+              {hit.corner && cornerRing(hit.p)}
+            </>
+          ) : null
         })()}
         {mode === 'scan-straighten' && straightenStart && cursor && (
           <g pointerEvents="none" stroke={COLORS.accent} strokeWidth={2 * px}>
@@ -881,13 +920,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
             return <line x1={s.x} y1={s.y} x2={e.x} y2={e.y} stroke={COLORS.accent} strokeWidth={6 * px} strokeLinecap="round" pointerEvents="none" />
           })()}
 
-        {/* Scale bar */}
-        <g transform={`translate(${vb.x + 16 * px} ${vb.y + vb.h - 18 * px})`} pointerEvents="none" fontFamily="system-ui, sans-serif">
+        {/* Scale bar (not while sizing an unsized scan: its length would be a guess) */}
+        {!(mode === 'scan-measure' && activeScan && !activeScan.references.length) && <g transform={`translate(${vb.x + 16 * px} ${vb.y + vb.h - 18 * px})`} pointerEvents="none" fontFamily="system-ui, sans-serif">
           <rect x={0} y={-4 * px} width={scaleBar} height={4 * px} fill={COLORS.text} />
           <text x={scaleBar + 6 * px} y={0} fontSize={fs * 0.9} fill={COLORS.text}>
             {formatLength(scaleBar, units)}
           </text>
-        </g>
+        </g>}
       </svg>
 
       {!readOnly && mode === 'draw-room' && (
@@ -973,6 +1012,7 @@ function ItemGlyph({ category, hw, hd, px }: { category: string; hw: number; hd:
       )
     case 'plant':
     case 'floor-lamp':
+    case 'table-lamp':
       return (
         <g {...s}>
           <circle cx={0} cy={0} r={Math.min(hw, hd) * 0.6} />

@@ -491,6 +491,20 @@ const SHOTS: Record<string, Shot> = {
     sx: 50,
     sw: 16,
   },
+  'table-lamp': {
+    draw: (p) => (
+      <>
+        <circle cx={50} cy={46} r={20} fill="#ffe7a3" opacity={0.35} stroke="none" />
+        <ellipse cx={50} cy={GROUND - 1} rx={9} ry={2.8} fill={p.base.s} stroke={p.line} />
+        <path d={`M41 ${GROUND - 2}Q38 ${GROUND - 16} 46 ${GROUND - 26}H54Q62 ${GROUND - 16} 59 ${GROUND - 2}Z`} fill={p.base.f} stroke={p.line} />
+        <path d={`M50 ${GROUND - 26}V54`} stroke={p.metal.t} strokeWidth={2} />
+        <polygon points={pts([[30, 56], [70, 56], [62, 34], [38, 34]])} fill={p.base.t} stroke={p.line} />
+        <ellipse cx={50} cy={56} rx={20} ry={3} fill={p.base.s} stroke={p.line} />
+      </>
+    ),
+    sx: 50,
+    sw: 20,
+  },
   plant: {
     draw: (p) => {
       const leaf = (cx: number, cy: number, rot: number, s = 1, lit = false) => (

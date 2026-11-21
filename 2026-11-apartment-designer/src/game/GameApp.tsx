@@ -1,26 +1,31 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import App, { Toast, useScanFiles, useShortcuts } from '../App'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react'
+import App, { useScanFiles, useShortcuts } from '../App'
 import { useAnalysis } from '../analysis'
 import { Inspector } from '../components/Panels'
 import { PlanView } from '../components/PlanView'
 import { ScanReviewPanel } from '../components/ScanPanels'
 import { ScansPanel } from '../components/ScanImport'
 import { catalogEntry } from '../model/catalog'
-import { polygonArea } from '../model/geometry'
+import { pointInPolygon, polygonArea, v } from '../model/geometry'
 import { formatLength, parseLength, unitLabel } from '../model/units'
 import { toScanData } from '../scan/align'
 import { scanEntry } from '../scan/runtime'
 import { useScanUI } from '../scan/scanUi'
-import { activeLayout, loadSample, useStore } from '../store'
+import { activeLayout, loadSample, openDocAsHome, useStore } from '../store'
+import { DesignsSheetBody } from './Designs'
 import { downloadJSON, parseDoc } from '../storage'
-import { Scene3D, type WallMode } from '../three/Scene3D'
-import { BuyDrawer, ShopSheet } from './BuyDrawer'
+import { camMoved, Scene3D, type SceneInset, type WallMode } from '../three/Scene3D'
+import { BuyDrawer, CATEGORY_GROUPS, ShopSheet } from './BuyDrawer'
+import { flushEditRun, rotatePlacementSmart } from './editActions'
 import { ItemThumb } from './ItemThumb'
-import { GoalsSheet, VibeMeter } from './Goals'
+import { GoalsSheet, LevelUpCard, VibeMeter } from './Goals'
 import { useGame, type GameMode } from './gameStore'
 import * as I from './icons'
 import { Onboarding } from './Onboarding'
-import { StylePicker } from './StylePicker'
+import { PhotoShutter } from './PhotoShutter'
+import { StylePicker, useStylePicker } from './StylePicker'
+import { useModal } from './useModal'
+import { reduceMotion } from '../motion'
 import './theme.css'
 import './hud.css'
 import './goals.css'
@@ -61,23 +66,52 @@ function GameApp() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const pickingStyle = useStylePicker((s) => s.open)
+  // Phones show a compact drawer (one row of small thumbnails); tapping the open tab again
+  // expands it to the full cards and back (hud.css). The camera isn't refitted for it.
+  const [drawerExpanded, setDrawerExpanded] = useState(false)
   const tool = storeMode !== 'select'
-  const showDrawer = phase === 'play' && mode === 'buy' && !selection && !tool && !review
+  // In Furnish the drawer stays open while a piece is selected (its actions ride in a slim strip
+  // above it), so placing piece after piece needs no "Done" in between.
+  const showDrawer = phase === 'play' && mode === 'buy' && !tool && !review
+  const view = useStageView()
+  const cam = useCam()
+  const gameRef = useRef<HTMLDivElement>(null)
+  // The 3D view frames the home around the HUD only when the screen really changes (mode, view,
+  // recenter, scan review, window size), never as the drawer and selection bar come and go.
+  // On a phone, the compact drawer leaves a small stage: frame the selected piece's room instead
+  // of the whole home (and the whole home again on deselect). Desktop never refits on select.
+  const focusRoom = useFocusRoom(showDrawer && view === '3d', selection?.kind === 'placement' ? selection.id : null)
+  const inset = useHudInset(gameRef, `${phase}:${mode}:${view}:${cam.resetKey}:${cam.eye}:${!!review}:${focusRoom}`)
+  useGameShortcuts()
   return (
-    <div className={`game mode-${mode}${tool ? ' tool-active' : ''}`}>
-      <Stage />
+    <div ref={gameRef} className={`game mode-${mode}${tool ? ' tool-active' : ''}`}>
+      <Stage inset={inset} focusRoom={focusRoom} />
       {phase === 'onboarding' ? (
         <Onboarding />
       ) : (
         <>
           {mode !== 'look' && <TopBar />}
           {mode === 'look' && <LookControls />}
+          {mode === 'look' && <PhotoShutter />}
           {mode === 'look' && <StylePicker className="sty-look" />}
           <CameraControls />
-          {showDrawer && <BuyDrawer />}
+          {showDrawer && (
+            // The drawer steps aside while the style picker is open, so on a phone the style tiles
+            // and their names are never under it. Hidden rather than unmounted, so it comes back as it was.
+            <div
+              className={`hud-drawer-slot${pickingStyle ? ' tucked' : ''}${drawerExpanded ? ' expanded' : ''}`}
+              onClickCapture={(e) => {
+                if (e.target instanceof Element && e.target.closest('.buy-tab.on')) setDrawerExpanded((x) => !x)
+              }}
+            >
+              <BuyDrawer top={selection ? <ContextBar slim /> : null} />
+            </div>
+          )}
           {mode === 'build' && !selection && !review && !tool && <BuildTray />}
           {tool && <ToolBanner />}
-          {selection && !tool && mode !== 'look' && <ContextBar />}
+          {selection && !tool && mode !== 'look' && !showDrawer && <ContextBar />}
+          <ShortcutHelp />
           {review && (
             <div className="hud-review g-card">
               <ScanReviewPanel />
@@ -85,8 +119,10 @@ function GameApp() {
           )}
           <Dock />
           <div className="hud-toast">
-            <Toast />
+            <GameToast />
           </div>
+          <SaveFailedToast />
+          <LevelUpCard />
         </>
       )}
       {sheet === 'goals' && <GoalsSheet />}
@@ -116,7 +152,8 @@ interface CamState {
   autoRotate: boolean
   wallMode: WallMode
 }
-let camState: CamState = { resetKey: 0, eye: false, autoRotate: true, wallMode: 'auto' }
+// The Look spin starts off when the player asked their system to reduce motion; Spin still turns it on.
+let camState: CamState = { resetKey: 0, eye: false, autoRotate: !reduceMotion, wallMode: 'auto' }
 const GROUND = '#fff4e2'
 const SKY = '#f3ece0'
 const camListeners = new Set<() => void>()
@@ -136,15 +173,51 @@ function useCam(): CamState {
   return camState
 }
 
-function Stage() {
+const PHONE_QUERY = '(max-width: 700px) and (orientation: portrait)'
+function usePhone() {
+  const [phone, setPhone] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(PHONE_QUERY).matches)
+  useEffect(() => {
+    const mq = window.matchMedia?.(PHONE_QUERY)
+    if (!mq) return
+    const on = () => setPhone(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return phone
+}
+
+/** The room of the selected piece while a phone furnishes with the compact drawer, else null. */
+function useFocusRoom(drawer: boolean, placementId: string | null): string | null {
+  const phone = usePhone()
+  return useMemo(() => {
+    if (!phone || !drawer || !placementId) return null
+    // Read once at selection: dragging the piece into the next room doesn't swing the camera.
+    const doc = useStore.getState().doc
+    const p = activeLayout(doc).placements.find((x) => x.id === placementId)
+    return (p && doc.rooms.find((r) => pointInPolygon(v(p.x, p.y), r.polygon))?.id) ?? null
+  }, [phone, drawer, placementId])
+}
+
+function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | null }) {
   const view = useStageView()
   const phase = useGame((s) => s.phase)
   const mode = useGame((s) => s.mode)
   const cam = useCam()
   const style = useGame((s) => s.renderStyle)
   const control = useMemo(
-    () => ({ ...cam, ground: GROUND, sky: SKY, style, autoRotate: mode === 'look' && cam.autoRotate, eye: mode === 'look' && cam.eye }),
-    [cam, mode, style],
+    () => ({
+      ...cam,
+      ground: GROUND,
+      sky: SKY,
+      style,
+      autoRotate: mode === 'look' && cam.autoRotate,
+      eye: mode === 'look' && cam.eye,
+      inset,
+      hideFlags: mode === 'look',
+      fullFrame: mode === 'look',
+      focusRoom: mode === 'buy' ? focusRoom : null,
+    }),
+    [cam, mode, style, inset, focusRoom],
   )
   return (
     <div
@@ -161,7 +234,141 @@ function Stage() {
         else useStore.getState().addItemFromCatalog(catalogEntry(cat))
       }}
     >
-      {phase === 'onboarding' ? null : view === '3d' ? <Scene3D control={control} /> : <PlanView />}
+      {phase === 'onboarding' ? null : view === '3d' ? <Scene3D control={control} /> : <PlanView inset={inset} />}
+    </div>
+  )
+}
+
+/** HUD pieces along the bottom and the top of the screen that cover the stage. */
+const BOTTOM_HUD = ['.buy-drawer', '.hud-ctx-wrap', '.hud-tray', '.hud-dock', '.hud-review']
+/** After a framing change, how long the HUD may settle (pieces mounting) before the inset is held. */
+const INSET_SETTLE_MS = 700
+const TOP_HUD = ['.hud-top', '.goal-next', '.hud-look-bar']
+
+/**
+ * How much of the stage the HUD covers at the top and bottom (CSS px), so the 3D view can centre
+ * the home in what's left. It's measured when `frameKey` changes or the window resizes, and held
+ * after the HUD settles: a selection bar or drawer coming and going doesn't move the camera.
+ */
+function useHudInset(root: RefObject<HTMLDivElement | null>, frameKey: string): SceneInset {
+  const [inset, setInset] = useState<SceneInset>({ top: 0, bottom: 0 })
+  const openUntil = useRef(0)
+  const remeasure = useRef<() => void>(() => {})
+  useLayoutEffect(() => {
+    openUntil.current = performance.now() + INSET_SETTLE_MS
+    remeasure.current()
+  }, [frameKey])
+  useLayoutEffect(() => {
+    const game = root.current
+    if (!game) return
+    let raf = 0
+    const measure = () => {
+      raf = 0
+      const W = game.clientWidth
+      const H = game.clientHeight
+      let bottom = 0
+      let top = 0
+      for (const sel of BOTTOM_HUD) {
+        const el = game.querySelector<HTMLElement>(sel)
+        if (!el) continue
+        // Side panels (the scan review on wide screens) don't cover the middle of the stage;
+        // centred bars (dock, selection bar) do, however narrow they are.
+        const r = el.getBoundingClientRect()
+        const g = game.getBoundingClientRect()
+        const mid = g.left + W / 2
+        if (r.right < mid - W * 0.1 || r.left > mid + W * 0.1) continue
+        bottom = Math.max(bottom, H - offsetTopIn(el, game))
+      }
+      for (const sel of TOP_HUD) {
+        const el = game.querySelector<HTMLElement>(sel)
+        if (el) top = Math.max(top, offsetTopIn(el, game) + el.offsetHeight)
+      }
+      // On a phone the camera buttons run down the right edge of the stage: frame the home beside them.
+      let right = 0
+      const camEl = game.querySelector<HTMLElement>('.hud-cam')
+      if (camEl && W <= 700 && H > W) right = Math.max(0, W - (camEl.getBoundingClientRect().left - game.getBoundingClientRect().left) + 4)
+      if (performance.now() > openUntil.current) return
+      setInset((was) =>
+        Math.abs(was.top - top) < 4 && Math.abs(was.bottom - bottom) < 4 && Math.abs((was.right ?? 0) - right) < 4 ? was : { top, bottom, right },
+      )
+    }
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(measure)
+    }
+    const onResize = () => {
+      openUntil.current = performance.now() + INSET_SETTLE_MS
+      schedule()
+    }
+    remeasure.current = schedule
+    measure()
+    const mo = new MutationObserver(schedule)
+    mo.observe(game, { childList: true, subtree: true })
+    window.addEventListener('resize', onResize)
+    return () => {
+      mo.disconnect()
+      window.removeEventListener('resize', onResize)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [root])
+  return inset
+}
+
+/** An element's top edge inside `root`, ignoring transforms (so opening animations don't count). */
+function offsetTopIn(el: HTMLElement, root: HTMLElement) {
+  let y = 0
+  let n: HTMLElement | null = el
+  while (n && n !== root) {
+    y += n.offsetTop
+    n = n.offsetParent as HTMLElement | null
+  }
+  return y
+}
+
+const DRAG_HINT = /\s*Drag it into place\.$/
+const DRAG_HINT_KEY = 'apartment-designer:drag-hint-count'
+const DRAG_HINT_TIMES = 3
+
+/**
+ * The game's toast. "Drag it into place" after buying something is only said the first few times;
+ * after that the toast just names what was placed.
+ */
+function GameToast() {
+  const toast = useStore((s) => s.toast)
+  const [hint, setHint] = useState<{ toast: string; keep: boolean } | null>(null)
+  useEffect(() => {
+    if (!toast || !DRAG_HINT.test(toast)) return
+    let n = DRAG_HINT_TIMES
+    try {
+      n = Number(localStorage.getItem(DRAG_HINT_KEY)) || 0
+      if (n < DRAG_HINT_TIMES) localStorage.setItem(DRAG_HINT_KEY, String(n + 1))
+    } catch {
+      // Private mode: show the hint every time rather than never.
+      n = 0
+    }
+    setHint({ toast, keep: n < DRAG_HINT_TIMES })
+  }, [toast])
+  if (!toast) return null
+  const text = DRAG_HINT.test(toast) && !(hint?.toast === toast && hint.keep) ? toast.replace(DRAG_HINT, '') : toast
+  return (
+    <div className="toast" role="status">
+      {text}
+    </div>
+  )
+}
+
+/**
+ * A save that didn't reach storage: says so, and stays up (the store retries on every change)
+ * until a save goes through. The backup is the same JSON file as Settings' download.
+ */
+function SaveFailedToast() {
+  const failed = useStore((s) => s.saveFailed)
+  if (!failed) return null
+  return (
+    <div className="dz-save-failed g-card" role="alert">
+      <span>Couldn't save. Your device storage is full.</span>
+      <button className="g-btn sm primary" onClick={() => downloadJSON(useStore.getState().doc)}>
+        Download a backup
+      </button>
     </div>
   )
 }
@@ -179,8 +386,14 @@ function TopBar() {
   return (
     <header className="hud-top">
       <button className="hud-home" onClick={() => open('layouts')} aria-label="Your designs">
-        <span className="hud-home-icon">
-          <I.IconHome />
+        <span className="dz-hud-icon-col">
+          <span className="hud-home-icon">
+            <I.IconDesigns />
+          </span>
+          {/* Phones hide the name beside the icon; the design's name sits under it instead. */}
+          <small className="dz-hud-design" aria-hidden>
+            {layoutName}
+          </small>
         </span>
         <span className="hud-home-text">
           <strong>{name}</strong>
@@ -191,12 +404,15 @@ function TopBar() {
         <VibeMeter />
       </div>
       <div className="hud-right">
-        <button className="g-icon sm" disabled={!canUndo} onClick={() => s.undo()} aria-label="Undo">
-          <I.IconUndo />
-        </button>
-        <button className="g-icon sm" disabled={!canRedo} onClick={() => s.redo()} aria-label="Redo">
-          <I.IconRedo />
-        </button>
+        {/* On phones these two move down beside the dock (hud.css). */}
+        <div className="hud-undo">
+          <button className="g-icon sm" disabled={!canUndo} onClick={() => (flushEditRun(), s.undo())} aria-label="Undo" title="Undo (Ctrl+Z)">
+            <I.IconUndo />
+          </button>
+          <button className="g-icon sm" disabled={!canRedo} onClick={() => (flushEditRun(), s.redo())} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">
+            <I.IconRedo />
+          </button>
+        </div>
         <button className="g-icon sm" onClick={() => open('settings')} aria-label="Settings">
           <I.IconGear />
         </button>
@@ -207,27 +423,30 @@ function TopBar() {
 
 // ---------------------------------------------------------------- dock
 
-const MODES: { m: GameMode; label: string; icon: ReactNode }[] = [
-  { m: 'build', label: 'Build', icon: <I.IconHammer /> },
-  { m: 'buy', label: 'Furnish', icon: <I.IconSofa /> },
-  { m: 'look', label: 'Look', icon: <I.IconEye /> },
+const MODES: { m: GameMode; label: string; icon: ReactNode; key: string }[] = [
+  { m: 'build', label: 'Build', icon: <I.IconHammer />, key: 'B' },
+  { m: 'buy', label: 'Furnish', icon: <I.IconSofa />, key: 'F' },
+  { m: 'look', label: 'Look', icon: <I.IconEye />, key: 'L' },
 ]
+
+function switchMode(m: GameMode) {
+  const st = useStore.getState()
+  if (st.mode !== 'select') st.setMode('select')
+  st.select(null)
+  useGame.getState().setMode(m)
+  if (m === 'look') setCam({ autoRotate: !reduceMotion, eye: false, resetKey: camState.resetKey + 1 })
+}
 
 function Dock() {
   const mode = useGame((s) => s.mode)
   return (
     <nav className="hud-dock" aria-label="Game mode">
-      {MODES.map(({ m, label, icon }) => (
+      {MODES.map(({ m, label, icon, key }) => (
         <button
           key={m}
           className={`hud-mode hud-mode-${m}${mode === m ? ' on' : ''}`}
-          onClick={() => {
-            const st = useStore.getState()
-            if (st.mode !== 'select') st.setMode('select')
-            st.select(null)
-            useGame.getState().setMode(m)
-            if (m === 'look') setCam({ autoRotate: true, eye: false, resetKey: camState.resetKey + 1 })
-          }}
+          onClick={() => switchMode(m)}
+          title={`${label} (${key})`}
           aria-pressed={mode === m}
         >
           <span className="hud-mode-icon">{icon}</span>
@@ -238,27 +457,73 @@ function Dock() {
   )
 }
 
+const CAM_LABELS_KEY = 'apartment-designer:cam-labels-seen'
+
+/**
+ * Names next to the camera buttons on a first visit, until one is used or a few seconds pass. On
+ * phones they are small captions under the buttons instead (hud.css), clear of the Next chip.
+ */
+function useFirstRunLabels() {
+  const [show, setShow] = useState(() => {
+    try {
+      return localStorage.getItem(CAM_LABELS_KEY) !== '1'
+    } catch {
+      return false
+    }
+  })
+  const done = () => {
+    setShow(false)
+    try {
+      localStorage.setItem(CAM_LABELS_KEY, '1')
+    } catch {
+      // Private mode: fine, they just show again next visit.
+    }
+  }
+  useEffect(() => {
+    if (!show) return
+    const t = setTimeout(done, 9000)
+    return () => clearTimeout(t)
+  }, [show])
+  return [show, done] as const
+}
+
+function subscribeCamMoved(l: () => void) {
+  camMoved.listeners.add(l)
+  return () => {
+    camMoved.listeners.delete(l)
+  }
+}
+
 function CameraControls() {
   const view = useStageView()
   const mode = useGame((s) => s.mode)
   const tool = useStore((s) => s.mode !== 'select')
+  const [labels, seen] = useFirstRunLabels()
+  const moved = useSyncExternalStore(subscribeCamMoved, () => camMoved.value)
   if (mode === 'look' || tool) return null
+  // One View button: it swaps 3D and the plan, but once the player has dragged the 3D view away
+  // from its framing, the first tap brings it back (a crosshair), and the next one goes to the plan.
+  const recenterFirst = view === '3d' && moved
+  const viewLabel = recenterFirst ? 'Recenter the view' : view === '3d' ? 'Top-down plan' : '3D view'
   return (
-    <div className="hud-cam">
-      <button
-        className="g-icon sm"
-        onClick={() => useGame.getState().setCamera(view === '3d' ? 'plan' : '3d')}
-        aria-label={view === '3d' ? 'Top-down plan' : '3D view'}
-        title={view === '3d' ? 'Top-down plan' : '3D view'}
-      >
-        {view === '3d' ? <I.IconMap /> : <I.IconCube />}
-      </button>
-      {view === '3d' && (
-        <button className="g-icon sm" onClick={() => setCam({ resetKey: camState.resetKey + 1 })} aria-label="Reset camera" title="Reset camera">
-          <I.IconHome />
+    <div className={`hud-cam${labels ? ' labelled' : ''}`} onPointerDown={labels ? seen : undefined}>
+      <div className="hud-cam-row">
+        {labels && <span className="hud-cam-label">{recenterFirst ? 'Recenter' : view === '3d' ? 'Plan' : '3D'}</span>}
+        <button
+          className="g-icon sm hud-view"
+          onClick={() => (recenterFirst ? setCam({ resetKey: camState.resetKey + 1 }) : useGame.getState().setCamera(view === '3d' ? 'plan' : '3d'))}
+          aria-label={viewLabel}
+          title={`${viewLabel} (${recenterFirst ? 'Home' : 'P'})`}
+        >
+          {recenterFirst ? <I.IconCrosshair /> : view === '3d' ? <I.IconMap /> : <I.IconCube />}
         </button>
+      </div>
+      {view === '3d' && (
+        <div className="hud-cam-row">
+          {labels && <span className="hud-cam-label">Style</span>}
+          <StylePicker />
+        </div>
       )}
-      {view === '3d' && <StylePicker />}
     </div>
   )
 }
@@ -266,16 +531,24 @@ function CameraControls() {
 function LookControls() {
   const cam = useCam()
   return (
-    <div className="hud-look">
-      <button className={`g-chip${!cam.eye ? ' on' : ''}`} onClick={() => setCam({ eye: false, resetKey: cam.resetKey + 1 })}>
-        <I.IconCube width={16} height={16} /> Dollhouse
-      </button>
-      <button className={`g-chip${cam.eye ? ' on' : ''}`} onClick={() => setCam({ eye: true, autoRotate: false })}>
-        <I.IconWalk width={16} height={16} /> Walk in
-      </button>
+    <div className="hud-look-bar">
+      <div className="hud-look" role="group" aria-label="View">
+        <button className={`g-chip${!cam.eye ? ' on' : ''}`} aria-pressed={!cam.eye} onClick={() => setCam({ eye: false, resetKey: cam.resetKey + 1 })}>
+          <I.IconCube width={16} height={16} /> Dollhouse
+        </button>
+        <button className={`g-chip${cam.eye ? ' on' : ''}`} aria-pressed={cam.eye} onClick={() => setCam({ eye: true, autoRotate: false })}>
+          <I.IconWalk width={16} height={16} /> Walk in
+        </button>
+      </div>
       {!cam.eye && (
-        <button className={`g-chip${cam.autoRotate ? ' on' : ''}`} onClick={() => setCam({ autoRotate: !cam.autoRotate })}>
-          <I.IconRotate width={16} height={16} /> Spin
+        <button
+          className={`hud-spin${cam.autoRotate ? ' on' : ''}`}
+          aria-pressed={cam.autoRotate}
+          aria-label={cam.autoRotate ? 'Stop spinning' : 'Spin the view'}
+          title={cam.autoRotate ? 'Stop spinning' : 'Spin the view'}
+          onClick={() => setCam({ autoRotate: !cam.autoRotate })}
+        >
+          <I.IconRotate width={20} height={20} />
         </button>
       )}
     </div>
@@ -332,7 +605,7 @@ function ToolBanner() {
 
 const SWATCHES = ['#7d8fa3', '#a3907d', '#c9c3b6', '#8a6b4f', '#3d3d3d', '#5f8f5a', '#c7a98a', '#e2d6b8', '#b5534a', '#e0b04f', '#5b7bb5', '#f2efe8']
 
-function ContextBar() {
+function ContextBar({ slim = false }: { slim?: boolean }) {
   const sel = useStore((s) => s.selection)!
   const doc = useStore((s) => s.doc)
   const layout = activeLayout(doc)
@@ -359,10 +632,10 @@ function ContextBar() {
     warn = issues.find((i) => i.placementIds[0] === p.id && i.severity !== 'info')?.message ?? null
     actions = (
       <>
-        <Act label="Rotate" onClick={() => s.rotatePlacement(p.id, Math.PI / 4)}>
+        <Act label="Rotate" keys="R" onClick={() => rotatePlacementSmart(p.id, Math.PI / 2)}>
           <I.IconRotate />
         </Act>
-        <Act label="Copy" onClick={() => s.duplicatePlacement(p.id)}>
+        <Act label="Copy" keys="Ctrl+D" onClick={() => s.duplicatePlacement(p.id)}>
           <I.IconCopy />
         </Act>
         <Act label="Color" on={paint} onClick={() => setPaint(!paint)}>
@@ -371,7 +644,7 @@ function ContextBar() {
         <Act label="Details" onClick={() => open('details')}>
           <I.IconMore />
         </Act>
-        <Act label="Remove" danger onClick={() => s.deletePlacement(p.id)}>
+        <Act label="Remove" keys="Del" danger onClick={() => s.deletePlacement(p.id)}>
           <I.IconTrash />
         </Act>
       </>
@@ -446,7 +719,7 @@ function ContextBar() {
   }
 
   return (
-    <div className="hud-ctx-wrap">
+    <div className={`hud-ctx-wrap${slim ? ' slim' : ''}`}>
       {warn && <div className="hud-ctx-warn">{warn}</div>}
       {paint && sel.kind === 'placement' && (
         <div className="hud-paint g-card">
@@ -472,17 +745,19 @@ function ContextBar() {
           </span>
         </div>
         <div className="hud-ctx-actions">{actions}</div>
-        <button className="hud-ctx-done" onClick={() => s.select(null)} aria-label="Done">
-          <I.IconCheck />
-        </button>
+        {!slim && (
+          <button className="hud-ctx-done" onClick={() => s.select(null)} aria-label="Done" title="Done (Enter)">
+            <I.IconCheck />
+          </button>
+        )}
       </div>
     </div>
   )
 }
 
-function Act({ label, onClick, children, danger, on }: { label: string; onClick: () => void; children: ReactNode; danger?: boolean; on?: boolean }) {
+function Act({ label, keys, onClick, children, danger, on }: { label: string; keys?: string; onClick: () => void; children: ReactNode; danger?: boolean; on?: boolean }) {
   return (
-    <button className={`hud-act${danger ? ' danger' : ''}${on ? ' on' : ''}`} onClick={onClick} aria-label={label} title={label}>
+    <button className={`hud-act${danger ? ' danger' : ''}${on ? ' on' : ''}`} onClick={onClick} aria-label={label} title={keys ? `${label} (${keys})` : label}>
       {children}
       <span>{label}</span>
     </button>
@@ -493,9 +768,11 @@ function Act({ label, onClick, children, danger, on }: { label: string; onClick:
 
 function Sheet({ title, sub, children, className }: { title: string; sub?: string; children: ReactNode; className?: string }) {
   const close = () => useGame.getState().openSheet(null)
+  const ref = useRef<HTMLDivElement>(null)
+  useModal(ref, close)
   return (
     <div className="g-scrim" onPointerDown={(e) => e.target === e.currentTarget && close()}>
-      <div className={`g-sheet hud-sheet ${className ?? ''}`} role="dialog" aria-label={title} onKeyDown={(e) => e.stopPropagation()}>
+      <div ref={ref} className={`g-sheet hud-sheet ${className ?? ''}`} role="dialog" aria-modal="true" aria-label={title} onKeyDown={(e) => e.stopPropagation()}>
         <button className="g-icon sm hud-sheet-close" onClick={close} aria-label="Close">
           <I.IconClose />
         </button>
@@ -617,60 +894,19 @@ function NewRoomSheet() {
 }
 
 function DesignsSheet() {
-  const doc = useStore((s) => s.doc)
+  const name = useStore((s) => s.doc.apartment.name)
   const s = useStore.getState()
-  const [editing, setEditing] = useState<string | null>(null)
   return (
-    <Sheet title={doc.apartment.name} sub="Try different designs for the same home and flip between them.">
-      <label className="g-field hud-homename">
-        Home name
-        <input value={doc.apartment.name} onChange={(e) => s.renameApartment(e.target.value)} />
-      </label>
-      <div className="hud-designs">
-        {doc.layouts.map((l) => {
-          const active = l.id === doc.activeLayoutId
-          return (
-            <div key={l.id} className={`hud-design g-card${active ? ' on' : ''}`}>
-              <button className="hud-design-main" onClick={() => s.setActiveLayout(l.id)}>
-                {editing === l.id ? (
-                  <input
-                    autoFocus
-                    defaultValue={l.name}
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={(e) => {
-                      s.renameLayout(l.id, e.target.value || l.name)
-                      setEditing(null)
-                    }}
-                    onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-                  />
-                ) : (
-                  <strong>{l.name}</strong>
-                )}
-                <small>
-                  {l.placements.length} piece{l.placements.length === 1 ? '' : 's'}
-                  {active && ' · playing'}
-                </small>
-              </button>
-              <div className="hud-design-actions">
-                <button className="g-icon sm" aria-label="Rename" onClick={() => setEditing(l.id)}>
-                  <I.IconPen />
-                </button>
-                <button className="g-icon sm" aria-label="Copy design" onClick={() => s.duplicateLayout(l.id)}>
-                  <I.IconCopy />
-                </button>
-                {doc.layouts.length > 1 && (
-                  <button className="g-icon sm danger" aria-label="Delete design" onClick={() => s.deleteLayout(l.id)}>
-                    <I.IconTrash />
-                  </button>
-                )}
-              </div>
-            </div>
-          )
-        })}
+    <Sheet title={name} sub="Try different designs for the same home and flip between them.">
+      <DesignsSheetBody />
+      <div className="dz-actions">
+        <button className="g-btn primary" onClick={() => s.duplicateLayout(useStore.getState().doc.activeLayoutId)}>
+          <I.IconCopy width={18} height={18} /> Try a variation
+        </button>
+        <button className="g-btn ghost" onClick={() => s.addLayout()}>
+          <I.IconPlus width={18} height={18} /> New empty design
+        </button>
       </div>
-      <button className="g-btn primary" onClick={() => s.addLayout()}>
-        <I.IconPlus width={18} height={18} /> New empty design
-      </button>
     </Sheet>
   )
 }
@@ -759,7 +995,7 @@ function SettingsSheet() {
           onClick={() => {
             loadSample()
             g.openSheet(null)
-            s.notify('Loaded the sample home. Undo to go back.')
+            s.notify('Moved into the sample home!')
           }}
         >
           <I.IconHome width={18} height={18} /> Load the sample home
@@ -787,8 +1023,9 @@ function SettingsSheet() {
           try {
             const d = parseDoc(await f.text())
             if (!d) throw new Error('bad')
-            useStore.getState().replaceDoc(d)
+            openDocAsHome(d)
             g.openSheet(null)
+            s.notify(`Opened ${d.apartment.name}. Your other homes are in Your designs.`)
           } catch {
             s.notify("That file isn't a saved home.")
           }
@@ -796,5 +1033,112 @@ function SettingsSheet() {
         }}
       />
     </Sheet>
+  )
+}
+
+// ---------------------------------------------------------------- keyboard
+
+const SHORTCUTS: [string, string][] = [
+  ['B / F / L', 'Build, Furnish, Look'],
+  ['P', 'Top-down plan or 3D'],
+  ['Home', 'Recenter the view'],
+  ['1 to 6', 'Furniture drawer tabs'],
+  ['R / Shift+R', 'Turn 90°'],
+  [', / .', 'Turn 15°'],
+  ['Arrows', 'Nudge 1 cm (Shift: 10 cm)'],
+  ['Ctrl+D', 'Copy'],
+  ['Del', 'Remove'],
+  ['Enter / Esc', 'Done'],
+  ['Ctrl+Z / Ctrl+Shift+Z', 'Undo, redo'],
+  ['?', 'This list'],
+]
+
+const useShortcutHelp = createFlag()
+
+/** Game keys on top of the editing ones in useShortcuts: modes, camera, drawer tabs, Done, help. */
+function useGameShortcuts() {
+  useEffect(() => {
+    // A click anywhere ends a run of nudges, so it stays its own undo step.
+    const onDown = () => flushEditRun()
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const g = useGame.getState()
+      const st = useStore.getState()
+      if (g.phase !== 'play' || g.sheet) return
+      const k = e.key
+      if (k === '?') {
+        useShortcutHelp.toggle()
+        return
+      }
+      if (k === 'Escape' && useShortcutHelp.get()) return useShortcutHelp.set(false)
+      if (st.mode !== 'select') return
+      const lower = k.toLowerCase()
+      const mode = MODES.find((m) => m.key.toLowerCase() === lower)
+      if (mode) switchMode(mode.m)
+      else if (lower === 'p' && g.mode !== 'look') g.setCamera(g.camera === '3d' ? 'plan' : '3d')
+      else if (k === 'Home') {
+        e.preventDefault()
+        setCam({ resetKey: camState.resetKey + 1 })
+      } else if (/^[1-6]$/.test(k) && g.mode === 'buy') g.setBuyTab(CATEGORY_GROUPS[Number(k) - 1].key)
+      else if (k === 'Enter' && st.selection && t.tagName !== 'BUTTON' && t.tagName !== 'A') st.select(null)
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onDown, true)
+    }
+  }, [])
+}
+
+/** A tiny shared on/off flag with a hook, for the shortcut list. */
+function createFlag() {
+  let on = false
+  const subs = new Set<() => void>()
+  const set = (v: boolean) => {
+    on = v
+    subs.forEach((f) => f())
+  }
+  function useFlag() {
+    const [, force] = useState(0)
+    useEffect(() => {
+      const f = () => force((n) => n + 1)
+      subs.add(f)
+      return () => void subs.delete(f)
+    }, [])
+    return on
+  }
+  return Object.assign(useFlag, { get: () => on, set, toggle: () => set(!on) })
+}
+
+/** The "?" button (desktop only) and the list of keys it opens. */
+function ShortcutHelp() {
+  const open = useShortcutHelp()
+  const mode = useGame((s) => s.mode)
+  return (
+    <>
+      {mode !== 'look' && (
+        <button className="hud-keys-btn g-icon sm" onClick={() => useShortcutHelp.toggle()} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" aria-expanded={open}>
+          ?
+        </button>
+      )}
+      {open && (
+        <div className="hud-keys g-card" role="dialog" aria-label="Keyboard shortcuts" onClick={() => useShortcutHelp.set(false)}>
+          <strong>Keyboard shortcuts</strong>
+          <dl>
+            {SHORTCUTS.map(([k, what]) => (
+              <div key={k}>
+                <dt>
+                  <kbd>{k}</kbd>
+                </dt>
+                <dd>{what}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+    </>
   )
 }

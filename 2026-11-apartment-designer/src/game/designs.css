@@ -1,0 +1,59 @@
+/* Your designs sheet: homes strip, design postcards, the "…" menu. Prefix .dz- */
+.dz-homes { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 8px; }
+.dz-home { display: flex; align-items: center; gap: 2px; flex: none; max-width: 260px; background: var(--g-paper-2); border-radius: 16px; padding: 4px 4px 4px 0; border: 3px solid transparent; }
+.dz-home.on { border-color: var(--g-coral); background: var(--g-paper); }
+.dz-home-main { display: flex; align-items: center; gap: 8px; border: none; background: none; padding: 6px 4px 6px 10px; cursor: pointer; font-family: var(--g-font); color: var(--g-ink); text-align: left; min-width: 0; }
+.dz-home.on .dz-home-main { cursor: default; }
+.dz-home-main svg { color: var(--g-coral); flex: none; }
+.dz-home-main span { display: flex; flex-direction: column; min-width: 0; }
+.dz-home-main strong { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dz-home-main small { font-size: 11px; font-weight: 700; color: var(--g-ink-2); white-space: nowrap; }
+.dz-home .dz-more-btn { width: 32px; height: 32px; box-shadow: none; background: transparent; }
+
+.dz-designs { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.dz-design { display: flex; align-items: center; gap: 4px; padding: 8px; box-shadow: var(--g-shadow-sm); border: 3px solid transparent; }
+.dz-design.on { border-color: var(--g-coral); }
+.dz-design-main { flex: 1; display: flex; align-items: center; gap: 12px; border: none; background: none; text-align: left; padding: 2px; cursor: pointer; font-family: var(--g-font); color: var(--g-ink); min-width: 0; }
+.dz-design-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dz-design-text strong { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dz-design-text small { font-size: 12px; font-weight: 700; color: var(--g-ink-2); }
+.dz-thumb { flex: none; background: var(--g-paper-2); border-radius: 12px; }
+.dz-rename { font: 700 15px var(--g-font); color: var(--g-ink); border: 2px solid var(--g-sky); border-radius: 10px; padding: 6px 10px; background: #fff; outline: none; width: 100%; max-width: 240px; box-sizing: border-box; }
+
+.dz-more { position: relative; flex: none; }
+.dz-more-btn { box-shadow: none; background: var(--g-paper-2); }
+.dz-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 180px; max-width: min(280px, calc(100vw - 48px)); padding: 6px; display: flex; flex-direction: column; animation: g-pop 0.2s var(--g-ease); }
+.dz-menu-item { display: flex; align-items: center; gap: 10px; border: none; background: none; border-radius: 12px; padding: 10px 12px; font: 800 14px var(--g-font); color: var(--g-ink); cursor: pointer; text-align: left; }
+.dz-menu-item:hover { background: var(--g-paper-2); }
+.dz-menu-item.danger { color: var(--g-bad); }
+.dz-ask { margin: 6px 8px 10px; font-weight: 700; font-size: 14px; color: var(--g-ink); line-height: 1.35; }
+.dz-ask-btns { display: flex; gap: 6px; justify-content: flex-end; }
+.g-btn.dz-danger { background: var(--g-bad); color: #fff; }
+
+/* Sheet actions: "Try a variation" leads, "New empty design" sits beside it. */
+.dz-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* Stars, level and the best design's crown on each card. */
+.dz-score { color: var(--g-coral-ink); white-space: nowrap; }
+.dz-crown { display: inline-flex; align-items: center; gap: 3px; color: #b8860b; font-weight: 900; }
+.dz-crown svg { width: 14px; height: 14px; }
+.dz-design-text small { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: center; }
+/* Deleted home: "Deleted X · Undo" until the sheet closes. */
+.dz-undo { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 0 10px; padding: 8px 8px 8px 14px; border-radius: 14px; background: var(--g-paper-2); font: 700 14px var(--g-font); color: var(--g-ink); }
+.dz-undo span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Save failed: stays up until a save goes through. */
+.dz-save-failed { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(110px + env(safe-area-inset-bottom)); z-index: 70; display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 16px; border-radius: 18px; font: 800 14px var(--g-font); color: var(--g-ink); max-width: calc(100vw - 32px); box-sizing: border-box; border: 3px solid var(--g-bad); }
+@media (max-width: 640px) { .dz-save-failed { bottom: auto; top: calc(200px + env(safe-area-inset-top)); width: calc(100vw - 32px); flex-direction: column; align-items: stretch; text-align: center; gap: 8px; } }
+
+/* Top bar: the open design's name under the home icon, on phones only (the name beside it is hidden there). */
+.dz-hud-icon-col { display: contents; }
+.dz-hud-design { display: none; }
+@media (max-width: 640px) {
+  .dz-hud-icon-col { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; }
+  /* The name under the icon is hidden too: the top bar is one row on phones (the sheet names it). */
+  .dz-hud-design { display: none; max-width: 92px; font: 800 10px/1.1 var(--g-font); color: var(--g-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* Welcome back (Goals.tsx): stays up until tapped or a piece is placed, with the home · design · level line. */
+.goal-banner.welcome.dz-stay { animation: g-pop 0.3s var(--g-ease) both; }
+.dz-welcome-line { font-size: 12px; font-weight: 800; color: var(--g-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

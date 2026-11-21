@@ -1,4 +1,4 @@
-/* Goals: vibe meter pill, celebration pop, goal-complete banner, goals sheet. */
+/* Goals: star meter pill, celebration pop, goal-complete banner, goals sheet. */
 .goal-meter-wrap { position: relative; display: inline-flex; flex-direction: column; align-items: center; z-index: 20; }
 
 .goal-meter { display: inline-flex; align-items: center; gap: 10px; border: none; cursor: pointer; padding: 5px 16px 5px 5px; border-radius: 999px; background: var(--g-paper); box-shadow: var(--g-shadow-sm); font-family: var(--g-font); color: var(--g-ink); transition: transform 0.18s var(--g-ease); }
@@ -45,17 +45,9 @@
 .goal-hero-level b { color: var(--g-ink); }
 .goal-hero-sub { font-size: 12px; font-weight: 700; color: var(--g-ink-2); }
 
-.goal-vibe { display: flex; align-items: center; gap: 10px; margin: 16px 0 6px; padding: 10px 14px; border-radius: 14px; background: var(--g-paper-2); font-weight: 800; font-size: 13px; }
-.goal-vibe span { color: var(--g-ink-2); }
-.goal-vibe b { min-width: 24px; text-align: right; }
-.goal-vibe-bar { flex: 1; height: 8px; border-radius: 99px; background: rgba(70, 50, 30, 0.1); overflow: hidden; }
-.goal-vibe-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--g-coral), var(--g-sun) 50%, var(--g-sage)); background-size: 300px 100%; transition: width 0.6s var(--g-ease); }
-.goal-count { font-size: 13px; font-weight: 700; margin: 4px 0 6px !important; }
-
 .goal-group { margin-top: 14px; }
 .goal-group h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em; color: var(--g-ink-2); }
 .goal-group h3::before { content: ''; width: 10px; height: 10px; border-radius: 3px; background: var(--goal-cat, var(--g-sky)); }
-.goal-group h3 span { margin-left: auto; font-size: 12px; letter-spacing: 0; }
 .goal-cat-basics { --goal-cat: var(--g-coral); }
 .goal-cat-flow { --goal-cat: var(--g-sky); }
 .goal-cat-comfort { --goal-cat: var(--g-plum); }
@@ -70,6 +62,7 @@
 .goal-main { flex: 1; min-width: 0; }
 .goal-title { font-weight: 800; font-size: 15px; line-height: 1.25; }
 .goal-row.done .goal-title { color: var(--g-ink-2); }
+.goal-bonus { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 99px; background: var(--g-paper-2); color: var(--g-ink-2); font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; vertical-align: 2px; }
 .goal-hint { font-size: 13px; color: var(--g-ink-2); line-height: 1.35; margin-top: 2px; user-select: text; }
 .goal-progress { height: 6px; border-radius: 99px; background: var(--g-paper-2); margin-top: 7px; overflow: hidden; }
 .goal-progress i { display: block; height: 100%; border-radius: inherit; background: var(--goal-cat, var(--g-sky)); }
@@ -78,3 +71,73 @@
 @keyframes goal-spark { 0% { transform: rotate(var(--a)) translateY(0) scale(0.4); opacity: 1; } 70% { opacity: 1; } 100% { transform: rotate(var(--a)) translateY(calc(-1 * var(--d))) scale(1.1); opacity: 0; } }
 @keyframes goal-float { 0% { transform: translateY(0) scale(0.6); opacity: 0; } 20% { transform: translateY(-8px) scale(1.15); opacity: 1; } 100% { transform: translateY(-28px) scale(1); opacity: 0; } }
 @keyframes goal-banner { 0% { transform: translateY(-14px) scale(0.9); opacity: 0; } 12% { transform: translateY(0) scale(1); opacity: 1; } 85% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-8px); opacity: 0; } }
+
+/* Next goal: one quiet chip under the pill. Tapping it shows where to start. */
+.goal-next { position: absolute; top: calc(100% + 6px); display: inline-flex; align-items: center; gap: 8px; max-width: min(320px, calc(100vw - 128px)); padding: 5px 6px 5px 12px; border: none; border-radius: 999px; background: color-mix(in srgb, var(--g-paper) 92%, transparent); box-shadow: var(--g-shadow-sm); font: 700 12px/1.2 var(--g-font); color: var(--g-ink-2); cursor: pointer; white-space: nowrap; animation: g-fade 0.4s var(--g-ease); }
+.goal-next { min-height: 36px; box-sizing: border-box; }
+@media (max-width: 360px) {
+  /* Narrow phones: the goal may take two lines rather than cut off its last words. */
+  .goal-next { white-space: normal; max-width: calc(100vw - 112px); border-radius: 18px; text-align: left; }
+  .goal-next-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.2; }
+}
+.goal-next:hover { color: var(--g-ink); }
+.goal-next:active { transform: scale(0.97); }
+.goal-next-text { overflow: hidden; text-overflow: ellipsis; }
+.goal-next-text b { color: var(--g-ink); font-weight: 800; }
+.goal-next-stars { flex: none; padding: 2px 7px; border-radius: 99px; background: var(--g-sun); color: #6b4300; font-weight: 900; font-size: 11px; }
+
+/* Welcome back reuses the banner, and can be tapped. */
+.goal-banner.welcome { pointer-events: auto; cursor: pointer; border: none; font: inherit; color: var(--g-ink); text-align: left; animation-duration: 6s; }
+.goal-banner.welcome .goal-banner-check { background: var(--g-sun); color: #6b4300; }
+.goal-banner.welcome .goal-banner-check svg { fill: #fff6dc; stroke: #b07a12; stroke-width: 1.6; }
+.goal-banner.welcome .goal-banner-text small { color: #c98700; }
+
+/* Goals sheet: the goal "Show me" pointed at. */
+.goal-row.focus { border-color: var(--g-sun); box-shadow: 0 0 0 3px color-mix(in srgb, var(--g-sun) 35%, transparent); }
+
+/* Level up: the one big reward moment. A warm dim over everything (drawer, camera buttons, dock),
+   confetti on top of it, and a centred card with a sun header and a spinning badge. Tap to dismiss. */
+.goal-levelup { position: absolute; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; cursor: pointer;
+  background: radial-gradient(circle at 50% 42%, rgba(255, 194, 75, 0.28), rgba(45, 38, 32, 0.34) 75%); animation: goal-dim 3.6s ease forwards; }
+.goal-levelup-card { cursor: pointer; position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; width: min(320px, 100%); padding: 0 20px 20px; border-radius: 26px; overflow: visible;
+  background: linear-gradient(180deg, #ffd477 0, var(--g-sun) 72px, var(--g-paper) 72px); box-shadow: 0 0 0 4px rgba(255, 250, 242, 0.7), var(--g-shadow); font-family: var(--g-font); color: var(--g-ink); text-align: center; animation: goal-levelup 3.6s var(--g-ease) forwards; }
+@media (max-width: 640px) { .goal-levelup-card { width: min(300px, calc(100vw - 112px)); } }
+.goal-levelup-card small { margin-top: 4px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; color: #8a5a00; }
+.goal-levelup-card strong { font-size: 30px; font-weight: 900; line-height: 1.1; }
+.goal-levelup-card span { font-size: 13px; font-weight: 700; color: var(--g-ink-2); }
+.goal-levelup-badge { position: relative; width: 84px; height: 84px; margin: 22px 0 8px; border-radius: 26px; background: var(--g-sun); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 5px var(--g-paper), inset 0 -6px 0 rgba(160, 100, 0, 0.2), 0 8px 18px rgba(160, 100, 0, 0.3); transform: rotate(-4deg); animation: goal-badge-in 0.9s var(--g-ease) both; }
+.goal-levelup-badge > svg:first-child { width: 46px; height: 46px; fill: #fff6dc; stroke: #b07a12; stroke-width: 1.5; }
+.goal-levelup .goal-confetti { z-index: 2; }
+/* The star pill pulses along with the card. */
+.game:has(.goal-levelup) .goal-meter-star { animation: goal-wiggle 0.6s var(--g-ease) 3; }
+.goal-spark { position: absolute; width: 22px; height: 22px; color: var(--g-sun); stroke-width: 2.4; animation: goal-twinkle 1.6s ease-in-out infinite; }
+.goal-spark.s1 { left: -22px; top: 4px; }
+.goal-spark.s2 { right: -24px; top: -12px; width: 28px; height: 28px; animation-delay: 0.5s; }
+.goal-spark.s3 { right: -16px; bottom: -6px; width: 18px; height: 18px; animation-delay: 1s; color: var(--g-coral); }
+.goal-confetti { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.goal-confetti i { position: absolute; top: -20px; width: 9px; height: 14px; border-radius: 3px; animation-name: goal-fall; animation-timing-function: cubic-bezier(0.3, 0.6, 0.5, 1); animation-fill-mode: both; }
+.goal-confetti i:nth-child(3n) { width: 11px; height: 11px; border-radius: 50%; }
+
+@keyframes goal-dim { 0% { opacity: 0; } 8%, 85% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes goal-badge-in { 0% { transform: rotate(-200deg) scale(0.3); opacity: 0; } 60% { opacity: 1; } 100% { transform: rotate(-4deg) scale(1); } }
+@keyframes goal-twinkle { 0%, 100% { transform: scale(0.6) rotate(0deg); opacity: 0.4; } 50% { transform: scale(1.1) rotate(45deg); opacity: 1; } }
+@keyframes goal-fall { 0% { opacity: 1; translate: 0 0; rotate: 0deg; } 100% { opacity: 0; translate: 30px 105vh; rotate: 540deg; } }
+@keyframes goal-levelup { 0% { transform: translateY(-20px) scale(0.8); opacity: 0; } 10% { transform: translateY(0) scale(1.04); opacity: 1; } 16% { transform: scale(1); } 88% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-10px); } }
+
+/* Reduced motion: no flying confetti or sparks; cards and banners just appear and go. */
+@media (prefers-reduced-motion: reduce) {
+  .goal-confetti, .goal-burst i, .goal-spark { display: none; }
+  .goal-plus { top: -26px; }
+}
+
+/* Round 4: the best level as a small note beside the honest one; the phone level-up banner. */
+.goal-meter-level { display: inline-flex; align-items: baseline; gap: 6px; }
+.goal-meter-best { font-size: 10px; font-weight: 800; color: var(--g-ink-2); }
+.goal-levelup-goal { margin-top: 6px; font-style: normal; font-weight: 800; font-size: 13px; color: #8a5a00; }
+.goal-levelup-mini { pointer-events: auto; cursor: pointer; border: none; font: inherit; color: var(--g-ink); text-align: left; z-index: 70;
+  background: linear-gradient(90deg, #ffe7a8, var(--g-paper) 60%); animation: goal-banner 3.6s var(--g-ease) forwards; }
+.goal-levelup-mini .goal-banner-check { background: var(--g-sun); color: #6b4300; }
+.goal-levelup-mini .goal-banner-check svg { fill: #fff6dc; stroke: #b07a12; stroke-width: 1.6; }
+.goal-levelup-mini .goal-banner-text small { color: #c98700; }
+.goal-levelup-mini .goal-banner-text em { font-style: normal; font-size: 12px; font-weight: 800; color: var(--g-ink-2); }

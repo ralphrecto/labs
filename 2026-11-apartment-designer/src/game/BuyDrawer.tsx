@@ -1,8 +1,12 @@
 // Buy mode: the furniture drawer above the mode dock, and the "shop from a link or photo" sheet.
-import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { CATALOG, itemFromCatalog, type CatalogEntry } from '../model/catalog'
+import { checkLayout } from '../model/checks'
+import { centroid } from '../model/geometry'
+import { findDrop, nookTarget, type DropResult } from '../model/placement'
+import { STARTER_CATALOG } from '../model/starterCatalog'
 import { uid } from '../model/sample'
-import type { Item, Units } from '../model/types'
+import type { Doc, Item, Room, Units } from '../model/types'
 import { formatLength } from '../model/units'
 import { activeLayout, useStore } from '../store'
 import { ImportDialog, Photo } from '../components/AddDialogs'
@@ -10,13 +14,14 @@ import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
 import { ItemThumb } from './ItemThumb'
 import './buy.css'
+import './feel.css'
 
 export const CATEGORY_GROUPS: { key: string; label: string; emoji?: string; categories: string[] }[] = [
   { key: 'living', label: 'Living', emoji: '🛋️', categories: ['sofa', 'armchair', 'coffee-table', 'side-table', 'ottoman', 'tv-stand', 'console-table'] },
   { key: 'bedroom', label: 'Bedroom', emoji: '🛏️', categories: ['bed', 'nightstand', 'dresser', 'wardrobe'] },
   { key: 'dining', label: 'Dining', emoji: '🍽️', categories: ['dining-table', 'dining-chair', 'bench', 'sideboard'] },
   { key: 'work', label: 'Work', emoji: '💻', categories: ['desk', 'office-chair', 'bookshelf'] },
-  { key: 'decor', label: 'Decor', emoji: '🪴', categories: ['rug', 'floor-lamp', 'plant', 'box'] },
+  { key: 'decor', label: 'Decor', emoji: '🪴', categories: ['plant', 'floor-lamp', 'table-lamp', 'rug', 'box'] },
   { key: 'mine', label: 'Mine', emoji: '⭐', categories: [] },
 ]
 
@@ -29,6 +34,35 @@ export const CATALOG_DRAG_TYPE = 'application/x-apt-catalog'
 export const ITEM_DRAG_TYPE = 'application/x-apt-item'
 
 const ENTRIES = new Map(CATALOG.map((e) => [e.category, e]))
+
+/** A size on a card's chip row: a short label and the piece it places. */
+interface SizeChip {
+  label: string
+  /** Name of the placed piece ("Loveseat", "Rug 8' × 10'"). */
+  name: string
+  width: number
+  depth: number
+  height?: number
+}
+
+/** Size chips per category, from the retail sizes in starterCatalog.ts: [chip label, starter id]. */
+const CHIP_IDS: Record<string, [string, string][]> = {
+  sofa: [['2-seat', 'sofa-2'], ['Compact', 'sofa-apt'], ['3-seat', 'sofa-3'], ['L-sofa', 'sectional-l']],
+  'dining-table': [['Bistro', 'bistro'], ['Round', 'dining-round'], ['4-seat', 'dining-4'], ['6-seat', 'dining-6']],
+  desk: [['Small', 'desk-sm'], ['Mid', 'desk'], ['Large', 'desk-standing']],
+  rug: [['5×8', 'rug-5x8'], ['6×9', 'rug-6x9'], ['8×10', 'rug-8x10'], ['9×12', 'rug-9x12']],
+  'floor-lamp': [['Floor', 'floor-lamp'], ['Arc', 'arc-lamp']],
+}
+const STARTER = new Map(STARTER_CATALOG.map((p) => [p.id, p]))
+
+function sizeChips(entry: CatalogEntry): SizeChip[] {
+  // Beds keep their own presets (Twin to King), named "Queen bed" and so on.
+  if (entry.presets) return entry.presets.map((p) => ({ label: p.name, name: `${p.name} bed`, width: p.width, depth: p.depth }))
+  return (CHIP_IDS[entry.category] ?? []).flatMap(([label, id]) => {
+    const p = STARTER.get(id)
+    return p ? [{ label, name: p.name, width: p.width, depth: p.depth, height: p.height }] : []
+  })
+}
 /** "Box" reads as a generic custom piece in the drawer. */
 const displayName = (e: CatalogEntry) => (e.category === 'box' ? 'Custom box' : e.name)
 
@@ -47,12 +81,35 @@ export function isMine(i: Item): boolean {
   return !!(i.owned || i.link || i.imageUrl || i.scanId || i.source === 'link' || i.source === 'photo' || i.source === 'scan')
 }
 
+/**
+ * A free spot for `item` in one room: first the usual search pulled toward that room (it respects
+ * every door and walkway), then a search of that room alone, kept only if it trips no checks.
+ */
+function dropIn(doc: Doc, item: Item, room: Room): DropResult | null {
+  const layout = activeLayout(doc)
+  const near = findDrop(doc, layout, item, { near: centroid(room.polygon) })
+  if (near.ok && near.spot.roomId === room.id) return near
+  const only = findDrop({ ...doc, rooms: [room] }, layout, item)
+  if (!only.ok) return null
+  const id = '__try'
+  const trial = { ...layout, placements: [...layout.placements, { id, itemId: item.id, x: only.spot.x, y: only.spot.y, rotation: only.spot.rotation }] }
+  const issues = checkLayout({ ...doc, items: [...doc.items, item], layouts: doc.layouts.map((l) => (l.id === layout.id ? trial : l)) }, trial)
+  return issues.some((i) => i.severity !== 'info' && i.placementIds.includes(id)) ? null : only
+}
+
+/** Pieces the Next chip puts beside the piece its goal is about (a reading lamp by the armchair). */
+const BESIDE = new Set(['floor-lamp', 'table-lamp', 'side-table'])
+
 const article = (name: string) => (/^[aeiou]/i.test(name) ? 'an' : 'a')
 
-export function BuyDrawer() {
+/** `top` rides just above the drawer: the selected piece's actions, so the drawer can stay open. */
+export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   const tab = useGame((s) => s.buyTab)
   const setTab = useGame((s) => s.setBuyTab)
+  const hint = useGame((s) => s.buyHint)
   const units = useStore((s) => s.doc.apartment.units)
+  const hintRoom = useStore((s) => (hint?.roomId ? s.doc.rooms.find((r) => r.id === hint.roomId)?.name : undefined))
+  const hintEntry = hint?.category ? ENTRIES.get(hint.category) : undefined
   const items = useStore((s) => s.doc.items)
   const placements = useStore((s) => activeLayout(s.doc).placements)
   const mine = useMemo(() => items.filter(isMine), [items])
@@ -63,6 +120,20 @@ export function BuyDrawer() {
   }, [placements])
 
   const group = CATEGORY_GROUPS.find((g) => g.key === tab) ?? CATEGORY_GROUPS[0]
+  const gridRef = useRef<HTMLDivElement>(null)
+  // Bring the card the "Next" chip pointed at into view.
+  useEffect(() => {
+    const grid = gridRef.current
+    const card = hint ? grid?.querySelector<HTMLElement>('.buy-card.hinted') : null
+    if (!grid || !card) return
+    // Scroll only the grid (scrollIntoView would also nudge the fixed game layer), by layout
+    // offsets so the cards' entrance animation doesn't throw the numbers off.
+    const left = card.offsetLeft - grid.offsetLeft
+    const top = card.offsetTop - grid.offsetTop
+    const x = left < grid.scrollLeft || left + card.offsetWidth > grid.scrollLeft + grid.clientWidth ? Math.max(0, left - 12) : grid.scrollLeft
+    const y = top < grid.scrollTop || top + card.offsetHeight > grid.scrollTop + grid.clientHeight ? Math.max(0, top - 8) : grid.scrollTop
+    if (x !== grid.scrollLeft || y !== grid.scrollTop) grid.scrollTo({ left: x, top: y })
+  }, [hint, tab])
   const [popped, setPopped] = useState<{ key: string; n: number } | null>(null)
   const popTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(popTimer.current), [])
@@ -72,18 +143,40 @@ export function BuyDrawer() {
     popTimer.current = setTimeout(() => setPopped(null), 900)
   }
 
-  const place = (entry: CatalogEntry, preset?: { name: string; width: number; depth: number }) => {
+  const place = (entry: CatalogEntry, preset?: SizeChip) => {
     const st = useStore.getState()
-    if (preset) st.addItem(itemFromCatalog(entry, uid(), { name: `${preset.name} bed`, width: preset.width, depth: preset.depth }))
-    else st.addItemFromCatalog(entry) // adds the item and a placement at the default drop point, and selects it
-    const name = preset ? `${preset.name.toLowerCase()} bed` : displayName(entry).toLowerCase()
-    st.notify(`Placed ${article(name)} ${name}. Drag it into place.`)
-    celebrate(entry.category + (preset ? `:${preset.name}` : ''))
+    const item = preset
+      ? itemFromCatalog(entry, uid(), { name: preset.name, width: preset.width, depth: preset.depth, ...(preset.height ? { height: preset.height } : {}) })
+      : itemFromCatalog(entry, uid())
+    // A goal about one room ("Nothing in the Bathroom yet") puts the piece it pointed at in that room, if it fits there.
+    const room = hint?.category === entry.category && hint.roomId ? st.doc.rooms.find((r) => r.id === hint.roomId) : undefined
+    const there = room ? dropIn(st.doc, item, room) : null
+    // A goal about one piece ("A cozy reading corner") puts the lamp beside that piece (the armchair).
+    const nearId = !there?.ok && hint?.category === entry.category ? hint.near ?? (BESIDE.has(entry.category) ? nookTarget(st.doc, activeLayout(st.doc)) : undefined) : undefined
+    const beside = nearId ? findDrop(st.doc, activeLayout(st.doc), item, { nextTo: nearId }) : null
+    // A piece the goal named a place for (a coffee table in front of the sofa) that has no room
+    // there says so, rather than landing across the room where it finishes nothing.
+    if (beside && !beside.ok && hint?.near) {
+      st.notify(beside.reason)
+      return
+    }
+    const spot = there?.ok ? there.spot : beside?.ok ? beside.spot : undefined
+    // Otherwise the item goes to a free spot that suits it and is selected; when nothing fits, the store toasts why.
+    let res = spot ? st.addItem(item, spot) : st.addItem(item)
+    if (res.ok && spot) {
+      res = { ...res, roomName: there?.ok ? room!.name : spot.roomName }
+    }
+    if (!res.ok) return
+    if (hint) useGame.getState().setBuyHint(null)
+    const name = (preset ? preset.name : displayName(entry)).replace(/^(\w)(?=[a-z])/, (c) => c.toLowerCase())
+    st.notify(`Placed ${article(name)} ${name}${res.roomName ? ` in the ${res.roomName}` : ''}.`)
+    celebrate(entry.category + (preset ? `:${preset.label}` : ''))
   }
   const placeMine = (item: Item) => {
     const st = useStore.getState()
-    st.placeItem(item.id) // adds a placement of the same item and selects it
-    st.notify(`Placed another “${item.name}”.`)
+    const res = st.placeItem(item.id) // adds a placement of the same item and selects it
+    if (!res.ok) return
+    st.notify(`Placed another “${item.name}”${res.roomName ? ` in the ${res.roomName}` : ''}.`)
     celebrate(item.id)
   }
   const shop = () => useGame.getState().openSheet('shop')
@@ -100,9 +193,13 @@ export function BuyDrawer() {
 
   return (
     <div className="buy-drawer" role="region" aria-label="Buy furniture">
+      {top}
       <div className="buy-tabs" role="tablist" aria-label="Furniture categories">
-        {CATEGORY_GROUPS.map((g) => (
-          <button key={g.key} role="tab" aria-selected={g.key === group.key} aria-label={g.label} className={`buy-tab ${g.key === group.key ? 'on' : ''}`} onClick={() => setTab(g.key)}>
+        {CATEGORY_GROUPS.map((g, gi) => (
+          <button key={g.key} role="tab" aria-selected={g.key === group.key} aria-label={g.label} title={`${g.label} (${gi + 1})`} className={`buy-tab ${g.key === group.key ? 'on' : ''}`} onClick={() => {
+              setTab(g.key)
+              if (hint) useGame.getState().setBuyHint(null)
+            }}>
             <span className="buy-tab-icon">
               {g.key === 'mine' ? <IconStar /> : <ItemThumb category={TAB_ICON[g.key] ?? g.categories[0]} color={ENTRIES.get(TAB_ICON[g.key] ?? g.categories[0])?.color ?? '#9aa4ad'} size={34} />}
               {g.key === 'mine' && mine.length > 0 && <span className="buy-badge">{mine.length}</span>}
@@ -112,7 +209,20 @@ export function BuyDrawer() {
         ))}
       </div>
 
-      <div className="buy-grid" key={group.key} role="tabpanel" aria-label={group.label}>
+      {hintEntry && (
+        <div className="feel-hint-pill" role="status">
+          Tap <b>{displayName(hintEntry)}</b>
+          {hintRoom ? (
+            <>
+              {' '}
+              <span aria-label="in the">→</span> <b>{hintRoom}</b>
+            </>
+          ) : (
+            ' to place it'
+          )}
+        </div>
+      )}
+      <div className="buy-grid" ref={gridRef} key={group.key} role="tabpanel" aria-label={group.label}>
         {group.key === 'mine' ? (
           <>
             <ShopCard onClick={shop} i={0} />
@@ -151,8 +261,9 @@ export function BuyDrawer() {
               const entry = ENTRIES.get(cat)
               if (!entry) return null
               const name = displayName(entry)
+              const chips = sizeChips(entry)
               return (
-                <div key={cat} className={`buy-card ${isPopped(cat) || popped?.key.startsWith(cat + ':') ? 'pop' : ''}`} style={{ ['--i' as string]: k }} draggable onDragStart={(e) => onDrag(e, cat)}>
+                <div key={cat} className={`buy-card ${isPopped(cat) || popped?.key.startsWith(cat + ':') ? 'pop' : ''}${hint?.category === cat ? ' hinted' : ''}`} style={{ ['--i' as string]: k }} draggable onDragStart={(e) => onDrag(e, cat)}>
                   <button className="buy-hit" onClick={() => place(entry)} aria-label={`Place ${article(name)} ${name.toLowerCase()}`}>
                     <span className="buy-thumb">
                       <ItemThumb category={cat} color={entry.color} size={78} />
@@ -160,11 +271,11 @@ export function BuyDrawer() {
                     <span className="buy-name">{name}</span>
                     <span className="buy-size">{footprint(entry.width, entry.depth, units)}</span>
                   </button>
-                  {entry.presets && (
+                  {chips.length > 0 && (
                     <span className="buy-presets">
-                      {entry.presets.map((pr) => (
-                        <button key={pr.name} className="buy-preset" onClick={() => place(entry, pr)} aria-label={`Place a ${pr.name.toLowerCase()} bed, ${footprint(pr.width, pr.depth, units)}`} title={footprint(pr.width, pr.depth, units)}>
-                          {pr.name}
+                      {chips.map((pr) => (
+                        <button key={pr.label} className="buy-preset" onClick={() => place(entry, pr)} aria-label={`Place ${article(pr.name)} ${pr.name.toLowerCase()}, ${footprint(pr.width, pr.depth, units)}`} title={`${pr.name}, ${footprint(pr.width, pr.depth, units)}`}>
+                          {pr.label}
                         </button>
                       ))}
                     </span>

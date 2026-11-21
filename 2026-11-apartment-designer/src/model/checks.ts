@@ -3,6 +3,7 @@ import {
   bounds,
   centroid,
   clearanceZones,
+  closestPointOnSegment,
   convexOverlap,
   doorSwing,
   footprint,
@@ -55,11 +56,57 @@ export function doorSwings(rooms: Room[]) {
   return out
 }
 
+/** Pull-out space (m) kept free along the long sides of a dining table that seats four or more, measured from the table edge. */
+export const TABLE_PULL_OUT = 0.75
+/** A dining chair counts as at its table when this close (edge to edge, m). */
+export const CHAIR_REACH = 0.3
+/** Storage whose doors or drawers need this much free floor in front, at the very least (m). Up to the catalog ideal is a soft preference. */
+export const MIN_DRAWER_FRONT = 0.75
+export const DRAWER_PIECES = new Set(['dresser', 'wardrobe'])
+/** Less than this behind a chair pulled up to a table always gets flagged (m). */
+const MIN_CHAIR_BACK = 0.15
+
+/** Smallest distance between two convex polygons (0 when they touch or overlap). */
+export function polygonGap(a: Vec2[], b: Vec2[]): number {
+  if (convexOverlap(a, b, 0)) return 0
+  let best = Infinity
+  for (const [pts, poly] of [
+    [a, b],
+    [b, a],
+  ] as const)
+    for (const pt of pts)
+      for (let i = 0; i < poly.length; i++) best = Math.min(best, closestPointOnSegment(pt, poly[i], poly[(i + 1) % poly.length]).distance)
+  return best
+}
+
+/**
+ * Free floor a dining chair needs behind it (m). Pulled up to a table, the pull-out is measured
+ * from the table edge: TABLE_PULL_OUT less the gap to the table and the chair's own depth (never
+ * under 15 cm). Away from any table it needs its own back clearance.
+ */
+export function chairBackNeed(chair: { item: Pick<Item, 'depth' | 'clearance'>; body: Vec2[] }, tables: { body: Vec2[] }[]): number {
+  const gaps = tables.map((t) => polygonGap(chair.body, t.body)).filter((g) => g <= CHAIR_REACH)
+  if (!gaps.length) return chair.item.clearance.back
+  return Math.max(MIN_CHAIR_BACK, TABLE_PULL_OUT - Math.min(...gaps) - chair.item.depth)
+}
+
+/**
+ * The clearance a piece is checked against: a dresser or wardrobe needs only MIN_DRAWER_FRONT in
+ * front (its catalog ideal is a placement preference), and a dining chair at a table needs only
+ * what chairBackNeed says behind it.
+ */
+export function checkedClearance(item: Item, body: Vec2[], tables: { body: Vec2[] }[]): Item['clearance'] {
+  const c = item.clearance
+  if (DRAWER_PIECES.has(item.category) && c.front > MIN_DRAWER_FRONT) return { ...c, front: MIN_DRAWER_FRONT }
+  if (item.category === 'dining-chair' && c.back > 0) return { ...c, back: chairBackNeed({ item, body }, tables) }
+  return c
+}
+
 export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   const issues: Issue[] = []
   const units = doc.apartment.units
   const placed = placedItems(doc, layout)
-  const solid = placed.filter((x) => !x.item.floorLevel)
+  const solid = placed.filter((x) => !x.item.floorLevel && !x.p.on)
 
   // Items overlapping each other.
   for (let i = 0; i < solid.length; i++)
@@ -78,6 +125,8 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
 
   // Items crossing walls or outside every room.
   for (const x of placed) {
+    // A table lamp stands on its host, which already answers for the walls.
+    if (x.p.on) continue
     const inside = doc.rooms.some((r) => polygonInsideRoom(x.body, r.polygon))
     if (!inside)
       issues.push({
@@ -90,10 +139,13 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   }
 
   // Clearance zones blocked by other items or walls.
+  const tables = solid.filter((o) => o.item.category === 'dining-table')
   for (const x of placed) {
-    for (const zone of clearanceZones(x.item, x.p)) {
-      const need = x.item.clearance[zone.side]
-      const blockers = solid.filter((o) => o.p.id !== x.p.id && convexOverlap(zone.poly, o.body, 0.005))
+    if (x.p.on) continue
+    const checked = { ...x.item, clearance: checkedClearance(x.item, x.body, tables) }
+    for (const zone of clearanceZones(checked, x.p)) {
+      const need = checked.clearance[zone.side]
+      const blockers = solid.filter((o) => o.p.id !== x.p.id && !sideCompanion(x.item.category, zone.side, o.item.category) && convexOverlap(zone.poly, o.body, 0.005))
       for (const b of blockers)
         issues.push({
           id: `clear:${x.p.id}:${zone.side}:${b.p.id}`,
@@ -132,6 +184,15 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   }
 
   return issues
+}
+
+/**
+ * Pieces that belong in another's clearance and don't block it: a nightstand or side table beside
+ * a bed or seat, the chair at a desk.
+ */
+export function sideCompanion(ownerCategory: string, side: string, blockerCategory: string) {
+  if (side === 'front' && ownerCategory === 'desk' && blockerCategory === 'office-chair') return true
+  return (side === 'left' || side === 'right') && ['bed', 'sofa', 'armchair'].includes(ownerCategory) && ['nightstand', 'side-table', 'floor-lamp', 'table-lamp'].includes(blockerCategory)
 }
 
 function centerOf(poly: Vec2[]) {
@@ -221,7 +282,7 @@ export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport 
   const emptyFree = free.slice()
   // Block furniture (rugs don't block).
   for (const x of placedItems(doc, layout)) {
-    if (x.item.floorLevel) continue
+    if (x.item.floorLevel || x.p.on) continue
     fillConvex(x.body, 0)
   }
 

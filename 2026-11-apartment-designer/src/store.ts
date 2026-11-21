@@ -1,11 +1,12 @@
 import { create } from 'zustand'
 import { catalogEntry, itemFromCatalog, type CatalogEntry } from './model/catalog'
-import { add, bounds, centroid, closestPointOnSegment, dist, norm, pointInPolygon, scale, sub, v, wallSegments } from './model/geometry'
+import { add, dist, norm, scale, sub } from './model/geometry'
+import { findDrop, HOSTED, reconcileHosts, type DropResult } from './model/placement'
 import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
 import type { Doc, Item, Layout, Opening, Placement, Room, ScanRef, ScanReference, Units, Vec2 } from './model/types'
 import { calibrate, rescaleAbout } from './scan/align'
-import { loadDoc, saveDoc } from './storage'
+import { deleteHome as dropHome, listHomes, loadDoc, loadHome, restoreHome as undropHome, saveDoc, setCurrentHome } from './storage'
 
 export type Mode = 'select' | 'draw-room' | 'door' | 'window' | 'scan-measure' | 'scan-straighten' | 'scan-move'
 export type View = 'split' | 'plan' | '3d' | 'compare'
@@ -32,6 +33,8 @@ interface UIState {
   scanDraft: { scanId: string; a: Vec2; b?: Vec2 } | null
   /** 3D view: how to show scans. */
   scan3d: 'off' | 'with-model' | 'scan-only'
+  /** The last save didn't reach storage (full, most likely). It's retried on every change. */
+  saveFailed: boolean
 }
 
 interface State extends UIState {
@@ -73,10 +76,11 @@ interface State extends UIState {
   updateOpening: (roomId: string, id: string, patch: Partial<Opening>) => void
   deleteOpening: (roomId: string, id: string) => void
 
-  addItemFromCatalog: (entry: CatalogEntry, at?: Vec2) => void
+  /** Without `at`, the piece goes to a free spot that suits it; when none exists nothing is added and a toast says why. */
+  addItemFromCatalog: (entry: CatalogEntry, at?: PlaceAt) => PlaceResult
   /** Add a new item to the library and place it in the active layout. */
-  addItem: (item: Item, at?: Vec2) => void
-  placeItem: (itemId: string, at?: Vec2) => void
+  addItem: (item: Item, at?: PlaceAt) => PlaceResult
+  placeItem: (itemId: string, at?: PlaceAt) => PlaceResult
   updateItem: (id: string, patch: Partial<Item>) => void
   deleteItem: (id: string) => void
   updatePlacement: (id: string, patch: Partial<Placement>) => void
@@ -108,41 +112,38 @@ const mapRoom = (d: Doc, id: string, fn: (r: Room) => Room): Doc => ({ ...d, roo
 const mapLayout = (d: Doc, fn: (l: Layout) => Layout): Doc => ({ ...d, layouts: d.layouts.map((l) => (l.id === d.activeLayoutId ? fn(l) : l)) })
 
 /**
- * Where a new piece lands when it isn't dropped somewhere specific: the open spot inside a room
- * that is farthest from the furniture already there (rooms in order, so the first room fills first).
+ * Where a new piece lands when it isn't dropped somewhere specific: a legal spot (fully inside a
+ * room, clear of other pieces and door swings) in the room that suits it, backed onto a wall or
+ * next to its partner piece. See findDrop in model/placement.ts. Null with a reason when nothing fits.
  */
-export function defaultDrop(d: Doc, item?: Pick<Item, 'width' | 'depth'>): Vec2 {
-  if (!d.rooms.length) return v(1, 1)
-  const layout = activeLayout(d)
-  const byId = new Map(d.items.map((i) => [i.id, i]))
-  const others = layout.placements.flatMap((p) => {
-    const it = byId.get(p.itemId)
-    return it && !it.floorLevel ? [{ c: v(p.x, p.y), r: Math.hypot(it.width, it.depth) / 2 }] : []
-  })
-  const r0 = item ? Math.hypot(item.width, item.depth) / 2 : 0.4
-  let best: Vec2 | null = null
-  let bestScore = -Infinity
-  d.rooms.forEach((room, ri) => {
-    const b = bounds(room.polygon)
-    const step = 0.25
-    for (let x = b.minX + step; x < b.maxX; x += step)
-      for (let y = b.minY + step; y < b.maxY; y += step) {
-        const p = v(x, y)
-        if (!pointInPolygon(p, room.polygon)) continue
-        // Keep the whole piece inside the room.
-        const wall = Math.min(...wallSegments(room).map(([a, c]) => closestPointOnSegment(p, a, c).distance))
-        if (wall < Math.min(item ? Math.min(item.width, item.depth) / 2 : 0.3, 0.6)) continue
-        const gap = others.length ? Math.min(...others.map((o) => dist(o.c, p) - o.r - r0)) : 3
-        const center = centroid(room.polygon)
-        // Enough room beats more room; then prefer earlier rooms and spots near the middle.
-        const score = Math.min(gap, 0.6) * 10 - ri * 2 - dist(p, center) * 0.3
-        if (score > bestScore) {
-          bestScore = score
-          best = p
-        }
-      }
-  })
-  return best ?? centroid(d.rooms[0].polygon)
+export function defaultDrop(d: Doc, item: Item, near?: Vec2): DropResult {
+  return findDrop(d, activeLayout(d), item, { near })
+}
+
+/** Where a piece goes when the caller picks the spot: a point, optionally turned, optionally on a host (table lamps). */
+export type PlaceAt = Vec2 & { rotation?: number; on?: string }
+
+/** What happened when a piece was added: where it went, or why it couldn't be placed. */
+export type PlaceResult = { ok: true; placementId: string; roomName?: string } | { ok: false; reason: string }
+
+/** Table lamps in the active layout standing on a placement that `gone` matches, with their host's name. */
+function hostedOn(d: Doc, gone: (p: Placement) => boolean) {
+  const l = activeLayout(d)
+  const names = new Map(d.items.map((i) => [i.id, i.name]))
+  const hosts = new Map(l.placements.filter(gone).map((p) => [p.id, p]))
+  return l.placements.filter((p) => p.on && hosts.has(p.on) && !gone(p)).map((p) => ({ id: p.id, lamp: names.get(p.itemId) ?? 'lamp', host: names.get(hosts.get(p.on!)!.itemId) ?? 'table' }))
+}
+
+/** Say what happened to the lamps that stood on a deleted piece. */
+function tellHosted(d: Doc, watch: ReturnType<typeof hostedOn>, notify: (m: string) => void) {
+  if (!watch.length) return
+  const l = activeLayout(d)
+  const names = new Map(d.items.map((i) => [i.id, i.name]))
+  const w = watch[0]
+  const now = l.placements.find((p) => p.id === w.id)
+  const host = now?.on && l.placements.find((p) => p.id === now.on)
+  if (host) notify(`The ${w.lamp.toLowerCase()} moved to the ${(names.get(host.itemId) ?? 'other table').toLowerCase()}.`)
+  else notify(`The ${w.lamp.toLowerCase()} came off with the ${w.host.toLowerCase()}.`)
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -162,11 +163,14 @@ export const useStore = create<State>((set, get) => ({
   activeScanId: null,
   scanDraft: null,
   scan3d: 'with-model',
+  saveFailed: false,
 
   update: (fn) =>
     set((s) => {
-      const next = fn(s.doc)
-      if (next === s.doc) return s
+      const changed = fn(s.doc)
+      if (changed === s.doc) return s
+      // Table lamps follow their host, or move to another top (or come off) when it goes.
+      const next = reconcileHosts(s.doc, changed)
       if (s.gesture) return { doc: next }
       return { doc: next, past: [...s.past, s.doc].slice(-HISTORY_LIMIT), future: [] }
     }),
@@ -295,33 +299,49 @@ export const useStore = create<State>((set, get) => ({
 
   addItemFromCatalog: (entry, at) => get().addItem(itemFromCatalog(entry, uid()), at),
   addItem: (item, at) => {
+    const d0 = get().doc
+    const drop = at ? null : defaultDrop(d0, item)
+    if (drop && !drop.ok) {
+      get().notify(drop.reason)
+      return drop
+    }
+    const spot = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: at!.rotation ?? 0, on: at!.on }
     const pid = uid()
-    get().update((d) => {
-      const p = at ?? defaultDrop(d, item)
-      return mapLayout({ ...d, items: [...d.items, item] }, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: item.id, x: p.x, y: p.y, rotation: 0 }] }))
-    })
+    get().update((d) => mapLayout({ ...d, items: [...d.items, item] }, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: item.id, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}) }] })))
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
+    return { ok: true, placementId: pid, roomName: drop?.ok ? drop.spot.roomName : undefined }
   },
   placeItem: (itemId, at) => {
+    const d0 = get().doc
+    const item = d0.items.find((i) => i.id === itemId)
+    if (!item) return { ok: false, reason: 'That piece is gone.' }
+    const drop = at ? null : defaultDrop(d0, item)
+    if (drop && !drop.ok) {
+      get().notify(drop.reason)
+      return drop
+    }
+    const spot = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: at!.rotation ?? 0, on: at!.on }
     const pid = uid()
-    get().update((d) => {
-      const p = at ?? defaultDrop(d, d.items.find((i) => i.id === itemId))
-      return mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId, x: p.x, y: p.y, rotation: 0 }] }))
-    })
+    get().update((d) => mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}) }] })))
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
+    return { ok: true, placementId: pid, roomName: drop?.ok ? drop.spot.roomName : undefined }
   },
   updateItem: (id, patch) => get().update((d) => ({ ...d, items: d.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) })),
   deleteItem: (id) => {
+    const watch = hostedOn(get().doc, (p) => p.itemId === id)
     get().update((d) => ({
       ...d,
       items: d.items.filter((i) => i.id !== id),
       layouts: d.layouts.map((l) => ({ ...l, placements: l.placements.filter((p) => p.itemId !== id) })),
     }))
+    tellHosted(get().doc, watch, get().notify)
     set({ selection: null })
   },
   updatePlacement: (id, patch) => get().update((d) => mapLayout(d, (l) => ({ ...l, placements: l.placements.map((p) => (p.id === id ? { ...p, ...patch } : p)) }))),
   deletePlacement: (id) => {
+    const watch = hostedOn(get().doc, (p) => p.id === id)
     get().update((d) => mapLayout(d, (l) => ({ ...l, placements: l.placements.filter((p) => p.id !== id) })))
+    tellHosted(get().doc, watch, get().notify)
     set({ selection: null })
   },
   duplicatePlacement: (id) => {
@@ -332,8 +352,19 @@ export const useStore = create<State>((set, get) => ({
     // A duplicate is a new item (its own size and name), placed a little offset.
     const copy: Item = { ...item, id: uid(), clearance: { ...item.clearance } }
     const pid = uid()
+    // Prefer a free spot near the original (the other side of the bed for a nightstand); else a small offset.
+    const drop = findDrop(d0, activeLayout(d0), copy, { near: { x: p.x, y: p.y } })
+    // A table lamp never floats: with no free top, nothing is copied.
+    if (!drop.ok && HOSTED.has(item.category)) {
+      get().notify(drop.reason)
+      return
+    }
+    const spot = drop.ok ? drop.spot : { x: p.x + 0.3, y: p.y + 0.3, rotation: p.rotation, on: undefined }
     get().update((d) =>
-      mapLayout({ ...d, items: [...d.items, copy] }, (l) => ({ ...l, placements: [...l.placements, { ...p, id: pid, itemId: copy.id, x: p.x + 0.3, y: p.y + 0.3 }] })),
+      mapLayout({ ...d, items: [...d.items, copy] }, (l) => ({
+        ...l,
+        placements: [...l.placements, { ...p, id: pid, itemId: copy.id, x: spot.x, y: spot.y, rotation: spot.rotation, on: spot.on }],
+      })),
     )
     set({ selection: { kind: 'placement', id: pid } })
   },
@@ -350,18 +381,23 @@ export const useStore = create<State>((set, get) => ({
       })),
     ),
 
+  // Switching designs (including into a new one or a copy) starts that design's undo history
+  // afresh, so Undo never jumps from one design to another.
   addLayout: () =>
-    get().update((d) => {
+    switchDesign((d) => {
       const id = uid()
-      return { ...d, layouts: [...d.layouts, { id, name: `Layout ${d.layouts.length + 1}`, placements: [] }], activeLayoutId: id }
+      return { ...d, layouts: [...d.layouts, { id, name: designName(d.layouts.map((l) => l.name)), placements: [] }], activeLayoutId: id }
     }),
   duplicateLayout: (id) =>
-    get().update((d) => {
+    switchDesign((d) => {
       const src = d.layouts.find((l) => l.id === id)
       if (!src) return d
       const nid = uid()
-      // Placements reference the shared item library, so a copy just needs new placement ids.
-      const copy: Layout = { id: nid, name: `${src.name} (copy)`, placements: src.placements.map((p) => ({ ...p, id: uid() })) }
+      // Placements reference the shared item library, so a copy just needs new placement ids
+      // (and table lamps pointed at the copies of their hosts).
+      const ids = new Map(src.placements.map((p) => [p.id, uid()]))
+      const placements = src.placements.map((p) => ({ ...p, id: ids.get(p.id)!, ...(p.on ? { on: ids.get(p.on) ?? p.on } : {}) }))
+      const copy: Layout = { id: nid, name: copyName(src.name, d.layouts.map((l) => l.name)), placements }
       return { ...d, layouts: [...d.layouts, copy], activeLayoutId: nid }
     }),
   renameLayout: (id, name) => get().update((d) => ({ ...d, layouts: d.layouts.map((l) => (l.id === id ? { ...l, name } : l)) })),
@@ -371,10 +407,7 @@ export const useStore = create<State>((set, get) => ({
       const layouts = d.layouts.filter((l) => l.id !== id)
       return { ...d, layouts, activeLayoutId: d.activeLayoutId === id ? layouts[0].id : d.activeLayoutId }
     }),
-  setActiveLayout: (id) => {
-    get().update((d) => ({ ...d, activeLayoutId: id }))
-    set({ selection: null })
-  },
+  setActiveLayout: (id) => switchDesign((d) => (d.activeLayoutId === id || !d.layouts.some((l) => l.id === id) ? d : { ...d, activeLayoutId: id })),
 
   addScan: (ref) => {
     get().update((d) => ({ ...d, scans: [...(d.scans ?? []), ref] }))
@@ -390,6 +423,21 @@ export const useStore = create<State>((set, get) => ({
     get().update((d) => mapScan(d, id, (s) => recalibrated(s, s.references.map((r) => (r.id === refId ? { ...r, ...patch } : r)), anchor))),
   deleteScanReference: (id, refId, anchor) => get().update((d) => mapScan(d, id, (s) => recalibrated(s, s.references.filter((r) => r.id !== refId), anchor))),
 }))
+
+/** A change that moves to another design: applied without an undo entry, and history starts over. */
+function switchDesign(fn: (d: Doc) => Doc) {
+  const s = useStore.getState()
+  const next = fn(s.doc)
+  if (next === s.doc) return
+  useStore.setState({ doc: next, past: [], future: [], selection: null, gesture: false })
+}
+
+/** A copy is named after its source: "Move-in day" → "Move-in day 2", then "Move-in day 3". */
+export function copyName(source: string, taken: string[]) {
+  const t = new Set(taken)
+  const base = source.replace(/ \d+$/, '') || source
+  for (let n = 2; ; n++) if (!t.has(`${base} ${n}`)) return `${base} ${n}`
+}
 
 const mapScan = (d: Doc, id: string, fn: (r: ScanRef) => ScanRef): Doc => ({ ...d, scans: (d.scans ?? []).map((r) => (r.id === id ? fn(r) : r)) })
 
@@ -408,18 +456,104 @@ function validSelection(d: Doc, s: Selection): Selection {
   return d.rooms.some((r) => r.id === s.roomId && r.openings.some((o) => o.id === s.id)) ? s : null
 }
 
+/** Is this home still a blank slate (nothing drawn, placed or scanned)? */
+const isBlank = (d: Doc) => !d.rooms.length && !d.items.length && !(d.scans ?? []).length
+
+/** A name no other home has: "Sample apartment", then "Sample apartment 2"... */
+function freshHomeName(base: string, except: string) {
+  const taken = new Set(listHomes().filter((h) => h.id !== except).map((h) => h.name))
+  if (!taken.has(base)) return base
+  for (let n = 2; ; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`
+}
+
+/**
+ * Open a brand new home in its own save slot. The home that was open stays saved and can be
+ * picked again from Your designs. A blank home being left (a scan that was abandoned) is dropped
+ * instead of piling up.
+ */
+function moveInto(d: Doc) {
+  const prev = useStore.getState().doc
+  const doc = { ...d, apartment: { ...d.apartment, name: freshHomeName(d.apartment.name, d.apartment.id) } }
+  useStore.setState({ doc, past: [], future: [], selection: null, activeScanId: null, scanDraft: null, mode: 'select' })
+  flushSave()
+  if (isBlank(prev)) dropHome(prev.apartment.id)
+}
+
 export function newEmptyDoc() {
-  useStore.getState().replaceDoc(emptyDoc())
+  const d = emptyDoc()
+  moveInto({ ...d, layouts: d.layouts.map((l) => ({ ...l, name: DESIGN_NAMES[0] })) })
 }
 export function loadSample() {
-  useStore.getState().replaceDoc(sampleDoc())
+  moveInto(sampleDoc())
+}
+
+/** Open a document from a file as a home of its own (a copy if that home is already saved). */
+export function openDocAsHome(d: Doc) {
+  const taken = listHomes().some((h) => h.id === d.apartment.id) || useStore.getState().doc.apartment.id === d.apartment.id
+  moveInto(taken ? { ...d, apartment: { ...d.apartment, id: uid() } } : d)
+}
+
+/** Open another saved home. Undo history belongs to the home it was made in, so it starts fresh. */
+export function switchHome(id: string): boolean {
+  if (useStore.getState().doc.apartment.id === id) return true
+  flushSave()
+  const d = loadHome(id)
+  if (!d) return false
+  useStore.setState({ doc: d, past: [], future: [], selection: null, activeScanId: null, scanDraft: null, mode: 'select' })
+  return true
+}
+
+/** Delete a saved home (never the last one). Deleting the open home switches to another first. */
+export function deleteHome(id: string): boolean {
+  const homes = listHomes()
+  if (homes.length <= 1 || !homes.some((h) => h.id === id)) return false
+  if (useStore.getState().doc.apartment.id === id) {
+    const other = homes.find((h) => h.id !== id)
+    if (!other || !switchHome(other.id)) return false
+  }
+  flushSave()
+  // A save of the deleted home still waiting for space must not bring it back.
+  pending.delete(id)
+  return dropHome(id)
+}
+
+/** Bring back a home deleted with deleteHome (it stays in the trash for a week). */
+export function restoreHome(id: string): boolean {
+  flushSave()
+  return undropHome(id)
+}
+
+/** Playful names for new designs and copies; numbered once they run out. */
+export const DESIGN_NAMES = ['First idea', 'Cozy idea', 'Plan B', 'Fresh start', 'Sunday shuffle', 'Big move', 'Wild card', 'Snug version', 'Open plan', 'Plan C', 'Dream version', 'One more idea']
+export function designName(taken: string[]) {
+  const t = new Set(taken)
+  const free = DESIGN_NAMES.find((n) => !t.has(n))
+  if (free) return free
+  for (let n = 2; ; n++) if (!t.has(`Idea ${n}`)) return `Idea ${n}`
 }
 export { catalogEntry }
 
-// Persist the document locally (debounced).
+// Persist the document locally (debounced), into the open home's own slot. A save that fails
+// (storage full) stays pending, per home, and is retried on the next change and on pagehide; until
+// then a toast that stays up offers a backup download.
 let saveTimer: ReturnType<typeof setTimeout> | undefined
+const pending = new Map<string, Doc>()
+export function flushSave(): boolean {
+  clearTimeout(saveTimer)
+  for (const [id, d] of [...pending]) if (saveDoc(d)) pending.delete(id)
+  const failed = pending.size > 0
+  if (useStore.getState().saveFailed !== failed) useStore.setState({ saveFailed: failed })
+  return !failed
+}
 useStore.subscribe((s, prev) => {
   if (s.doc === prev.doc) return
+  // A different home: finish saving the one being left right away, then remember the new one.
+  if (s.doc.apartment.id !== prev.doc.apartment.id) {
+    flushSave()
+    setCurrentHome(s.doc.apartment.id)
+  }
   clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => saveDoc(s.doc), 300)
+  pending.set(s.doc.apartment.id, s.doc)
+  saveTimer = setTimeout(flushSave, 300)
 })
+if (typeof window !== 'undefined') window.addEventListener('pagehide', flushSave)

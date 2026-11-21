@@ -553,3 +553,59 @@ export function snapAxes(strength: (p: Vec2) => number, p: Vec2, radius: number,
   const dy = profile(false)
   return { x: dx == null ? undefined : p.x + dx, y: dy == null ? undefined : p.y + dy }
 }
+
+/**
+ * Corner magnet: within `radius` of p, find where a vertical and a horizontal wall meet (a corner
+ * of the wall outline), or else where a single wall line ends, and return that point. Walls are
+ * found along the plan axes, like snapAxes. Null when there is no corner or wall end nearby.
+ */
+export function snapCorner(strength: (p: Vec2) => number, p: Vec2, radius: number, step: number): Vec2 | null {
+  // Keep the sample grid bounded however far the plan is zoomed out.
+  const st = Math.max(step, radius / 50)
+  const hit = snapAxes(strength, p, radius, st)
+  if (hit.x != null && hit.y != null) {
+    // Both lines must actually reach the meeting point (not two walls crossing far apart).
+    const c = { x: hit.x, y: hit.y }
+    const near = (dx: number, dy: number) => {
+      let m = 0
+      for (let i = 1; i <= 4; i++) m = Math.max(m, strength({ x: c.x + dx * i * st, y: c.y + dy * i * st }))
+      return m > 0
+    }
+    const vert = near(0, -1) || near(0, 1)
+    const horiz = near(-1, 0) || near(1, 0)
+    if (vert && horiz && Math.hypot(c.x - p.x, c.y - p.y) <= radius * 1.42) return c
+  }
+  // One wall: look for its end along the line, near the cursor.
+  const along = (vertical: boolean, at: number): Vec2 | null => {
+    const n = Math.max(2, Math.round(radius / st))
+    const pt = (k: number) => (vertical ? { x: at, y: p.y + k * st } : { x: p.x + k * st, y: at })
+    const on = (k: number) => {
+      // A little thickness, so a slightly wobbly wall still reads as one line.
+      for (const o of [-1, 0, 1]) {
+        const q = pt(k)
+        if (strength(vertical ? { x: q.x + o * st, y: q.y } : { x: q.x, y: q.y + o * st }) > 0) return true
+      }
+      return false
+    }
+    const gap = 3
+    const end = (dir: number) => {
+      let miss = 0
+      let last = 0
+      for (let k = 0; Math.abs(k) <= n; k += dir) {
+        if (on(k)) {
+          last = k
+          miss = 0
+        } else if (++miss > gap) return last
+      }
+      return null // the wall runs on past the window
+    }
+    if (!on(0) && !on(1) && !on(-1)) return null
+    const ends = [end(1), end(-1)].filter((k): k is number => k != null)
+    if (!ends.length) return null
+    const k = ends.reduce((a, b) => (Math.abs(a) <= Math.abs(b) ? a : b))
+    return pt(k)
+  }
+  if (hit.x != null && hit.y == null) return along(true, hit.x)
+  if (hit.y != null && hit.x == null) return along(false, hit.y)
+  return null
+}
