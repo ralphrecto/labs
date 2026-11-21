@@ -6,6 +6,12 @@ import type { Doc, Layout } from '../model/types'
 import { deleteHome, restoreHome, switchHome, useStore } from '../store'
 import { listHomes, type HomeEntry } from '../storage'
 import { scoreHome } from './goals'
+import { create } from 'zustand'
+import { catalogEntry, itemFromCatalog } from '../model/catalog'
+import { findDrop } from '../model/placement'
+import { activeLayout } from '../store'
+import { useGame } from './gameStore'
+import { applicableTwists, levelProgress, sameArrangement, TWISTS, LEVELS } from './goals'
 import * as I from './icons'
 import './designs.css'
 
@@ -155,7 +161,19 @@ export function useDesignScores(doc: Doc) {
       doc.layouts.map((l) => {
         try {
           const sc = scoreHome(doc, l, analyze(doc, l))
-          return [l.id, { stars: sc.stars, level: sc.level.name }] as const
+          const twist = l.remix ? sc.goals.find((g) => g.id === `twist:${l.remix!.twist}`) : undefined
+          return [
+            l.id,
+            {
+              stars: sc.stars,
+              level: sc.level.name,
+              progress: levelProgress(sc),
+              twistDone: !!twist?.done,
+              dream: !!l.remix?.dreamAt || (!l.remix && sc.level.index === LEVELS.length - 1),
+              /** An untouched copy: the older design it matches. */
+              sameAs: doc.layouts.slice(0, doc.layouts.indexOf(l)).find((o) => sameArrangement(o, l))?.name,
+            },
+          ] as const
         } catch {
           return [l.id, null] as const
         }
@@ -165,6 +183,8 @@ export function useDesignScores(doc: Doc) {
     let top = 0
     if (doc.layouts.length > 1)
       for (const l of doc.layouts) {
+        // An untouched copy never takes the crown from its source.
+        if (scores.get(l.id)?.sameAs) continue
         const st = scores.get(l.id)?.stars ?? 0
         if (st > top) [best, top] = [l.id, st]
       }
@@ -281,6 +301,7 @@ export function DesignsSheetBody() {
         <HomesStrip onRenameHome={() => setRenamingHome(true)} />
       )}
       <h3 className="hud-h3">Designs for {doc.apartment.name}</h3>
+      <DreamCount scores={scores} total={doc.layouts.length} />
       <div className="dz-designs">
         {doc.layouts.map((l) => {
           const active = l.id === doc.activeLayoutId
@@ -303,11 +324,21 @@ export function DesignsSheetBody() {
                     <strong>{l.name}</strong>
                   )}
                   <small>
-                    {sc && (
-                      <span className="dz-score">
-                        ★{sc.stars} · {sc.level}
-                      </span>
+                    {sc?.sameAs ? (
+                      <span className="dz-same">Same as {sc.sameAs} · move something to make it yours</span>
+                    ) : (
+                      sc && (
+                        <span className="dz-score">
+                          ★{sc.stars} · {sc.level}
+                          {l.remix && !sc.dream && (
+                            <span className="dz-bar" aria-hidden>
+                              <i style={{ width: `${Math.round(sc.progress * 100)}%` }} />
+                            </span>
+                          )}
+                        </span>
+                      )
                     )}
+                    {l.remix && <RemixBadge l={l} done={!!sc?.twistDone} dream={!!sc?.dream} />}
                     {best === l.id && (
                       <span className="dz-crown" title="Your best design">
                         <Crown />
@@ -347,5 +378,97 @@ export function DesignsSheetBody() {
         })}
       </div>
     </>
+  )
+}
+
+// ---- Remix ----------------------------------------------------------------
+
+/** Whether the twist picker is showing in the Designs sheet. */
+const useRemixPicker = create<{ open: boolean }>(() => ({ open: false }))
+
+// Closing the Designs sheet folds the picker away again.
+useGame.subscribe((s, prev) => {
+  if (prev.sheet === 'layouts' && s.sheet !== 'layouts') useRemixPicker.setState({ open: false })
+})
+
+/** Opens the Designs sheet on the twist picker (the HUD's "Remix this home" chip). */
+export function openRemixPicker() {
+  useRemixPicker.setState({ open: true })
+  useGame.getState().openSheet('layouts')
+}
+
+/** "↻ Twist: Sofa faces the window ✓", and a "Dream ★" ribbon once the remix reached Dream home. */
+function RemixBadge({ l, done, dream }: { l: Layout; done: boolean; dream: boolean }) {
+  const t = TWISTS[l.remix!.twist]
+  if (!t) return null
+  return (
+    <>
+      <span className={`dz-twist${done ? ' done' : ''}`}>
+        ↻ Twist: {t.title}
+        {done && ' ✓'}
+      </span>
+      {dream && <span className="dz-ribbon">Dream ★</span>}
+    </>
+  )
+}
+
+/** "2 of 3 designs are Dream homes", once there is more than one design and at least one Dream home. */
+function DreamCount({ scores, total }: { scores: Map<string, { dream: boolean } | null>; total: number }) {
+  const n = [...scores.values()].filter((x) => x?.dream).length
+  if (total < 2 || n === 0) return null
+  return (
+    <p className="dz-dreams">
+      {n} of {total} designs {n === 1 ? 'is a Dream home' : 'are Dream homes'}
+    </p>
+  )
+}
+
+/**
+ * "Remix this home": the primary button of the Designs sheet, which opens a small picker of three
+ * twists. Picking one makes the remix (the big pieces only) and closes the sheet.
+ */
+export function RemixPicker() {
+  const open = useRemixPicker((s) => s.open)
+  const doc = useStore((s) => s.doc)
+  const twists = useMemo(() => {
+    if (!open) return []
+    const fits = (c: string) => {
+      try {
+        return findDrop(doc, activeLayout(doc), itemFromCatalog(catalogEntry(c), '__probe')).ok
+      } catch {
+        return true
+      }
+    }
+    return applicableTwists(doc, fits).slice(0, 3)
+  }, [open, doc])
+  if (!open)
+    return (
+      <button className="g-btn primary" onClick={() => useRemixPicker.setState({ open: true })}>
+        <I.IconCopy width={18} height={18} /> Remix this home
+      </button>
+    )
+  return (
+    <div className="dz-picker g-card" role="group" aria-label="Pick a twist">
+      <p className="dz-picker-h">
+        Remix <b>{activeLayout(doc).name}</b>: keep the big pieces, rebuild around them, with a twist.
+      </p>
+      {twists.map((t) => (
+        <button
+          key={t}
+          className="dz-picker-opt"
+          onClick={() => {
+            useStore.getState().remixLayout(doc.activeLayoutId, t)
+            useRemixPicker.setState({ open: false })
+            useGame.getState().openSheet(null)
+          }}
+        >
+          <strong>{TWISTS[t].name}</strong>
+          <small>{TWISTS[t].title}</small>
+        </button>
+      ))}
+      <button className="g-btn sm ghost" onClick={() => useRemixPicker.setState({ open: false })}>
+        Not now
+      </button>
+    </div>
   )
 }

@@ -6,6 +6,9 @@ import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
 import type { Doc, Item, Layout, Opening, Placement, Room, ScanRef, ScanReference, Units, Vec2 } from './model/types'
 import { calibrate, rescaleAbout } from './scan/align'
+import type { TwistId } from './model/types'
+import { remixedLayout, TWISTS } from './game/goals'
+import { useGame } from './game/gameStore'
 import { deleteHome as dropHome, listHomes, loadDoc, loadHome, restoreHome as undropHome, saveDoc, setCurrentHome } from './storage'
 
 export type Mode = 'select' | 'draw-room' | 'door' | 'window' | 'scan-measure' | 'scan-straighten' | 'scan-move'
@@ -96,6 +99,10 @@ interface State extends UIState {
 
   addLayout: () => void
   duplicateLayout: (id: string) => void
+  /** A remix of a design: only its big pieces (ANCHORS), plus a twist to meet. Becomes the active design. */
+  remixLayout: (sourceId: string, twist: TwistId) => void
+  /** A remix's first Dream home: noted on the design, with no undo entry. */
+  markRemixDream: (layoutId: string) => void
   renameLayout: (id: string, name: string) => void
   deleteLayout: (id: string) => void
   setActiveLayout: (id: string) => void
@@ -465,7 +472,21 @@ export const useStore = create<State>((set, get) => ({
       const ids = new Map(src.placements.map((p) => [p.id, uid()]))
       const placements = src.placements.map((p) => ({ ...p, id: ids.get(p.id)!, ...(p.on ? { on: ids.get(p.on) ?? p.on } : {}) }))
       const copy: Layout = { id: nid, name: copyName(src.name, d.layouts.map((l) => l.name)), placements }
+      inheritBest(d, src.id, nid)
       return { ...d, layouts: [...d.layouts, copy], activeLayoutId: nid }
+    }),
+  remixLayout: (sourceId, twist) => {
+    const copy = remixedLayout(get().doc, sourceId, twist, uid)
+    if (!copy) return
+    switchDesign((d) => ({ ...d, layouts: [...d.layouts, copy], activeLayoutId: copy.id }))
+    get().notify(`${copy.name}: start from your big pieces. Twist: ${TWISTS[twist].title.toLowerCase()}.`)
+  },
+  markRemixDream: (layoutId) =>
+    set((s) => {
+      const l = s.doc.layouts.find((x) => x.id === layoutId)
+      if (!l?.remix || l.remix.dreamAt) return s
+      const remix = { ...l.remix, dreamAt: Date.now() }
+      return { doc: { ...s.doc, layouts: s.doc.layouts.map((x) => (x.id === layoutId ? { ...x, remix } : x)) } }
     }),
   renameLayout: (id, name) => get().update((d) => ({ ...d, layouts: d.layouts.map((l) => (l.id === id ? { ...l, name } : l)) })),
   deleteLayout: (id) =>
@@ -497,6 +518,14 @@ function switchDesign(fn: (d: Doc) => Doc) {
   const next = fn(s.doc)
   if (next === s.doc) return
   useStore.setState({ doc: next, past: [], future: [], selection: null, gesture: false })
+}
+
+/** An exact copy starts at its source's best level, said outright rather than left to the HUD. */
+function inheritBest(d: Doc, sourceId: string, copyId: string) {
+  const g = useGame.getState()
+  const legacy = d.layouts[0]?.id === sourceId ? g.bestLevel[d.apartment.id] : undefined
+  const best = g.bestLevel[`${d.apartment.id}:${sourceId}`] ?? legacy ?? 0
+  if (best > 0) g.noteLevel(`${d.apartment.id}:${copyId}`, best)
 }
 
 /** A copy is named after its source: "Move-in day" → "Move-in day 2", then "Move-in day 3". */

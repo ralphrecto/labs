@@ -57,3 +57,16 @@
 /* Welcome back (Goals.tsx): stays up until tapped or a piece is placed, with the home · design · level line. */
 .goal-banner.welcome.dz-stay { animation: g-pop 0.3s var(--g-ease) both; }
 .dz-welcome-line { font-size: 12px; font-weight: 800; color: var(--g-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- Remix: twist badge, level bar, Dream ribbon, untouched copies, twist picker ---- */
+.dz-same { color: var(--g-ink-soft, #8a7a68); font-style: italic; }
+.dz-bar { display: inline-block; width: 36px; height: 4px; margin-left: 6px; vertical-align: middle; border-radius: 2px; background: var(--g-line, #e6dccf); overflow: hidden; }
+.dz-bar > i { display: block; height: 100%; background: var(--g-accent, #e07a4f); border-radius: 2px; }
+.dz-twist { display: inline-block; padding: 1px 6px; border-radius: 999px; background: var(--g-line, #efe6da); font-size: 0.85em; }
+.dz-twist.done { background: #dcefd9; color: #2f6b2a; }
+.dz-ribbon { display: inline-block; padding: 1px 6px; border-radius: 4px; background: #f6d77a; color: #5a4300; font-weight: 600; font-size: 0.85em; }
+.dz-dreams { margin: -4px 0 8px; font-size: 0.9em; color: var(--g-ink-soft, #8a7a68); }
+.dz-picker { display: flex; flex-direction: column; gap: 8px; padding: 12px; flex: 1 1 100%; }
+.dz-picker-h { margin: 0; font-size: 0.95em; }
+.dz-picker-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--g-line, #e6dccf); background: var(--g-card, #fff); color: inherit; text-align: left; cursor: pointer; min-height: 44px; }
+.dz-picker-opt small { opacity: 0.75; }

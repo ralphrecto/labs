@@ -5,6 +5,8 @@ import { COMFORTABLE_WALKWAY, MIN_WALKWAY, placedItems, walkingPaths, type PathR
 import { BEDROOM, BEDROOM_ONLY, DINING, LIVING, NEXT_TO_REACH, nookTarget, OFFICE, polygonGap, UTILITY_ROOM, VIEW_OK } from '../model/placement'
 import { add as add2, closestPointOnSegment, convexOverlap, orientedRect, dist, dot, lerp, norm, openingEndpoints, pointInPolygon, polygonArea, polygonInsideRoom, rot, scale, sub, v, wallInwardNormal, wallSegments } from '../model/geometry'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
+import { centroid, normalizeAngle } from '../model/geometry'
+import type { Placement, TwistId } from '../model/types'
 
 export type GoalCategory = 'basics' | 'comfort' | 'flow' | 'style'
 
@@ -969,6 +971,11 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       urgent: solidPieces.length < MIN_PIECES && packedIds.size > 0,
     })
 
+  // ---- Remix twist ------------------------------------------------------
+  // A remix's twist is a core style goal: while it's open the design stays below Dream home.
+  const twist = layout.remix ? twistGoal(doc, layout, placed, of, inRoom, rooms, solidPieces) : null
+  if (twist) add(twist)
+
   // What to move when a core goal's piece has nowhere to go: the biggest piece in the room it
   // belongs in (the bedroom for a bed), pieces that could live in another room first.
   for (const g of goals) {
@@ -1021,4 +1028,147 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
 
   const livingFirst = !!rooms.length && !canSleep && livable.some((r) => LIVING.test(r.name) && !named(r))
   return { stars, maxStars, coreMax, thresholds, level, goals, vibe, errors, headline, livingFirst }
+}
+
+// ---- Remix: twists -------------------------------------------------------
+
+/** The big pieces a remix keeps: everything else goes back to the drawer to be placed again. */
+export const ANCHORS = new Set(['bed', 'sofa', 'tv-stand', 'wardrobe', 'dining-table'])
+
+/** The twist challenges, in the order the picker offers them. */
+export const TWISTS: Record<TwistId, { name: string; title: string; hint: string }> = {
+  'talk-corner': { name: 'Talk corner', title: 'Conversation corner', hint: 'Turn two seats (a sofa and an armchair) to face each other, less than 2.4 m apart.' },
+  'open-floor': { name: 'Open floor', title: 'Open floor', hint: 'Keep the middle of the living room clear (1 m around its centre), with at least 4 pieces in the room.' },
+  'window-seat': { name: 'Window seat', title: 'Sofa faces the window', hint: 'Turn the sofa to look out of a window in its room.' },
+  'fresh-spots': { name: 'Fresh start', title: 'Everything in a new spot', hint: 'Move each of the big pieces at least 80 cm from where it stood in the original.' },
+  'bed-swap': { name: 'Bed swap', title: 'Bed on a different wall', hint: 'Put the bed’s head against another wall than in the original.' },
+  'less-is-more': { name: 'Less is more', title: 'Dream home in 10 pieces', hint: 'Reach Dream home with 10 pieces of furniture or fewer.' },
+}
+const TWIST_IDS = Object.keys(TWISTS) as TwistId[]
+
+/**
+ * Twists the plan can take: a window-seat needs a window in a room with a sofa (or a living room),
+ * a talk corner an armchair that fits, a bed swap a bedroom.
+ */
+export function applicableTwists(doc: Doc, fits?: (category: string) => boolean): TwistId[] {
+  const layout = doc.layouts.find((l) => l.id === doc.activeLayoutId) ?? doc.layouts[0]
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const sofaIn = (r: Room) => (layout?.placements ?? []).some((p) => items.get(p.itemId)?.category === 'sofa' && pointInPolygon(v(p.x, p.y), r.polygon))
+  return TWIST_IDS.filter((t) => {
+    if (t === 'window-seat') return doc.rooms.some((r) => r.openings.some((o) => o.kind === 'window') && (sofaIn(r) || LIVING.test(r.name)))
+    if (t === 'talk-corner') return !fits || fits('armchair')
+    if (t === 'bed-swap') return doc.rooms.some((r) => BEDROOM.test(r.name) && !UTILITY_ROOM.test(r.name))
+    return true
+  })
+}
+
+/** A remix of `source`: only its anchor pieces, with new placement ids, standing on nothing. */
+export function remixedLayout(doc: Doc, sourceId: string, twist: TwistId, newId: () => string): Layout | null {
+  const src = doc.layouts.find((l) => l.id === sourceId)
+  if (!src) return null
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const placements: Placement[] = src.placements
+    .filter((p) => ANCHORS.has(items.get(p.itemId)?.category ?? ''))
+    .map(({ on: _on, ...p }) => ({ ...p, id: newId() }))
+  const taken = doc.layouts.map((l) => l.name)
+  const base = TWISTS[twist].name
+  let name = base
+  for (let n = 2; taken.includes(name); n++) name = `${base} ${n}`
+  return { id: newId(), name, placements, remix: { from: src.id, twist, anchors: placements.length } }
+}
+
+/**
+ * Two designs with the same pieces in the same spots (an untouched copy): compared to the
+ * centimetre and a hundredth of a radian.
+ */
+export function sameArrangement(a: Layout, b: Layout): boolean {
+  const key = (l: Layout) => l.placements.map((p) => `${p.itemId}:${p.x.toFixed(2)}:${p.y.toFixed(2)}:${normalizeAngle(p.rotation).toFixed(2)}`).sort().join('|')
+  return a.placements.length === b.placements.length && key(a) === key(b)
+}
+
+/** The wall of its room a point is nearest to, as "roomId:wall". */
+function nearestWall(doc: Doc, q: Vec2): string {
+  const room = doc.rooms.find((r) => pointInPolygon(q, r.polygon))
+  if (!room) return ''
+  let best = 0
+  let d = Infinity
+  wallSegments(room).forEach(([a, b], i) => {
+    const c = closestPointOnSegment(q, a, b).distance
+    if (c < d) [best, d] = [i, c]
+  })
+  return `${room.id}:${best}`
+}
+
+/** The twist goal of a remix, from what scoreHome already built. */
+function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) => P[], inRoom: (r: Room) => P[], rooms: Room[], solidPieces: P[]): Goal | null {
+  const remix = layout.remix
+  if (!remix || !TWISTS[remix.twist]) return null
+  const t = remix.twist
+  const src = doc.layouts.find((l) => l.id === remix.from)
+  const srcOf = (p: P) => {
+    const me = layout.placements.find((x) => x.id === p.id)
+    const s = me && src?.placements.find((x) => x.itemId === me.itemId)
+    return s ? { center: v(s.x, s.y), rotation: s.rotation } : null
+  }
+  let done = false
+  let progress = 0
+  let hint = TWISTS[t].hint
+  if (t === 'window-seat') {
+    for (const s of of('sofa')) {
+      if (!s.room) continue
+      for (const o of s.room.openings) {
+        if (o.kind !== 'window') continue
+        const [a, b] = openingEndpoints(s.room, o)
+        const d = dot(front(s), norm(sub(lerp(a, b, 0.5), s.center)))
+        progress = Math.max(progress, clamp01(d))
+        if (d > 0.7) done = true
+      }
+    }
+  } else if (t === 'fresh-spots') {
+    const anchors = placed.filter((x) => ANCHORS.has(x.category))
+    const moved = anchors.filter((x) => {
+      const s = srcOf(x)
+      return !s || dist(s.center, x.center) >= 0.8
+    })
+    done = !src || (anchors.length > 0 && moved.length === anchors.length)
+    progress = anchors.length ? moved.length / anchors.length : 0
+  } else if (t === 'bed-swap') {
+    done = of('bed').some((b) => {
+      const s = srcOf(b)
+      if (!s) return true
+      const turn = normalizeAngle(b.rotation - s.rotation)
+      return Math.min(turn, 2 * Math.PI - turn) >= Math.PI / 2 - 1e-3 || nearestWall(doc, b.center) !== nearestWall(doc, s.center)
+    })
+    progress = done ? 1 : 0
+  } else if (t === 'talk-corner') {
+    const seats = of('sofa', 'armchair')
+    progress = Math.min(seats.length, 1) * 0.3
+    for (let i = 0; i < seats.length; i++)
+      for (let j = i + 1; j < seats.length; j++) {
+        const [a, b] = [seats[i], seats[j]]
+        const d = dist(a.center, b.center)
+        const facing = dot(front(a), front(b))
+        // Facing each other, not back to back: a looks toward b.
+        const toward = dot(front(a), sub(b.center, a.center)) > 0
+        if (facing < -0.5 && toward && d <= 2.4) done = true
+        progress = Math.max(progress, 0.3 + 0.7 * clamp01((1 - facing) / 1.5) * (toward ? 1 : 0.5) * clamp01(2.4 / Math.max(d, 0.01)))
+      }
+  } else if (t === 'open-floor') {
+    const room = rooms.find((r) => LIVING.test(r.name)) ?? of('sofa')[0]?.room ?? rooms[0]
+    if (room) {
+      const c = centroid(room.polygon)
+      const pieces = inRoom(room).filter((x) => !x.floor)
+      const near = (x: P) => pointInPolygon(c, x.body) || x.body.some((q, i) => closestPointOnSegment(c, q, x.body[(i + 1) % x.body.length]).distance < 1.0)
+      const clear = pieces.filter((x) => !near(x))
+      done = pieces.length >= 4 && clear.length === pieces.length
+      progress = pieces.length ? (clear.length / pieces.length) * Math.min(1, pieces.length / 4) : 0
+      if (!done && clear.length < pieces.length) hint = `Move ${pieces.length - clear.length === 1 ? 'one piece' : `${pieces.length - clear.length} pieces`} out of the middle of the ${room.name.toLowerCase()} (1 m around its centre).`
+    }
+  } else if (t === 'less-is-more') {
+    const n = solidPieces.length
+    done = n <= 10
+    progress = n ? Math.min(1, 10 / n) : 1
+    hint = `${n} of 10 pieces. ${TWISTS[t].hint}`
+  }
+  return { id: `twist:${t}`, title: TWISTS[t].title, hint, category: 'style', stars: 3, done, progress: done ? 1 : clamp01(progress) }
 }
