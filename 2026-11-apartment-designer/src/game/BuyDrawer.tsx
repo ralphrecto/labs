@@ -21,7 +21,7 @@ export const CATEGORY_GROUPS: { key: string; label: string; emoji?: string; cate
   { key: 'bedroom', label: 'Bedroom', emoji: '🛏️', categories: ['bed', 'nightstand', 'dresser', 'wardrobe'] },
   { key: 'dining', label: 'Dining', emoji: '🍽️', categories: ['dining-table', 'dining-chair', 'bench', 'sideboard'] },
   { key: 'work', label: 'Work', emoji: '💻', categories: ['desk', 'office-chair', 'bookshelf'] },
-  { key: 'decor', label: 'Decor', emoji: '🪴', categories: ['plant', 'floor-lamp', 'rug', 'box'] },
+  { key: 'decor', label: 'Decor', emoji: '🪴', categories: ['plant', 'floor-lamp', 'table-lamp', 'rug', 'box'] },
   { key: 'mine', label: 'Mine', emoji: '⭐', categories: [] },
 ]
 
@@ -51,7 +51,7 @@ const CHIP_IDS: Record<string, [string, string][]> = {
   'dining-table': [['Bistro', 'bistro'], ['Round', 'dining-round'], ['4-seat', 'dining-4'], ['6-seat', 'dining-6']],
   desk: [['Small', 'desk-sm'], ['Mid', 'desk'], ['Large', 'desk-standing']],
   rug: [['5×8', 'rug-5x8'], ['6×9', 'rug-6x9'], ['8×10', 'rug-8x10'], ['9×12', 'rug-9x12']],
-  'floor-lamp': [['Floor', 'floor-lamp'], ['Table', 'table-lamp']],
+  'floor-lamp': [['Floor', 'floor-lamp'], ['Arc', 'arc-lamp']],
 }
 const STARTER = new Map(STARTER_CATALOG.map((p) => [p.id, p]))
 
@@ -98,7 +98,7 @@ function dropIn(doc: Doc, item: Item, room: Room): DropResult | null {
 }
 
 /** Pieces the Next chip puts beside the piece its goal is about (a reading lamp by the armchair). */
-const BESIDE = new Set(['floor-lamp', 'side-table'])
+const BESIDE = new Set(['floor-lamp', 'table-lamp', 'side-table'])
 
 const article = (name: string) => (/^[aeiou]/i.test(name) ? 'an' : 'a')
 
@@ -158,7 +158,6 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     // Otherwise the item goes to a free spot that suits it and is selected; when nothing fits, the store toasts why.
     let res = spot ? st.addItem(item, spot) : st.addItem(item)
     if (res.ok && spot) {
-      if (Math.abs(spot.rotation) > 1e-3) st.updatePlacement(res.placementId, { rotation: spot.rotation })
       res = { ...res, roomName: there?.ok ? room!.name : spot.roomName }
     }
     if (!res.ok) return

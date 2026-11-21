@@ -109,8 +109,7 @@ const groups: Record<string, Row[]> = {
   'Lights & plants': [
     ['floor-lamp', 'Floor lamp', 'floor-lamp', 40, 40, 160],
     ['arc-lamp', 'Arc floor lamp', 'floor-lamp', 100, 40, 200, { tags: 'arched' }],
-    // No separate category: a table lamp lights a seat the same way, so it counts for the lamp goals.
-    ['table-lamp', 'Table lamp', 'floor-lamp', 30, 30, 55, { tags: 'bedside desk reading' }],
+    ['table-lamp', 'Table lamp', 'table-lamp', 30, 30, 55, { tags: 'bedside desk reading' }],
     ['plant-lg', 'Large floor plant', 'plant', 60, 60, 160, { tags: 'fiddle leaf fig tree' }],
     ['plant-md', 'Medium plant', 'plant', 45, 45, 100],
   ],

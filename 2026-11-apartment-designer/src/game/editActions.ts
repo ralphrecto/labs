@@ -2,6 +2,7 @@
 // flush and clear of its neighbours) and nudging (along the screen in 3D). A run of nudges or
 // turns is one undo step.
 import { add, orientedRect, polygonInsideRoom, polygonsOverlap, rot, v } from '../model/geometry'
+import { clampOnHost } from '../model/placement'
 import { snapPlacement } from '../model/snapping'
 import type { Item, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
@@ -41,6 +42,8 @@ export type Conflicts = { outside: boolean; hits: Set<string> }
 
 /** What a pose runs into: out of every room, and which solid pieces it overlaps (rugs never block). */
 function conflicts(item: Item, p: Placement, others: Others, rooms: Room[] = useStore.getState().doc.rooms): Conflicts {
+  if (p.on) return { outside: false, hits: new Set() }
+  others = others.filter((o) => !o.p.on)
   const b = body(item, p)
   const outside = rooms.length > 0 && !rooms.some((r) => polygonInsideRoom(b, r.polygon))
   const hits = new Set(item.floorLevel ? [] : others.filter((o) => !o.item.floorLevel && polygonsOverlap(b, body(o.item, o.p))).map((o) => o.id))
@@ -131,6 +134,14 @@ export function rotatePlacementSmart(id: string, delta: number) {
   })
   const step = Math.abs(delta)
   let next: Placement = { ...p, rotation: normAngle(Math.round((p.rotation + delta) / step) * step) }
+  const host = p.on ? layout.placements.find((x) => x.id === p.on) : undefined
+  const hostItem = host && byId.get(host.itemId)
+  if (host && hostItem) {
+    // A table lamp turns in place on its host and stays on the top.
+    const c = clampOnHost({ item: hostItem, p: host }, item, v(next.x, next.y))
+    inEditRun(() => useStore.getState().updatePlacement(id, { x: c.x, y: c.y, rotation: next.rotation }))
+    return
+  }
   const base = conflicts(item, p, others)
   const quarter = Math.abs(Math.round(next.rotation / (Math.PI / 2)) * (Math.PI / 2) - next.rotation) < 1e-6
   if (!fineAt(item, next, others, base))
@@ -156,5 +167,15 @@ export function nudgePlacement(id: string, screen: Vec2, step: number) {
   const az = viewFrame.azimuth
   if (az !== null) d = rot(screen, Math.round(az / (Math.PI / 2)) * (Math.PI / 2))
   const to = add(v(p.x, p.y), v(Math.round(d.x) * step, Math.round(d.y) * step))
+  if (p.on) {
+    // A table lamp only slides around its host's top; a step off the edge is ignored.
+    const host = activeLayout(s.doc).placements.find((x) => x.id === p.on)
+    const hostItem = host && s.doc.items.find((i) => i.id === host.itemId)
+    const item = s.doc.items.find((i) => i.id === p.itemId)
+    if (host && hostItem && item) {
+      const c = clampOnHost({ item: hostItem, p: host }, item, to)
+      if (Math.hypot(c.x - to.x, c.y - to.y) > 1e-6) return
+    }
+  }
   inEditRun(() => useStore.getState().updatePlacement(id, { x: to.x, y: to.y }))
 }

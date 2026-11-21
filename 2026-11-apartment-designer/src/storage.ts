@@ -1,4 +1,5 @@
-import type { Doc } from './model/types'
+import { hostAt, HOSTED } from './model/placement'
+import type { Doc, Item } from './model/types'
 
 // Everything lives in the browser. The rest of the app only talks to these functions, so a
 // server-backed store (e.g. Supabase) can replace them later.
@@ -314,7 +315,30 @@ export function parseDoc(raw: string): Doc | null {
   // The sample's first design used to be called "Current".
   if (typeof d.apartment.name === 'string' && d.apartment.name.startsWith('Sample apartment'))
     for (const l of d.layouts) if (l.name === 'Current') l.name = 'Move-in day'
+  migrateTableLamps(d as Doc)
   return d as Doc
+}
+
+/**
+ * Table lamps used to be short floor lamps standing in the same spot as the nightstand (and
+ * flagged as overlapping it). Give them their own category and stand them on the piece under them.
+ */
+function migrateTableLamps(d: Doc) {
+  for (const it of d.items as Item[])
+    if (it.category === 'floor-lamp' && it.height <= 0.9 && /table|desk|bedside/i.test(it.name ?? '')) it.category = 'table-lamp'
+  const byId = new Map((d.items as Item[]).map((i) => [i.id, i]))
+  for (const l of d.layouts) {
+    if (!Array.isArray(l.placements)) continue
+    for (const p of l.placements) {
+      const it = byId.get(p.itemId)
+      if (!it || !HOSTED.has(it.category) || p.on) continue
+      const host = hostAt(d, l, { x: p.x, y: p.y }, it)
+      if (host) {
+        p.on = host.id
+        p.rotation = host.p.rotation
+      }
+    }
+  }
 }
 
 export function downloadJSON(doc: Doc) {

@@ -47,7 +47,15 @@ export const WALL_BACKED = new Set(['bed', 'wardrobe', 'dresser', 'desk', 'sofa'
 /** Pieces that sit out in the room (no wall spots tried). */
 const CENTER_PIECES = new Set(['dining-table', 'coffee-table', 'rug', 'ottoman'])
 /** Pieces that belong between a sofa and the TV. */
-export const VIEW_OK = new Set(['coffee-table', 'ottoman', 'rug', 'tv-stand', 'side-table', 'floor-lamp', 'plant', 'sofa'])
+export const VIEW_OK = new Set(['coffee-table', 'ottoman', 'rug', 'tv-stand', 'side-table', 'floor-lamp', 'table-lamp', 'plant', 'sofa'])
+/** Lights: a floor lamp or a table lamp lights a seat, a bed side or a desk. */
+export const LAMPS = new Set(['floor-lamp', 'table-lamp'])
+/** Pieces that stand on another piece of furniture (Placement.on) instead of the floor. */
+export const HOSTED = new Set(['table-lamp'])
+/** Furniture with a top a table lamp can stand on. */
+export const SURFACES = new Set(['nightstand', 'side-table', 'desk', 'dresser', 'console-table', 'sideboard'])
+/** How many table lamps each surface holds. */
+export const SURFACE_SLOTS: Record<string, number> = { nightstand: 1, 'side-table': 1, desk: 2, dresser: 2, 'console-table': 2, sideboard: 2 }
 /** Pieces that only go in a bedroom when the home has one (never next to the sofa). */
 export const BEDROOM_ONLY = new Set(['bed', 'nightstand', 'wardrobe', 'dresser'])
 /** Living-room pieces that never belong in a kitchen when the home has a living room. */
@@ -86,6 +94,7 @@ const AFFINITY: Record<string, [RegExp, number][]> = {
   armchair: [[LIVING, 30], [BEDROOM, 10]],
   'side-table': [[LIVING, 25], [BEDROOM, 10]],
   'floor-lamp': [[LIVING, 25], [BEDROOM, 10]],
+  'table-lamp': [[BEDROOM, 20], [OFFICE, 20], [LIVING, 15]],
   'dining-table': [[DINING, 30], [LIVING, 15]],
   'dining-chair': [[DINING, 30], [LIVING, 15]],
   bench: [[DINING, 30], [LIVING, 15]],
@@ -103,6 +112,8 @@ export interface DropSpot {
   rotation: number
   roomId?: string
   roomName?: string
+  /** Placement id of the host (table lamps). */
+  on?: string
 }
 
 export type DropResult = { ok: true; spot: DropSpot } | { ok: false; reason: string }
@@ -160,6 +171,7 @@ const fmtSize = (it: DropItem, units: Doc['apartment']['units']) =>
  * bonus (the camera target, or the piece being copied).
  */
 export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?: Vec2; walkCheck?: boolean; nextTo?: string } = {}): DropResult {
+  if (HOSTED.has(item.category)) return findHostDrop(doc, layout, item, opts)
   const rooms = doc.rooms
   if (!rooms.length) return { ok: true, spot: { x: 1, y: 1, rotation: 0 } }
   const byId = new Map(doc.items.map((i) => [i.id, i]))
@@ -169,7 +181,7 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     const body = orientedRect(v(p.x, p.y), it.width / 2, it.depth / 2, p.rotation)
     return [{ id: p.id, item: it, p, body, room: rooms.find((r) => pointInPolygon(v(p.x, p.y), r.polygon)) }]
   })
-  const solids = others.filter((o) => !o.item.floorLevel)
+  const solids = others.filter((o) => !o.item.floorLevel && !o.p.on)
   const rugs = others.filter((o) => o.item.floorLevel)
   const zonesOfOthers = solids.flatMap((o) => clearanceZones(o.item, o.p).map((z) => ({ poly: z.poly, side: z.side, owner: o.item.category })))
   // The space in front of a bed, wardrobe, dresser or desk is where you get in, sit or open the
@@ -381,7 +393,7 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     for (const s of ofCat('sofa')) consider(local(s, v(0, s.item.depth / 2 - 0.25 + hd)), s.p.rotation, 20)
   if (cat === 'floor-lamp' || cat === 'side-table') {
     // Seats without a lamp or side table yet come first (the armchair's reading corner before a second lamp by the sofa).
-    const lit = (s: Other) => others.some((o) => o.id !== s.id && ['floor-lamp', 'side-table', 'bookshelf'].includes(o.item.category) && polygonGap(s.body, o.body) <= 0.5)
+    const lit = (s: Other) => others.some((o) => o.id !== s.id && (LAMPS.has(o.item.category) || ['side-table', 'bookshelf'].includes(o.item.category)) && polygonGap(s.body, o.body) <= 0.5)
     for (const s of ofCat('sofa', 'armchair')) {
       const bonus = lit(s) ? 6 : s.item.category === 'armchair' ? 22 : 18
       for (const sd of [-1, 1])
@@ -629,6 +641,179 @@ export function nookTarget(doc: Doc, layout: Layout): string | undefined {
     const it = byId.get(p.itemId)
     return it ? [{ p, it, body: orientedRect(v(p.x, p.y), it.width / 2, it.depth / 2, p.rotation) }] : []
   })
-  const lights = placed.filter((x) => x.it.category === 'floor-lamp')
+  const lights = placed.filter((x) => LAMPS.has(x.it.category))
   return placed.find((a) => a.it.category === 'armchair' && !lights.some((l) => polygonGap(a.body, l.body) <= NEXT_TO_REACH))?.p.id
+}
+
+// ---- Table lamps: pieces that stand on another piece's top ----
+
+type LampLike = Pick<Item, 'width' | 'depth'>
+type HostLike = { item: Pick<Item, 'width' | 'depth' | 'category' | 'height'>; p: Pick<Placement, 'x' | 'y' | 'rotation'> }
+
+/** Height (m) of a host's top, where a hosted piece stands. */
+export const hostTop = (host: Pick<Item, 'height'>) => host.height
+
+/** Whether `lamp` fits on top of `host` with a little to spare. */
+export const fitsOn = (lamp: LampLike, host: Pick<Item, 'width' | 'depth'>) => Math.min(host.width, host.depth) >= Math.max(lamp.width, lamp.depth) + 0.04
+
+/** Where lamp number `slot` stands on `host` (plan coordinates). Rotation is the host's. */
+export function spotOn(host: HostLike, lamp: LampLike, slot: 0 | 1 = 0): Vec2 {
+  const hw = host.item.width / 2
+  const hd = host.item.depth / 2
+  const lw = lamp.width / 2
+  const ld = lamp.depth / 2
+  const cat = host.item.category
+  let local: Vec2
+  if (cat === 'nightstand' || cat === 'side-table') local = v(0, -hd + ld + 0.03)
+  else if (cat === 'desk') local = v((slot === 0 ? -1 : 1) * Math.max(0, hw - lw - 0.05), -hd + ld + 0.05)
+  else local = v((slot === 0 ? -1 : 1) * Math.max(0, hw - lw - 0.08), -hd + ld + 0.05)
+  return add(v(host.p.x, host.p.y), rot(local, host.p.rotation))
+}
+
+/** Clamp a hosted piece's centre so its footprint stays on the host top (inset 2 cm). */
+export function clampOnHost(host: HostLike, lamp: LampLike, pt: Vec2): Vec2 {
+  const c = v(host.p.x, host.p.y)
+  const local = rot(sub(pt, c), -host.p.rotation)
+  const mx = Math.max(0, host.item.width / 2 - lamp.width / 2 - 0.02)
+  const my = Math.max(0, host.item.depth / 2 - lamp.depth / 2 - 0.02)
+  const cl = v(Math.max(-mx, Math.min(mx, local.x)), Math.max(-my, Math.min(my, local.y)))
+  return add(c, rot(cl, host.p.rotation))
+}
+
+function hostsOf(doc: Doc, layout: Layout) {
+  const byId = new Map(doc.items.map((i) => [i.id, i]))
+  return layout.placements.flatMap((p) => {
+    const it = byId.get(p.itemId)
+    if (!it || p.on || !SURFACES.has(it.category)) return []
+    return [{ id: p.id, item: it, p, body: orientedRect(v(p.x, p.y), it.width / 2, it.depth / 2, p.rotation) }]
+  })
+}
+
+/** The surface whose top contains `pt` and fits `lamp` (preferring `preferId`), or undefined. */
+export function hostAt(doc: Doc, layout: Layout, pt: Vec2, lamp: LampLike, preferId?: string): { id: string; item: Item; p: Placement } | undefined {
+  const hits = hostsOf(doc, layout).filter((h) => fitsOn(lamp, h.item) && pointInPolygon(pt, h.body))
+  return hits.find((h) => h.id === preferId) ?? hits[0]
+}
+
+/**
+ * Where a table lamp goes: on a free nightstand, desk, side table or other top. `nextTo` is the
+ * host itself or a piece the host stands beside; `near` favours close hosts.
+ */
+export function findHostDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?: Vec2; nextTo?: string; exclude?: string; preferRoom?: string } = {}): DropResult {
+  const all = hostsOf(doc, layout)
+  if (!all.length) return { ok: false, reason: 'A table lamp needs something to stand on. Add a nightstand, side table or desk first.' }
+  const byId = new Map(doc.items.map((i) => [i.id, i]))
+  const placed = layout.placements.flatMap((p) => {
+    const it = byId.get(p.itemId)
+    return it && p.id !== opts.exclude ? [{ p, it, body: orientedRect(v(p.x, p.y), it.width / 2, it.depth / 2, p.rotation) }] : []
+  })
+  const load = (id: string) => placed.filter((x) => x.p.on === id).length
+  const lights = placed.filter((x) => LAMPS.has(x.it.category))
+  const target = opts.nextTo ? placed.find((x) => x.p.id === opts.nextTo) : undefined
+  let best: { score: number; spot: DropSpot } | undefined
+  for (const h of all) {
+    if (!fitsOn(item, h.item)) continue
+    const used = load(h.id)
+    const slots = SURFACE_SLOTS[h.item.category] ?? 1
+    if (used >= slots) continue
+    const room = doc.rooms.find((r) => pointInPolygon(v(h.p.x, h.p.y), r.polygon))
+    const unlit = !lights.some((l) => l.p.on === h.id || (!l.p.on && polygonGap(h.body, l.body) <= NEXT_TO_REACH))
+    let score = 0
+    if (opts.nextTo === h.id) score += 100
+    else if (target && polygonGap(h.body, target.body) <= NEXT_TO_REACH) score += 50
+    const cat = h.item.category
+    if (cat === 'nightstand') score += unlit ? 30 : 10
+    else if (cat === 'desk') score += used === 0 ? 25 : 10
+    else if (cat === 'side-table') {
+      const bySeat = placed.some((x) => ['sofa', 'armchair'].includes(x.it.category) && polygonGap(h.body, x.body) <= NEXT_TO_REACH)
+      score += bySeat && unlit ? 22 : 10
+    } else score += 10
+    if (room) {
+      const a = roomAffinity(room, 'table-lamp', doc.rooms)
+      if (a !== -Infinity) score += a
+      if (opts.preferRoom && room.id === opts.preferRoom) score += 40
+    }
+    if (opts.near) score -= dist(opts.near, v(h.p.x, h.p.y))
+    const c = spotOn(h, item, used === 0 ? 0 : 1)
+    if (!best || score > best.score) best = { score, spot: { x: c.x, y: c.y, rotation: h.p.rotation, on: h.id, roomId: room?.id, roomName: room?.name } }
+  }
+  if (!best) return { ok: false, reason: 'Every table top already has a lamp. Add a side table or nightstand for this one.' }
+  return { ok: true, spot: best.spot }
+}
+
+const samePose = (a: Pick<Placement, 'x' | 'y' | 'rotation'>, b: Pick<Placement, 'x' | 'y' | 'rotation'>) =>
+  Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9 && Math.abs(a.rotation - b.rotation) < 1e-9
+
+export interface ReconcileReport {
+  /** Hosted pieces taken off because nothing could hold them (placement ids). */
+  removed: string[]
+  /** Hosted pieces moved onto another host (placement ids). */
+  rehosted: string[]
+}
+
+/**
+ * Keep hosted pieces (table lamps) on their hosts after an edit: a lamp follows its host's move or
+ * turn, slides back onto a shrunk top, and moves to another free top (or comes off) when its host
+ * goes. Returns `next` itself when nothing needed fixing.
+ */
+export function reconcileHosts(prev: Doc, next: Doc, report?: ReconcileReport): Doc {
+  if (!next.layouts.some((l) => l.placements.some((p) => p.on))) return next
+  const items = new Map(next.items.map((i) => [i.id, i]))
+  let changed = false
+  const layouts = next.layouts.map((layout) => {
+    if (!layout.placements.some((p) => p.on)) return layout
+    const before = prev.layouts.find((l) => l.id === layout.id)
+    const prevById = new Map((before?.placements ?? []).map((p) => [p.id, p]))
+    const byId = new Map(layout.placements.map((p) => [p.id, p]))
+    let placements = layout.placements
+    let lc = false
+    for (const c0 of layout.placements) {
+      if (!c0.on) continue
+      const lamp = items.get(c0.itemId)
+      let c = byId.get(c0.id)!
+      const host = byId.get(c0.on)
+      const hostItem = host && items.get(host.itemId)
+      const rehost = () => {
+        const cur: Layout = { ...layout, placements }
+        const room = next.rooms.find((r) => pointInPolygon(v(c.x, c.y), r.polygon))
+        const drop = lamp ? findHostDrop(next, cur, lamp, { near: v(c.x, c.y), exclude: c.id, preferRoom: room?.id }) : undefined
+        if (drop?.ok) {
+          const n = { ...c, x: drop.spot.x, y: drop.spot.y, rotation: drop.spot.rotation, on: drop.spot.on }
+          placements = placements.map((p) => (p.id === c.id ? n : p))
+          byId.set(c.id, n)
+          report?.rehosted.push(c.id)
+        } else {
+          placements = placements.filter((p) => p.id !== c.id)
+          byId.delete(c.id)
+          report?.removed.push(c.id)
+        }
+        lc = true
+      }
+      if (!host || !hostItem || host.on || !lamp || !fitsOn(lamp, hostItem)) {
+        rehost()
+        continue
+      }
+      const hPrev = prevById.get(host.id)
+      const cPrev = prevById.get(c.id)
+      if (hPrev && cPrev && !samePose(hPrev, host) && samePose(cPrev, c)) {
+        const local = rot(sub(v(c.x, c.y), v(hPrev.x, hPrev.y)), -hPrev.rotation)
+        const w = add(v(host.x, host.y), rot(local, host.rotation))
+        c = { ...c, x: w.x, y: w.y, rotation: c.rotation + host.rotation - hPrev.rotation }
+        placements = placements.map((p) => (p.id === c.id ? c : p))
+        byId.set(c.id, c)
+        lc = true
+      }
+      const cl = clampOnHost({ item: hostItem, p: host }, lamp, v(c.x, c.y))
+      if (Math.abs(cl.x - c.x) > 1e-6 || Math.abs(cl.y - c.y) > 1e-6) {
+        c = { ...c, x: cl.x, y: cl.y }
+        placements = placements.map((p) => (p.id === c.id ? c : p))
+        byId.set(c.id, c)
+        lc = true
+      }
+    }
+    if (!lc) return layout
+    changed = true
+    return { ...layout, placements }
+  })
+  return changed ? { ...next, layouts } : next
 }

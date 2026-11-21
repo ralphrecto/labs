@@ -659,7 +659,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
 
         {/* Items, floor-level ones (rugs) first */}
         {[...placementsWithItems]
-          .sort((a, b) => Number(!!b.item.floorLevel) - Number(!!a.item.floorLevel))
+          .sort((a, b) => Number(!!b.item.floorLevel) - Number(!!a.item.floorLevel) || Number(!!a.p.on) - Number(!!b.p.on))
           .map(({ p, item }) => {
             const selected = selection?.kind === 'placement' && selection.id === p.id
             const flag = analysis.flagged.get(p.id)
@@ -1012,6 +1012,7 @@ function ItemGlyph({ category, hw, hd, px }: { category: string; hw: number; hd:
       )
     case 'plant':
     case 'floor-lamp':
+    case 'table-lamp':
       return (
         <g {...s}>
           <circle cx={0} cy={0} r={Math.min(hw, hd) * 0.6} />

@@ -106,7 +106,7 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   const issues: Issue[] = []
   const units = doc.apartment.units
   const placed = placedItems(doc, layout)
-  const solid = placed.filter((x) => !x.item.floorLevel)
+  const solid = placed.filter((x) => !x.item.floorLevel && !x.p.on)
 
   // Items overlapping each other.
   for (let i = 0; i < solid.length; i++)
@@ -125,6 +125,8 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
 
   // Items crossing walls or outside every room.
   for (const x of placed) {
+    // A table lamp stands on its host, which already answers for the walls.
+    if (x.p.on) continue
     const inside = doc.rooms.some((r) => polygonInsideRoom(x.body, r.polygon))
     if (!inside)
       issues.push({
@@ -139,6 +141,7 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   // Clearance zones blocked by other items or walls.
   const tables = solid.filter((o) => o.item.category === 'dining-table')
   for (const x of placed) {
+    if (x.p.on) continue
     const checked = { ...x.item, clearance: checkedClearance(x.item, x.body, tables) }
     for (const zone of clearanceZones(checked, x.p)) {
       const need = checked.clearance[zone.side]
@@ -189,7 +192,7 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
  */
 export function sideCompanion(ownerCategory: string, side: string, blockerCategory: string) {
   if (side === 'front' && ownerCategory === 'desk' && blockerCategory === 'office-chair') return true
-  return (side === 'left' || side === 'right') && ['bed', 'sofa', 'armchair'].includes(ownerCategory) && ['nightstand', 'side-table', 'floor-lamp'].includes(blockerCategory)
+  return (side === 'left' || side === 'right') && ['bed', 'sofa', 'armchair'].includes(ownerCategory) && ['nightstand', 'side-table', 'floor-lamp', 'table-lamp'].includes(blockerCategory)
 }
 
 function centerOf(poly: Vec2[]) {
@@ -279,7 +282,7 @@ export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport 
   const emptyFree = free.slice()
   // Block furniture (rugs don't block).
   for (const x of placedItems(doc, layout)) {
-    if (x.item.floorLevel) continue
+    if (x.item.floorLevel || x.p.on) continue
     fillConvex(x.body, 0)
   }
 

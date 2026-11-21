@@ -68,6 +68,8 @@ export const CATEGORY_LABEL: Record<GoalCategory, string> = { basics: 'The basic
 /** Rule-of-thumb numbers, in meters. */
 export const RULES = {
   nightstandGap: 0.6,
+  /** A bedside lamp within this (m, edge to edge) of the bed's side lights it. */
+  bedsideLamp: 0.6,
   /** The sofa keeps 45 cm of knee room in front; the coffee table sits just beyond it. */
   coffeeMin: 0.45,
   coffeeMax: 0.5,
@@ -140,6 +142,8 @@ interface P {
   hd: number
   body: Vec2[]
   floor: boolean
+  /** Placement id of the piece this stands on (table lamps). */
+  host?: string
   room?: Room
   inside: boolean
   /** Inside a room and free of errors (overlaps, walls, door swings): only these count toward goals. */
@@ -223,7 +227,7 @@ export const TAB_OF: Record<string, string> = {
   bed: 'bedroom', nightstand: 'bedroom', dresser: 'bedroom', wardrobe: 'bedroom',
   'dining-table': 'dining', 'dining-chair': 'dining', bench: 'dining', sideboard: 'dining',
   desk: 'work', 'office-chair': 'work', bookshelf: 'work',
-  plant: 'decor', 'floor-lamp': 'decor', rug: 'decor', box: 'decor',
+  plant: 'decor', 'floor-lamp': 'decor', 'table-lamp': 'decor', rug: 'decor', box: 'decor',
 }
 /** Other pieces that finish the same goal, tried in order when the suggested one has no room. */
 const STAND_INS: Record<string, string[]> = {
@@ -233,6 +237,7 @@ const STAND_INS: Record<string, string[]> = {
   sofa: ['armchair'],
   nightstand: ['side-table'],
   'dining-chair': ['bench'],
+  'table-lamp': ['floor-lamp'],
 }
 const STAND_IN_GOALS: Record<string, string[]> = { storage: ['bookshelf', 'sideboard', 'console-table', 'wardrobe', 'dresser'], sit: STAND_INS.sofa }
 /** Goals that make a living room cozy, suggested first when the home is a living space. */
@@ -258,6 +263,8 @@ export function nextGoal(score: HomeScore, fits?: (category: string) => boolean)
   for (const g of pool) {
     if (!g.tab || !g.item) continue
     if (!fits || fits(g.item)) return g
+    // A side table elsewhere in the room wouldn't light that side of the bed: no stand-in.
+    if (g.id.startsWith('bedside-light:') && g.item === 'nightstand') continue
     const alt = [g.item, ...(STAND_IN_GOALS[g.id] ?? []), ...(STAND_INS[g.item] ?? [])].find((c) => c !== g.item && fits(c))
     if (alt) return { ...g, item: alt, tab: TAB_OF[alt] ?? g.tab, placeIn: undefined }
   }
@@ -291,6 +298,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       hd: item.depth / 2,
       body,
       floor: !!item.floorLevel,
+      host: p.on,
       room,
       inside: !!room && polygonInsideRoom(body, room.polygon),
       clean: false,
@@ -543,6 +551,44 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       bonus: true,
     })
   }
+  // A reading light on each side of a double bed (one side of a single): lights out without getting up.
+  for (const bed of beds) {
+    const stands = of('nightstand', 'side-table').map((n) => ({ n, l: toLocal(bed, n.center), gap: polygonGap(bed.body, n.body) }))
+    const near = stands.filter((x) => x.l.y <= 0 && x.gap <= RULES.nightstandGap && Math.abs(x.l.x) >= bed.hw * 0.9)
+    const twin = 2 * bed.hw < 1.2
+    const nearest = near.slice().sort((a, b) => a.gap - b.gap)[0]
+    // A side pushed against a wall has no room for a nightstand: no light goal there.
+    const open = (sd: number) => !!bed.room && polygonInsideRoom(orientedRect(bed.center, 0.2, 0.2, bed.rotation, v(sd * (bed.hw + 0.22), -bed.hd + 0.25)), bed.room.polygon)
+    const sides = twin ? [nearest ? Math.sign(nearest.l.x) || 1 : open(1) || !open(-1) ? 1 : -1] : [-1, 1]
+    for (const sd of sides) {
+      const stand = near.filter((x) => Math.sign(x.l.x) === sd).sort((a, b) => a.gap - b.gap)[0]?.n
+      if (!stand && !twin && !open(sd)) continue
+      const lit = of('table-lamp', 'floor-lamp').some((l) => {
+        const q = toLocal(bed, l.center)
+        return q.x * sd >= bed.hw * 0.9 && q.y <= 0 && polygonGap(bed.body, l.body) <= RULES.bedsideLamp
+      })
+      // Sides are named as seen from the foot of the bed, facing the headboard: local +x is the right.
+      const name = twin ? '' : sd > 0 ? 'right' : 'left'
+      add({
+        id: `bedside-light:${bed.id}:${sd}`,
+        title: twin ? 'A reading light by the bed' : `Reading light, ${name} side of the bed`,
+        hint: lit
+          ? 'Lights out without getting up.'
+          : stand
+            ? `Set a table lamp on the ${name ? `${name} ` : ''}nightstand.`
+            : `Put a nightstand ${name ? `on the ${name} side` : 'by the bed'}, then a lamp on it.`,
+        tab: lit ? undefined : stand ? 'decor' : 'bedroom',
+        item: stand ? 'table-lamp' : 'nightstand',
+        near: stand ? stand.id : bed.id,
+        done: lit,
+        progress: lit ? 1 : stand ? 0.5 : 0,
+        stars: 1,
+        roomId: bed.room?.id,
+        category: 'comfort',
+        bonus: true,
+      })
+    }
+  }
   const sofas = of('sofa')
   for (const sofa of sofas.slice(0, 2)) {
     const ahead = of('coffee-table', 'ottoman')
@@ -572,7 +618,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   }
   // Soft light: a floor lamp near a seat, in a living space (not a bathroom or hall).
   const livingSeats = of(...SEATING).filter((x) => x.room && !UTILITY_ROOM.test(x.room.name))
-  const lamps = of('floor-lamp')
+  const lamps = of('floor-lamp', 'table-lamp')
   const lampGap = livingSeats.flatMap((st) => lamps.filter((l) => l.room?.id === st.room?.id).map((l) => polygonGap(st.body, l.body)))
   const nearestLamp = lampGap.length ? Math.min(...lampGap) : Infinity
   add({
@@ -635,7 +681,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   })
   // Room to get into bed: 60 cm of free floor along the side (both sides for a double or bigger),
   // below the nightstands.
-  const solids = placed.filter((x) => !x.floor)
+  const solids = placed.filter((x) => !x.floor && !x.host)
   // Checked on every bed in the right room, cramped or not: this goal is the one that says why.
   const accessBeds = placed.filter((x) => x.clean && x.category === 'bed' && (!bedrooms.length || (!!x.room && bedrooms.includes(x.room))))
   for (const b of accessBeds) {
@@ -678,6 +724,24 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     stars: 1,
     category: 'comfort',
   })
+  // A lamp on (or right by) each desk.
+  for (const desk of desksAll) {
+    const lit = of('table-lamp').some((l) => l.host === desk.id) || of('floor-lamp', 'table-lamp').some((l) => !l.host && polygonGap(desk.body, l.body) <= NEXT_TO_REACH)
+    add({
+      id: `desk-light:${desk.id}`,
+      title: 'A lamp on the desk',
+      hint: lit ? 'Good light to work by.' : 'Set a table lamp on the desk, at the back corner.',
+      tab: lit ? undefined : 'decor',
+      item: 'table-lamp',
+      near: desk.id,
+      done: lit,
+      progress: lit ? 1 : 0,
+      stars: 1,
+      roomId: desk.room?.id,
+      category: 'comfort',
+      bonus: true,
+    })
+  }
   const windows: Vec2[] = doc.rooms.flatMap((r) =>
     r.openings.filter((o) => o.kind === 'window').map((o) => {
       const [a, b] = openingEndpoints(r, o)
@@ -730,7 +794,9 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const armchairs = of('armchair')
   const nookFor = ofAny('armchair').length ? nookTarget(doc, layout) : undefined
   // Only a real lamp makes it a reading corner; a side table or bookshelf beside the chair is a start.
-  const nook = armchairs.some((a) => of('floor-lamp').some((x) => polygonGap(a.body, x.body) <= NEXT_TO_REACH))
+  const nook = armchairs.some((a) => of('floor-lamp', 'table-lamp').some((x) => polygonGap(a.body, x.body) <= NEXT_TO_REACH))
+  // A side table already beside the reading chair: the lamp goes on it.
+  const nookTable = armchairs.flatMap((a) => of('side-table').filter((x) => polygonGap(a.body, x.body) <= NEXT_TO_REACH))[0]
   const nookStart = armchairs.some((a) => of('side-table', 'bookshelf').some((x) => polygonGap(a.body, x.body) <= NEXT_TO_REACH))
   add({
     id: 'nook',
@@ -741,8 +807,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
         ? 'Nice start. Now stand a lamp next to the armchair to read by.'
         : 'Stand a floor lamp or table lamp next to the armchair.',
     tab: ofAny('armchair').length ? 'decor' : 'living',
-    item: ofAny('armchair').length ? 'floor-lamp' : 'armchair',
-    near: nookFor,
+    item: ofAny('armchair').length ? (nookTable ? 'table-lamp' : 'floor-lamp') : 'armchair',
+    near: nookTable ? nookTable.id : nookFor,
     done: nook,
     progress: nookStart ? 0.7 : ofAny('armchair').length ? 0.5 : 0,
     stars: 2,

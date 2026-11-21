@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useGame } from '../game/gameStore'
 import * as THREE from 'three'
+import { LAMPS } from '../model/placement'
 import type { Item } from '../model/types'
 import { reduceMotion } from '../motion'
 import { legs, PAL, PartMesh, rng, shade, type Part } from './furnitureKit'
@@ -330,10 +331,32 @@ function bookshelf(item: Item): Part[] {
   return out
 }
 
+/** A lamp's shade height, shade diameter and bulb height: shared by the model and its evening glow. */
+function shadeDims(item: Item) {
+  const h = item.height
+  const s = Math.min(item.width, item.depth)
+  const shadeH = item.category === 'table-lamp' ? h * 0.38 : clamp(h * 0.2, 0.15, 0.36)
+  return { shadeH, s, bulbY: h - shadeH * 0.6 }
+}
+
+/** A table lamp: a ceramic body, a short neck, a bulb and a fabric shade. */
+function tableLamp(item: Item): Part[] {
+  const h = item.height
+  const { shadeH, s, bulbY } = shadeDims(item)
+  const bodyH = h * 0.5
+  const neck = Math.max(0.01, h - shadeH - bodyH)
+  return [
+    { kind: 'cyl', size: [s * 0.44, bodyH, s * 0.44], pos: [0, bodyH / 2, 0], top: 0.7, seg: 18, color: item.color ?? PAL.shade },
+    { kind: 'cyl', size: [0.02, neck + 0.04, 0.02], pos: [0, bodyH + neck / 2, 0], seg: 10, color: PAL.metal },
+    { kind: 'ball', size: [0.06, 0.07, 0.06], pos: [0, bulbY, 0], color: PAL.shade, noShadow: true },
+    { kind: 'cyl', size: [s, shadeH, s], pos: [0, h - shadeH / 2, 0], top: 0.78, seg: 18, fabric: true },
+  ]
+}
+
 function lamp(item: Item): Part[] {
   const { width: w, depth: d, height: h } = item
   const s = Math.min(w, d)
-  const shadeH = clamp(h * 0.2, 0.15, 0.36)
+  const { shadeH } = shadeDims(item)
   return [
     { kind: 'cyl', size: [s * 0.65, 0.03, s * 0.65], pos: [0, 0.015, 0], top: 0.85, seg: 16, color: PAL.dark },
     { kind: 'cyl', size: [0.025, h - shadeH - 0.02, 0.025], pos: [0, (h - shadeH) / 2, 0], seg: 12, color: PAL.metal },
@@ -431,6 +454,8 @@ export function parts(item: Item): Part[] {
       return rug(item)
     case 'floor-lamp':
       return lamp(item)
+    case 'table-lamp':
+      return tableLamp(item)
     case 'plant':
       return plant(item)
     default: {
@@ -456,7 +481,7 @@ function movingBox(item: Item): Part[] {
 }
 
 /** Plants and lamps are all curves: an edge outline on them is a scribble, so they show selection by the ring alone. */
-const ORGANIC = new Set(['plant', 'floor-lamp'])
+const ORGANIC = new Set(['plant', 'floor-lamp', 'table-lamp'])
 
 export function ProceduralItem({ item, highlight }: { item: Item; highlight?: string }) {
   const { style } = useStyle()
@@ -552,7 +577,7 @@ export function ItemModel({ item, highlight }: { item: Item; highlight?: string 
   return (
     <Arrival id={item.id}>
       <ItemLook item={item} highlight={highlight} />
-      {item.category === 'floor-lamp' && <LampGlow item={item} />}
+      {LAMPS.has(item.category) && <LampGlow item={item} />}
     </Arrival>
   )
 }
@@ -563,6 +588,8 @@ export function ItemModel({ item, highlight }: { item: Item; highlight?: string 
 const MAX_LAMP_LIGHTS = 8
 let lampLights = 0
 const GLOW = '#ffcf8a'
+const SHADE_GLOW = '#ffb25e'
+const SHADE_EMISSIVE = '#ff9a3c'
 
 /** In the evening a floor lamp glows: a warm bulb and shade, and a small warm light at shade height. */
 function LampGlow({ item }: { item: Item }) {
@@ -578,22 +605,34 @@ function LampGlow({ item }: { item: Item }) {
     }
   }, [evening])
   if (!evening) return null
-  // Matches lamp(): the shade's size and the bulb's height.
+  // Matches lamp() and tableLamp(): the shade's size and the bulb's height.
   const h = item.height
-  const s = Math.min(item.width, item.depth)
-  const shadeH = clamp(h * 0.2, 0.15, 0.36)
-  const bulbY = h - shadeH * 0.6
+  const { shadeH, s, bulbY } = shadeDims(item)
+  const table = item.category === 'table-lamp'
+  const top = table ? 0.78 : 0.72
   return (
     <group>
       <mesh position={[0, h - shadeH / 2, 0]} renderOrder={1}>
-        <cylinderGeometry args={[(s / 2) * 0.72 * 1.02, (s / 2) * 1.02, shadeH * 1.01, 20, 1, true]} />
-        <meshStandardMaterial color={GLOW} emissive={GLOW} emissiveIntensity={0.9} side={THREE.DoubleSide} />
+        <cylinderGeometry args={[(s / 2) * top * 1.02, (s / 2) * 1.02, shadeH * 1.01, 20, 1, true]} />
+        <meshStandardMaterial color={SHADE_GLOW} emissive={SHADE_EMISSIVE} emissiveIntensity={1.6} toneMapped={false} side={THREE.DoubleSide} />
       </mesh>
       <mesh position={[0, bulbY, 0]}>
         <sphereGeometry args={[0.055, 16, 12]} />
         <meshStandardMaterial color="#fff3d6" emissive={GLOW} emissiveIntensity={2} toneMapped={false} />
       </mesh>
-      {lit && <pointLight position={[0, bulbY, 0]} color="#ffb36b" intensity={3} distance={3.5} decay={1.6} castShadow={false} />}
+      {lit &&
+        (table ? (
+          <pointLight position={[0, bulbY, 0]} color="#ffb36b" intensity={2.6} distance={2.6} decay={1.8} castShadow={false} />
+        ) : (
+          <pointLight position={[0, bulbY, 0]} color="#ffb36b" intensity={5} distance={4.5} decay={1.6} castShadow={false} />
+        ))}
+      {/* A faint warm pool on the floor (floor lamps only: a table lamp's group stands on its host's top). */}
+      {!table && (
+        <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={2}>
+          <circleGeometry args={[1.1, 40]} />
+          <meshBasicMaterial color="#ffb36b" transparent opacity={0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
+      )}
     </group>
   )
 }

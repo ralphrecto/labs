@@ -94,6 +94,8 @@ export interface Placement {
   y: number
   /** Rotation in radians, clockwise on the plan. 0 means the front faces +y (down on the plan). */
   rotation: number
+  /** Placement id of the furniture this sits on (table lamps). Same layout. x/y stay absolute plan coordinates. */
+  on?: string
 }
 
 export interface Layout {

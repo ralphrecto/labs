@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { catalogEntry, itemFromCatalog, type CatalogEntry } from './model/catalog'
 import { add, dist, norm, scale, sub } from './model/geometry'
-import { findDrop, type DropResult } from './model/placement'
+import { findDrop, HOSTED, reconcileHosts, type DropResult } from './model/placement'
 import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
 import type { Doc, Item, Layout, Opening, Placement, Room, ScanRef, ScanReference, Units, Vec2 } from './model/types'
@@ -77,10 +77,10 @@ interface State extends UIState {
   deleteOpening: (roomId: string, id: string) => void
 
   /** Without `at`, the piece goes to a free spot that suits it; when none exists nothing is added and a toast says why. */
-  addItemFromCatalog: (entry: CatalogEntry, at?: Vec2) => PlaceResult
+  addItemFromCatalog: (entry: CatalogEntry, at?: PlaceAt) => PlaceResult
   /** Add a new item to the library and place it in the active layout. */
-  addItem: (item: Item, at?: Vec2) => PlaceResult
-  placeItem: (itemId: string, at?: Vec2) => PlaceResult
+  addItem: (item: Item, at?: PlaceAt) => PlaceResult
+  placeItem: (itemId: string, at?: PlaceAt) => PlaceResult
   updateItem: (id: string, patch: Partial<Item>) => void
   deleteItem: (id: string) => void
   updatePlacement: (id: string, patch: Partial<Placement>) => void
@@ -120,8 +120,31 @@ export function defaultDrop(d: Doc, item: Item, near?: Vec2): DropResult {
   return findDrop(d, activeLayout(d), item, { near })
 }
 
+/** Where a piece goes when the caller picks the spot: a point, optionally turned, optionally on a host (table lamps). */
+export type PlaceAt = Vec2 & { rotation?: number; on?: string }
+
 /** What happened when a piece was added: where it went, or why it couldn't be placed. */
 export type PlaceResult = { ok: true; placementId: string; roomName?: string } | { ok: false; reason: string }
+
+/** Table lamps in the active layout standing on a placement that `gone` matches, with their host's name. */
+function hostedOn(d: Doc, gone: (p: Placement) => boolean) {
+  const l = activeLayout(d)
+  const names = new Map(d.items.map((i) => [i.id, i.name]))
+  const hosts = new Map(l.placements.filter(gone).map((p) => [p.id, p]))
+  return l.placements.filter((p) => p.on && hosts.has(p.on) && !gone(p)).map((p) => ({ id: p.id, lamp: names.get(p.itemId) ?? 'lamp', host: names.get(hosts.get(p.on!)!.itemId) ?? 'table' }))
+}
+
+/** Say what happened to the lamps that stood on a deleted piece. */
+function tellHosted(d: Doc, watch: ReturnType<typeof hostedOn>, notify: (m: string) => void) {
+  if (!watch.length) return
+  const l = activeLayout(d)
+  const names = new Map(d.items.map((i) => [i.id, i.name]))
+  const w = watch[0]
+  const now = l.placements.find((p) => p.id === w.id)
+  const host = now?.on && l.placements.find((p) => p.id === now.on)
+  if (host) notify(`The ${w.lamp.toLowerCase()} moved to the ${(names.get(host.itemId) ?? 'other table').toLowerCase()}.`)
+  else notify(`The ${w.lamp.toLowerCase()} came off with the ${w.host.toLowerCase()}.`)
+}
 
 export const useStore = create<State>((set, get) => ({
   doc: loadDoc() ?? sampleDoc(),
@@ -144,8 +167,10 @@ export const useStore = create<State>((set, get) => ({
 
   update: (fn) =>
     set((s) => {
-      const next = fn(s.doc)
-      if (next === s.doc) return s
+      const changed = fn(s.doc)
+      if (changed === s.doc) return s
+      // Table lamps follow their host, or move to another top (or come off) when it goes.
+      const next = reconcileHosts(s.doc, changed)
       if (s.gesture) return { doc: next }
       return { doc: next, past: [...s.past, s.doc].slice(-HISTORY_LIMIT), future: [] }
     }),
@@ -280,9 +305,9 @@ export const useStore = create<State>((set, get) => ({
       get().notify(drop.reason)
       return drop
     }
-    const spot = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: 0 }
+    const spot = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: at!.rotation ?? 0, on: at!.on }
     const pid = uid()
-    get().update((d) => mapLayout({ ...d, items: [...d.items, item] }, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: item.id, x: spot.x, y: spot.y, rotation: spot.rotation }] })))
+    get().update((d) => mapLayout({ ...d, items: [...d.items, item] }, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: item.id, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}) }] })))
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
     return { ok: true, placementId: pid, roomName: drop?.ok ? drop.spot.roomName : undefined }
   },
@@ -295,24 +320,28 @@ export const useStore = create<State>((set, get) => ({
       get().notify(drop.reason)
       return drop
     }
-    const spot = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: 0 }
+    const spot = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: at!.rotation ?? 0, on: at!.on }
     const pid = uid()
-    get().update((d) => mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId, x: spot.x, y: spot.y, rotation: spot.rotation }] })))
+    get().update((d) => mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}) }] })))
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
     return { ok: true, placementId: pid, roomName: drop?.ok ? drop.spot.roomName : undefined }
   },
   updateItem: (id, patch) => get().update((d) => ({ ...d, items: d.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) })),
   deleteItem: (id) => {
+    const watch = hostedOn(get().doc, (p) => p.itemId === id)
     get().update((d) => ({
       ...d,
       items: d.items.filter((i) => i.id !== id),
       layouts: d.layouts.map((l) => ({ ...l, placements: l.placements.filter((p) => p.itemId !== id) })),
     }))
+    tellHosted(get().doc, watch, get().notify)
     set({ selection: null })
   },
   updatePlacement: (id, patch) => get().update((d) => mapLayout(d, (l) => ({ ...l, placements: l.placements.map((p) => (p.id === id ? { ...p, ...patch } : p)) }))),
   deletePlacement: (id) => {
+    const watch = hostedOn(get().doc, (p) => p.id === id)
     get().update((d) => mapLayout(d, (l) => ({ ...l, placements: l.placements.filter((p) => p.id !== id) })))
+    tellHosted(get().doc, watch, get().notify)
     set({ selection: null })
   },
   duplicatePlacement: (id) => {
@@ -325,11 +354,16 @@ export const useStore = create<State>((set, get) => ({
     const pid = uid()
     // Prefer a free spot near the original (the other side of the bed for a nightstand); else a small offset.
     const drop = findDrop(d0, activeLayout(d0), copy, { near: { x: p.x, y: p.y } })
-    const spot = drop.ok ? drop.spot : { x: p.x + 0.3, y: p.y + 0.3, rotation: p.rotation }
+    // A table lamp never floats: with no free top, nothing is copied.
+    if (!drop.ok && HOSTED.has(item.category)) {
+      get().notify(drop.reason)
+      return
+    }
+    const spot = drop.ok ? drop.spot : { x: p.x + 0.3, y: p.y + 0.3, rotation: p.rotation, on: undefined }
     get().update((d) =>
       mapLayout({ ...d, items: [...d.items, copy] }, (l) => ({
         ...l,
-        placements: [...l.placements, { ...p, id: pid, itemId: copy.id, x: spot.x, y: spot.y, rotation: spot.rotation }],
+        placements: [...l.placements, { ...p, id: pid, itemId: copy.id, x: spot.x, y: spot.y, rotation: spot.rotation, on: spot.on }],
       })),
     )
     set({ selection: { kind: 'placement', id: pid } })
@@ -359,8 +393,11 @@ export const useStore = create<State>((set, get) => ({
       const src = d.layouts.find((l) => l.id === id)
       if (!src) return d
       const nid = uid()
-      // Placements reference the shared item library, so a copy just needs new placement ids.
-      const copy: Layout = { id: nid, name: copyName(src.name, d.layouts.map((l) => l.name)), placements: src.placements.map((p) => ({ ...p, id: uid() })) }
+      // Placements reference the shared item library, so a copy just needs new placement ids
+      // (and table lamps pointed at the copies of their hosts).
+      const ids = new Map(src.placements.map((p) => [p.id, uid()]))
+      const placements = src.placements.map((p) => ({ ...p, id: ids.get(p.id)!, ...(p.on ? { on: ids.get(p.on) ?? p.on } : {}) }))
+      const copy: Layout = { id: nid, name: copyName(src.name, d.layouts.map((l) => l.name)), placements }
       return { ...d, layouts: [...d.layouts, copy], activeLayoutId: nid }
     }),
   renameLayout: (id, name) => get().update((d) => ({ ...d, layouts: d.layouts.map((l) => (l.id === id ? { ...l, name } : l)) })),

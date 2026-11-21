@@ -552,10 +552,10 @@ describe('round 5 (play-test review)', () => {
       const next = nextGoal(s, fits)
       if (!next?.item || !next.tab) break
       const item = itemFromCatalog(catalogEntry(next.item), `nx${i}`)
-      const r = findDrop(d, layoutOf(d), item, { nextTo: next.item === 'floor-lamp' ? next.near : undefined })
+      const r = findDrop(d, layoutOf(d), item, { nextTo: next.item === 'floor-lamp' || next.item === 'table-lamp' ? next.near : undefined })
       if (!r.ok) break
       d.items.push(item)
-      layoutOf(d).placements.push({ id: `nxp${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
+      layoutOf(d).placements.push({ id: `nxp${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation, on: r.spot.on })
     }
     // The sample takes a good few placements to go from Lived-in to Designer home.
     const designer = levels.indexOf('Designer home')
@@ -671,7 +671,7 @@ describe('round 6 (play-test review)', () => {
       const r = findDrop(d, layoutOf(d), item, { nextTo: next.near })
       if (!r.ok) break
       d.items.push(item)
-      layoutOf(d).placements.push({ id: `dnp${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
+      layoutOf(d).placements.push({ id: `dnp${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation, on: r.spot.on })
     }
     expect(dream, `Dream home after ${dream} placements`).toBeGreaterThanOrEqual(12)
     expect(dream).toBeLessThanOrEqual(25)

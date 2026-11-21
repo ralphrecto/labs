@@ -57,7 +57,7 @@ interface GameState {
   noteLevel: (homeId: string, level: number) => void
   /** "Show me" for a goal: the drawer on a tab with a piece to point at, or the goals sheet at the goal. */
   showGoal: (goal: { id: string; tab?: string; item?: string; placeIn?: string; near?: string }) => void
-  setBuyHint: (hint: { category: string; roomId?: string } | null) => void
+  setBuyHint: (hint: { category: string; roomId?: string; near?: string } | null) => void
   celebrateLevel: (index: number, name: string) => void
   clearLevelUp: () => void
   consumeWelcomeBack: () => void

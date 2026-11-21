@@ -5,6 +5,7 @@ import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useAnalysis } from '../analysis'
 import { bounds, centroid, dist, norm, openingEndpoints, pointInPolygon, polygonArea, scale, sub, add, v, wallInwardNormal, wallSegments } from '../model/geometry'
+import { clampOnHost, HOSTED, hostAt } from '../model/placement'
 import { snapPlacement } from '../model/snapping'
 import type { Item, Opening, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
@@ -429,9 +430,12 @@ function PlacedItem({
   onGrab,
   dragOk,
   wobble = 0,
+  lift = 0,
 }: {
   item: Item
   p: Placement
+  /** Height of the top this piece stands on (a table lamp on its nightstand). */
+  lift?: number
   selected: boolean
   flag?: 'error' | 'warning'
   onGrab: (e: ThreeEvent<PointerEvent>, p: Placement) => void
@@ -446,7 +450,7 @@ function PlacedItem({
   const highlight = selected ? SELECT_LINE : tint && flag === 'error' ? '#d64545' : tint && flag === 'warning' ? '#d68a1f' : undefined
   const h = Math.max(item.height, 0.02)
   return (
-    <group position={[p.x, 0, p.y]} rotation={[0, -p.rotation, 0]} onPointerDown={(e) => onGrab(e, p)}>
+    <group position={[p.x, lift, p.y]} rotation={[0, -p.rotation, 0]} onPointerDown={(e) => onGrab(e, p)}>
       <Wobble kick={wobble}>
       <Hop on={selected}>
         <ItemModel item={item} highlight={highlight} />
@@ -529,10 +533,18 @@ function Scene({
     const item = byId.get(p.itemId)
     return item ? [{ p, item }] : []
   })
+  const pById = new Map(layout.placements.map((p) => [p.id, p]))
+  /** How high a piece stands: a table lamp on its host's top, everything else on the floor. */
+  const lift = (p: Placement) => (p.on ? byId.get(pById.get(p.on)?.itemId ?? '')?.height ?? 0 : 0)
 
   const hit = (e: ThreeEvent<PointerEvent>) => {
     const pt = new THREE.Vector3()
     return e.ray.intersectPlane(FLOOR, pt) ? v(pt.x, pt.z) : null
+  }
+  /** Where the pointer meets the level plane at height y (a host's top, for a table lamp). */
+  const hitAt = (e: ThreeEvent<PointerEvent>, y: number) => {
+    const pt = new THREE.Vector3()
+    return e.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), pt) ? v(pt.x, pt.z) : null
   }
 
   const onGrab = (e: ThreeEvent<PointerEvent>, p: Placement) => {
@@ -542,7 +554,7 @@ function Scene({
     floorDown.current = false
     const s = useStore.getState()
     s.select({ kind: 'placement', id: p.id })
-    const w = hit(e)
+    const w = p.on ? hitAt(e, lift(p)) : hit(e)
     if (!w) return
     // A finger jitters: it has to travel a few pixels before a tap turns into a drag.
     const ne = e.nativeEvent
@@ -555,13 +567,37 @@ function Scene({
   const onMove = (e: ThreeEvent<PointerEvent>) => {
     const d = drag.current
     if (!d) return
-    const w = hit(e)
-    if (!w) return
     const s = useStore.getState()
     const cur = activeLayout(s.doc).placements.find((x) => x.id === d.id)
     const item = cur && byId.get(cur.itemId)
     if (!cur || !item) return
-    const others = placed.filter((x) => x.p.id !== d.id)
+    if (HOSTED.has(item.category) && cur.on) {
+      // A table lamp slides over table tops: on a top it's fine, off every top it shows red.
+      const wl = hitAt(e, lift(cur))
+      if (!wl) return
+      if (!d.moved) {
+        if (Math.hypot(e.nativeEvent.clientX - d.sx, e.nativeEvent.clientY - d.sy) < d.slop) return
+        s.beginGesture()
+        d.moved = true
+      }
+      const pt = sub(wl, d.grab)
+      const layoutNow = activeLayout(s.doc)
+      const host = hostAt(s.doc, layoutNow, pt, item, cur.on)
+      let next: Placement
+      let ok = false
+      if (host) {
+        const c = clampOnHost(host, item, pt)
+        next = { ...cur, x: c.x, y: c.y, rotation: host.p.rotation, on: host.id }
+        ok = true
+        d.lastClean = next
+      } else next = { ...cur, x: pt.x, y: pt.y }
+      setDragFx((was) => (was?.id === d.id && was.ok === ok ? was : { id: d.id, ok }))
+      s.updatePlacement(d.id, { x: next.x, y: next.y, rotation: next.rotation, on: next.on })
+      return
+    }
+    const w = hit(e)
+    if (!w) return
+    const others = placed.filter((x) => x.p.id !== d.id && !x.p.on)
     const solid = others.map((x) => ({ id: x.p.id, item: x.item, p: x.p }))
     if (!d.moved) {
       if (Math.hypot(e.nativeEvent.clientX - d.sx, e.nativeEvent.clientY - d.sy) < d.slop) return
@@ -586,7 +622,7 @@ function Scene({
     const down = floorDown.current
     floorDown.current = false
     if (!down || e.delta >= 5 || eye) return
-    const near = nearestPlacementOnScreen(e, placed)
+    const near = nearestPlacementOnScreen(e, placed.map((x) => ({ ...x, lift: lift(x.p) })))
     useStore.getState().select(near ? { kind: 'placement', id: near } : null)
   }
 
@@ -598,8 +634,14 @@ function Scene({
       const s = useStore.getState()
       const cur = activeLayout(s.doc).placements.find((x) => x.id === d.id)
       const item = cur && byId.get(cur.itemId)
-      if (cur && item && d.base) {
-        const solid = placed.filter((x) => x.p.id !== d.id).map((x) => ({ id: x.p.id, item: x.item, p: x.p }))
+      if (cur && item && HOSTED.has(item.category) && cur.on) {
+        // Let go off every table top: back to the last top it stood on.
+        if (!hostAt(s.doc, activeLayout(s.doc), v(cur.x, cur.y), item, cur.on)) {
+          s.updatePlacement(d.id, { x: d.lastClean.x, y: d.lastClean.y, rotation: d.lastClean.rotation, on: d.lastClean.on })
+          setWobbles((w) => ({ ...w, [d.id]: (w[d.id] ?? 0) + 1 }))
+        }
+      } else if (cur && item && d.base) {
+        const solid = placed.filter((x) => x.p.id !== d.id && !x.p.on).map((x) => ({ id: x.p.id, item: x.item, p: x.p }))
         const r = settleDrop(item, cur, d.lastClean, solid, s.doc.rooms, d.base)
         if (r.bounced) {
           s.updatePlacement(d.id, { x: r.placement.x, y: r.placement.y, rotation: r.placement.rotation })
@@ -743,6 +785,7 @@ function Scene({
             onGrab={onGrab}
             dragOk={dragFx?.id === p.id ? dragFx.ok : undefined}
             wobble={wobbles[p.id]}
+            lift={lift(p)}
           />
         ))}
       </group>
@@ -764,7 +807,7 @@ function Scene({
 const NEAR_PICK_PX = 12
 
 /** The placement whose on-screen box (footprint and top) is nearest the click, if within NEAR_PICK_PX. */
-function nearestPlacementOnScreen(e: ThreeEvent<MouseEvent>, placed: { p: Placement; item: Item }[]): string | null {
+function nearestPlacementOnScreen(e: ThreeEvent<MouseEvent>, placed: { p: Placement; item: Item; lift?: number }[]): string | null {
   const camera = e.camera
   const el = e.nativeEvent.target as HTMLElement | null
   const W = el?.clientWidth || 1
@@ -774,11 +817,11 @@ function nearestPlacementOnScreen(e: ThreeEvent<MouseEvent>, placed: { p: Placem
   const q = new THREE.Vector3()
   let best: string | null = null
   let bestD = NEAR_PICK_PX
-  for (const { p, item } of placed) {
+  for (const { p, item, lift = 0 } of placed) {
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity
     const c = Math.cos(p.rotation), s = Math.sin(p.rotation)
     for (const [lx, ly] of [[-1, -1], [1, -1], [1, 1], [-1, 1]])
-      for (const h of [0, Math.max(item.height, 0.02)]) {
+      for (const h of [lift, lift + Math.max(item.height, 0.02)]) {
         const ox = (lx * item.width) / 2, oy = (ly * item.depth) / 2
         q.set(p.x + ox * c - oy * s, h, p.y + ox * s + oy * c).project(camera)
         if (q.z > 1) continue
