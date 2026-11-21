@@ -7,7 +7,8 @@ import { findDrop } from '../model/placement'
 import type { Doc } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { lastAwayMs, useGame } from './gameStore'
-import { bankableLevel, bestLevelKey, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, scoreHome, type Goal, type HomeScore } from './goals'
+import { bankableLevel, bestLevelKey, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, packedBoxIds, scoreHome, type Goal, type HomeScore } from './goals'
+import { unpackAndCelebrate } from './unpack'
 import { IconCheck, IconClose, IconSparkle, IconStar } from './icons'
 import { useModal } from './useModal'
 import { openRemixPicker } from './Designs'
@@ -447,15 +448,37 @@ export function VibeMeter() {
   )
 }
 
+/** Ends the wait set up by showGoal's unpack branch (selecting the next box after an unpack). */
+let stopUnpackFlow = () => {}
+
 /** Opens the drawer on the goal's tab (out of any tool or selection), or the goals sheet at the goal. */
 function showGoal(g: Goal) {
   // Unpack your boxes: select the box (its bar offers Unpack), rather than opening the drawer.
+  // Tapped again with that box already selected, the chip unpacks it and moves on to the next
+  // packed box, so every box gets opened, not only the first.
   if (g.id === 'unpack' && g.near) {
     const st = useStore.getState()
     if (st.mode !== 'select') st.setMode('select')
     useGame.setState({ mode: 'buy', sheet: null, buyHint: null })
+    const sel = st.selection
+    if (sel?.kind === 'placement' && sel.id === g.near) {
+      unpackAndCelebrate(g.near)
+      const d = useStore.getState().doc
+      const next = [...packedBoxIds(d, activeLayout(d))][0]
+      if (next) useStore.setState({ selection: { kind: 'placement', id: next } })
+      return
+    }
     useStore.setState({ selection: { kind: 'placement', id: g.near } })
     if (g.hint) st.notify(g.hint)
+    // Once that box is unpacked (from its bar), select the next packed box, if any.
+    stopUnpackFlow()
+    stopUnpackFlow = useGame.subscribe((s, prev) => {
+      if (!s.unpacked || s.unpacked === prev.unpacked) return
+      stopUnpackFlow()
+      const d = useStore.getState().doc
+      const next = [...packedBoxIds(d, activeLayout(d))][0]
+      if (next) useStore.setState({ selection: { kind: 'placement', id: next } })
+    })
     return
   }
   // A goal fixed by moving a piece (an overlap, a piece in a wall, a blocked door): select that piece.

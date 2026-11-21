@@ -69,6 +69,15 @@ describe('Next chip dead ends (round 7)', () => {
     expect(r.dream, r.log.join('\n')).toBeGreaterThan(0)
   }, 60000)
 
+  it('unpacks both moving boxes of the sample home before Dream home', () => {
+    const d = sampleDoc()
+    const boxes = () => d.items.filter((i) => i.unpack?.length)
+    expect(boxes().length).toBeGreaterThanOrEqual(2)
+    const r = followNext(d)
+    expect(r.dream, r.log.join('\n')).toBeGreaterThan(0)
+    expect(boxes().every((b) => b.unpacked), r.log.join('\n')).toBe(true)
+  }, 60000)
+
   it('turns the coffee goal into a move when a coffee table is already there, never another purchase', () => {
     const d = emptyDoc()
     d.rooms.push(rectRoom('Living room', 0, 0, 5, 4))

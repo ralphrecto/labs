@@ -848,7 +848,9 @@ describe('remix this home (round 8)', () => {
     const d = sampleDoc()
     expect(playToDream(d, 'orig')).toBeGreaterThan(0)
     const l = remix(d, 'window-seat')
-    expect(score(d).level.index).toBeLessThanOrEqual(LEVELS.indexOf('Lived-in'))
+    // Both moving boxes are unpacked on the way (round 9), and that bonus belongs to the home, so
+    // a remix can start one level up, at Cozy; it is still well short of Dream home.
+    expect(score(d).level.index).toBeLessThanOrEqual(LEVELS.indexOf('Cozy'))
     const dream = playToDream(d, 'rx')
     console.log(`remix (window-seat) of the furnished sample: ${l.remix!.anchors} anchors, Dream home after ${dream} Next-chip placements`)
     expect(dream, `Dream home after ${dream} placements`).toBeGreaterThanOrEqual(6)
