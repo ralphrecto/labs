@@ -403,3 +403,19 @@
 /* While a toast shows, the Next chip steps aside so only one pill floats under the stars. */
 .game:has(.hud-toast .toast) .goal-next,
 .game:has(.hud-toast .toast):has(.hud-cam.labelled) .goal-next { visibility: hidden; opacity: 0; pointer-events: none; }
+
+/* ==================== r9-c: laptops and desktops ==================== */
+/* Mode buttons carry their key on mouse-and-keyboard screens. */
+.hud-mode-key { display: none; }
+@media (hover: hover) and (pointer: fine) and (min-width: 641px) {
+  .hud-mode-key {
+    display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; margin-left: -2px; border-radius: 5px;
+    font: 800 11px/1 var(--g-font); color: var(--g-ink-2); background: var(--g-paper-2); box-shadow: inset 0 -1.5px 0 rgba(70, 50, 30, 0.14);
+  }
+  .hud-mode.on .hud-mode-key { background: #fff; }
+  /* The shortcut list opens at the top left in two columns, clear of the drawer's cards. */
+  .hud-keys { top: calc(var(--top-h) + 8px + env(safe-area-inset-top)); bottom: auto; width: min(660px, calc(100vw - 32px)); max-height: calc(100vh - var(--top-h) - var(--dock-h) - 24px); overflow-y: auto; }
+  .hud-keys dl { grid-template-columns: 1fr 1fr; column-gap: 20px; }
+  .hud-keys dl > div { grid-template-columns: 112px 1fr; }
+}
+/* ==================== end r9-c ==================== */

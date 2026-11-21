@@ -251,3 +251,33 @@
 .game .buy-shopcard .buy-name { color: var(--g-ink); }
 .game .buy-shop-icons svg { background: #fff; color: var(--g-coral); box-shadow: 0 0 0 2px color-mix(in srgb, var(--g-coral) 40%, transparent); }
 .game .buy-shop-icons svg:last-child { background: #fff; color: var(--g-coral); box-shadow: 0 0 0 2px color-mix(in srgb, var(--g-coral) 40%, transparent); }
+
+/* ---------------------------------------------------------------- laptops and desktops */
+/* The drawer is a column down the right, from under the top bar to above the mode bar, so the
+   home keeps most of the screen. GameApp's useHudInset counts its width at the right (keep the
+   query in step with DESKTOP_SIDE_DRAWER there). */
+@media (min-width: 1100px) and (min-height: 700px) {
+  .game { --desk-side-w: 360px; }
+  .hud-drawer-slot .buy-drawer {
+    left: auto; right: 16px; top: calc(var(--top-h) + 8px); bottom: calc(var(--dock-h) + 4px);
+    width: var(--desk-side-w); max-width: none; max-height: none; margin: 0; border-radius: var(--g-r-lg); padding: 10px 0 8px;
+    box-shadow: -6px 0 30px rgba(60, 40, 20, 0.12), 0 1px 4px rgba(60, 40, 20, 0.06);
+    transform-origin: 100% 50%; animation-name: buy-side-open;
+  }
+  .hud-drawer-slot .buy-tabs { justify-content: space-between; gap: 0; padding: 4px 10px 8px; border-bottom: 1.5px solid var(--g-line); }
+  .hud-drawer-slot .buy-tab { min-width: 0; flex: 1 1 0; padding: 2px 0; }
+  .hud-drawer-slot .buy-grid {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); justify-content: stretch; align-content: start;
+    gap: 8px; padding: 10px 12px 8px; overflow-x: hidden; overflow-y: auto; flex: 1; scroll-snap-type: none;
+  }
+  .hud-drawer-slot .buy-grid .buy-card { width: auto; min-width: 0; }
+  .hud-drawer-slot .buy-grid .buy-empty { width: auto; grid-column: 1 / -1; }
+  /* The selection strip moves to the top left of the stage, clear of the room and the drawer. */
+  .hud-drawer-slot .buy-drawer > .hud-ctx-wrap.slim {
+    top: 0; bottom: auto; left: calc(var(--desk-side-w) + 32px - 100vw); transform: none; align-items: flex-start;
+    max-width: calc(100vw - var(--desk-side-w) - 64px);
+  }
+  .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-cam { right: calc(16px + var(--desk-side-w) + 12px); }
+  .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-toast .toast { left: calc(50% - var(--desk-side-w) / 2); }
+}
+@keyframes buy-side-open { from { transform: translateX(40%); opacity: 0; } 60% { opacity: 1; } }

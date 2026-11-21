@@ -860,14 +860,15 @@ function Scene({
       </group>
       <UnpackBurst />
       {!eye && <FitCamera key={(doc.scans ?? []).length} inset={inset} spin={autoRotate} focus={focusRoom} full={fullFrame} />}
-      <ViewOffset inset={eye || fullFrame ? undefined : inset} />
+      <ViewOffset inset={eye ? undefined : inset} full={fullFrame} />
       {eye ? (
         <>
           <OrbitControls ref={controls} makeDefault target={eyeTarget(eye)} enableZoom={false} enablePan={false} rotateSpeed={-0.4} />
           <EyeWalk controls={controls} glide={glide} rooms={doc.rooms} walls={walls} boxes={boxes} />
         </>
       ) : (
-        <OrbitControls ref={controls} target={target} makeDefault maxPolarAngle={Math.PI / 2 - 0.02} minDistance={0.3} maxDistance={60} autoRotate={autoRotate} autoRotateSpeed={0.6} />
+        // Left-drag orbits, right-drag pans, the wheel zooms towards the pointer.
+        <OrbitControls ref={controls} target={target} makeDefault zoomToCursor maxPolarAngle={Math.PI / 2 - 0.02} minDistance={0.3} maxDistance={60} autoRotate={autoRotate} autoRotateSpeed={0.6} />
       )}
     </>
   )
@@ -942,6 +943,13 @@ const FILL = 0.8
 const PHONE_FILL = 0.88
 /** Look mode: nearly edge to edge. */
 const FULL_FILL = 0.94
+/** Laptops and desktops: the drawer is a side column, so the home can take more of what's left. */
+const DESKTOP_FILL = 0.9
+/** Look mode in the game: framed between the look bar and the mode bar, with a little margin. */
+const LOOK_FILL = 0.9
+const isDesktop = (w: number, h: number) => w >= 1100 && h >= 700
+/** Look mode frames between the look bar and the mode bar on wider screens; phones keep the whole screen. */
+const lookInset = (inset: SceneInset | undefined, full: boolean | undefined, w: number, h: number) => (full && (w <= 700 || h <= 500) ? undefined : inset)
 /** The overview looks down from the front, a little to the right. */
 const OVERVIEW_DIR = new THREE.Vector3(0.15, 1.0, 0.75).normalize()
 const UP = new THREE.Vector3(0, 1, 0)
@@ -1085,8 +1093,11 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
     const pts = framePoints(useStore.getState().doc, focus)
     if (!pts.length) return
     const dir = placed.current ? camera.position.clone().sub(controls.target).normalize() : OVERVIEW_DIR.clone()
-    // Look mode has no drawer: the home fills the whole screen, under the floating buttons.
-    const fit = fitView(pts, dir, camera.fov, size.width, size.height, full ? undefined : inset, spin, full ? FULL_FILL : inset && size.width <= 700 && size.height > size.width ? PHONE_FILL : FILL)
+    // Look mode has no drawer: the home fills the screen between the look bar and the mode bar
+    // (the game passes their inset), or the whole screen when there is no HUD.
+    const frame = lookInset(inset, full, size.width, size.height)
+    const fill = full ? (frame ? LOOK_FILL : FULL_FILL) : inset && size.width <= 700 && size.height > size.width ? PHONE_FILL : inset && isDesktop(size.width, size.height) ? DESKTOP_FILL : FILL
+    const fit = fitView(pts, dir, camera.fov, size.width, size.height, frame, spin, fill)
     if (!placed.current) {
       placed.current = true
       controls.target.copy(fit.target)
@@ -1120,10 +1131,12 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
  * bar and the drawer or selection bar) rather than the middle of the pane. Eases in about 250 ms
  * whenever the HUD changes, without moving the camera itself.
  */
-function ViewOffset({ inset }: { inset?: SceneInset }) {
+function ViewOffset({ inset: given, full }: { inset?: SceneInset; full?: boolean }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
+  const inset = lookInset(given, full, size.width, size.height)
   const cur = useRef(0)
+  const curX = useRef(0)
   useFrame((_, dt) => {
     const top = inset?.top ?? 0
     const vis = visibleHeight(size.height, inset)
@@ -1132,16 +1145,19 @@ function ViewOffset({ inset }: { inset?: SceneInset }) {
     const goalX = (inset?.right ?? 0) / 2
     let next = cur.current + (goal - cur.current) * (1 - Math.exp(-dt * 14))
     if (Math.abs(goal - next) < 0.5) next = goal
+    // The side drawer (desktop) comes and goes with the mode: ease across too.
+    let nextX = curX.current + (goalX - curX.current) * (1 - Math.exp(-dt * 14))
+    if (Math.abs(goalX - nextX) < 0.5) nextX = goalX
+    curX.current = nextX
     const view = camera.view
-    // The right-hand button column shifts the picture left by half its width (no easing: it only
-    // changes with the screen).
+    // A right-hand column (phone camera buttons, desktop drawer) shifts the picture left by half its width.
     const same = view?.enabled
-      ? view.fullWidth === size.width && view.fullHeight === size.height && view.offsetY === -next && view.offsetX === goalX
-      : next === 0 && goalX === 0
+      ? view.fullWidth === size.width && view.fullHeight === size.height && view.offsetY === -next && view.offsetX === nextX
+      : next === 0 && nextX === 0
     if (same) return
     cur.current = next
-    if (next === 0 && goalX === 0) camera.clearViewOffset()
-    else camera.setViewOffset(size.width, size.height, goalX, -next, size.width, size.height)
+    if (next === 0 && nextX === 0) camera.clearViewOffset()
+    else camera.setViewOffset(size.width, size.height, nextX, -next, size.width, size.height)
   })
   useEffect(() => () => camera.clearViewOffset(), [camera])
   return null
@@ -1325,7 +1341,7 @@ export interface SceneControl {
   hideFlags?: boolean
   /** Frame just this room (a phone furnishing a piece in it); null frames the whole home. */
   focusRoom?: string | null
-  /** Frame the home on the whole screen, ignoring the HUD inset (Look mode). */
+  /** Look mode: frame the home between the look bar and the mode bar (phones: the whole screen). */
   fullFrame?: boolean
 }
 

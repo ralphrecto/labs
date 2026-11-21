@@ -14,6 +14,7 @@ import {
   norm,
   offsetPolygon,
   openingEndpoints,
+  pointInPolygon,
   polygonArea,
   scale,
   sub,
@@ -483,6 +484,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
     return l
   }, [px, units])
 
+  const pieceBoxes = placementsWithItems.map(({ p, item }) => bounds(footprint(item, p)))
+  const dimsDone: { l: number; mid: Vec2 }[] = []
   return (
     <div className="plan-wrap" ref={wrapRef} onContextMenu={(e) => e.preventDefault()}>
       {title && <div className="plan-title">{title}</div>}
@@ -525,7 +528,9 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
           const selected = selectedRoom?.id === room.id
           const outer = offsetPolygon(room.polygon, room.wallThickness)
           const d = `M${outer.map((p) => `${p.x},${p.y}`).join('L')}Z M${room.polygon.map((p) => `${p.x},${p.y}`).join('L')}Z`
-          const c = centroid(room.polygon)
+          const areaText = units === 'metric' ? `${polygonArea(room.polygon).toFixed(1)} m²` : `${Math.round(polygonArea(room.polygon) * 10.7639)} ft²`
+          // The name and area sit in a free spot of the room, or not at all: never under a piece.
+          const c = roomLabelSpot(room.polygon, centroid(room.polygon), fs, Math.max(room.name.length, areaText.length) * fs * 0.58, pieceBoxes)
           return (
             <g key={room.id}>
               <polygon
@@ -552,14 +557,16 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
                   begin({ type: 'room', roomId: room.id, last: toWorld(e) }, e)
                 }}
               />
-              <g pointerEvents="none" fill={COLORS.muted} fontSize={fs} textAnchor="middle" fontFamily="system-ui, sans-serif">
-                <text x={c.x} y={c.y - fs * 0.2} fontWeight={600} fill={COLORS.text} opacity={0.55}>
-                  {room.name}
-                </text>
-                <text x={c.x} y={c.y + fs * 1.1} opacity={0.55}>
-                  {units === 'metric' ? `${polygonArea(room.polygon).toFixed(1)} m²` : `${Math.round(polygonArea(room.polygon) * 10.7639)} ft²`}
-                </text>
-              </g>
+              {c && (
+                <g pointerEvents="none" fill={COLORS.muted} fontSize={fs} textAnchor="middle" fontFamily="system-ui, sans-serif">
+                  <text x={c.x} y={c.y - fs * 0.2} fontWeight={600} fill={COLORS.text} opacity={0.55}>
+                    {room.name}
+                  </text>
+                  <text x={c.x} y={c.y + fs * 1.1} opacity={0.55}>
+                    {areaText}
+                  </text>
+                </g>
+              )}
             </g>
           )
         })}
@@ -622,8 +629,17 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
             wallSegments(room).map(([a, b], i) => {
               const l = dist(a, b)
               if (l * vs.k < 40) return null
+              const mid = scale(add(a, b), 0.5)
+              // A wall two rooms share (the same length, just across the wall) is measured once.
+              if (dimsDone.some((o) => Math.abs(o.l - l) < 0.02 && dist(o.mid, mid) < Math.max(0.3, room.wallThickness * 3))) return null
+              dimsDone.push({ l, mid })
+              // Outside the wall line; an inside wall takes whichever side is clear of furniture, or none.
               const n = wallInwardNormal(room, i)
-              const m = add(scale(add(a, b), 0.5), scale(n, 14 * px))
+              const u = norm(sub(b, a))
+              const half = v(Math.abs(u.x) * fs * 1.6 + Math.abs(u.y) * fs * 0.6, Math.abs(u.y) * fs * 1.6 + Math.abs(u.x) * fs * 0.6)
+              const clear = (q: Vec2) => pieceBoxes.every((o) => o.maxX < q.x - half.x || o.minX > q.x + half.x || o.maxY < q.y - half.y || o.minY > q.y + half.y)
+              const m = [add(mid, scale(n, -(room.wallThickness + 10 * px))), add(mid, scale(n, 14 * px))].find(clear)
+              if (!m) return null
               let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI
               if (ang > 90) ang -= 180
               if (ang < -90) ang += 180
@@ -1033,3 +1049,24 @@ function insideScan(ref: ScanRef, p: Vec2) {
 }
 
 export type { Doc, Layout }
+
+type Box = { minX: number; minY: number; maxX: number; maxY: number }
+
+/**
+ * Where a room's name and area go: its centre if that's free, else the free spot nearest it
+ * (inside the room, clear of every piece), or null when the room has no room for them.
+ */
+function roomLabelSpot(poly: Vec2[], c: Vec2, fs: number, w: number, boxes: Box[]): Vec2 | null {
+  const free = (q: Vec2) => {
+    const b = { minX: q.x - w / 2, maxX: q.x + w / 2, minY: q.y - fs * 1.1, maxY: q.y + fs * 1.5 }
+    if (![v(b.minX, b.minY), v(b.maxX, b.minY), v(b.maxX, b.maxY), v(b.minX, b.maxY)].every((p) => pointInPolygon(p, poly))) return false
+    return boxes.every((o) => o.maxX < b.minX || o.minX > b.maxX || o.maxY < b.minY || o.minY > b.maxY)
+  }
+  if (free(c)) return c
+  const rb = bounds(poly)
+  const tries: Vec2[] = []
+  const N = 8
+  for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) tries.push(v(rb.minX + ((rb.maxX - rb.minX) * i) / N, rb.minY + ((rb.maxY - rb.minY) * j) / N))
+  tries.sort((p, q) => dist(p, c) - dist(q, c))
+  return tries.find(free) ?? null
+}

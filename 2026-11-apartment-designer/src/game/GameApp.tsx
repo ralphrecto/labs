@@ -245,6 +245,10 @@ const BOTTOM_HUD = ['.buy-drawer', '.hud-ctx-wrap', '.hud-tray', '.hud-dock', '.
 /** After a framing change, how long the HUD may settle (pieces mounting) before the inset is held. */
 const INSET_SETTLE_MS = 700
 const TOP_HUD = ['.hud-top', '.goal-next', '.hud-look-bar']
+/** When the furniture drawer is a right-hand column (keep in step with buy.css). */
+const DESKTOP_SIDE_DRAWER = '(min-width: 1100px) and (min-height: 700px)'
+/** Height kept for the slim selection strip at the top left of the stage beside the side drawer. */
+const SIDE_CTX_H = 56
 
 /**
  * How much of the stage the HUD covers at the top and bottom (CSS px), so the 3D view can centre
@@ -269,13 +273,17 @@ function useHudInset(root: RefObject<HTMLDivElement | null>, frameKey: string): 
       const H = game.clientHeight
       let bottom = 0
       let top = 0
+      // Laptops and desktops (buy.css): the drawer is a column down the right, and the selection
+      // strip rides at the top left of the stage, so they count at the right and the top instead.
+      const g = game.getBoundingClientRect()
+      const side = window.matchMedia(DESKTOP_SIDE_DRAWER).matches
+      const drawer = side ? game.querySelector<HTMLElement>('.hud-drawer-slot:not(.tucked) .buy-drawer') : null
       for (const sel of BOTTOM_HUD) {
         const el = game.querySelector<HTMLElement>(sel)
-        if (!el) continue
+        if (!el || (drawer && (el === drawer || drawer.contains(el)))) continue
         // Side panels (the scan review on wide screens) don't cover the middle of the stage;
         // centred bars (dock, selection bar) do, however narrow they are.
         const r = el.getBoundingClientRect()
-        const g = game.getBoundingClientRect()
         const mid = g.left + W / 2
         if (r.right < mid - W * 0.1 || r.left > mid + W * 0.1) continue
         bottom = Math.max(bottom, H - offsetTopIn(el, game))
@@ -287,7 +295,12 @@ function useHudInset(root: RefObject<HTMLDivElement | null>, frameKey: string): 
       // On a phone the camera buttons run down the right edge of the stage: frame the home beside them.
       let right = 0
       const camEl = game.querySelector<HTMLElement>('.hud-cam')
-      if (camEl && W <= 700 && H > W) right = Math.max(0, W - (camEl.getBoundingClientRect().left - game.getBoundingClientRect().left) + 4)
+      if (camEl && W <= 700 && H > W) right = Math.max(0, W - (camEl.getBoundingClientRect().left - g.left) + 4)
+      if (drawer) {
+        right = Math.max(right, W - (drawer.getBoundingClientRect().left - g.left))
+        // Room for the selection strip at the top left, whether or not something is selected now.
+        top = Math.max(top, offsetTopIn(drawer, game) + SIDE_CTX_H)
+      }
       if (performance.now() > openUntil.current) return
       setInset((was) =>
         Math.abs(was.top - top) < 4 && Math.abs(was.bottom - bottom) < 4 && Math.abs((was.right ?? 0) - right) < 4 ? was : { top, bottom, right },
@@ -452,6 +465,9 @@ function Dock() {
         >
           <span className="hud-mode-icon">{icon}</span>
           <span className="hud-mode-label">{label}</span>
+          <kbd className="hud-mode-key" aria-hidden="true">
+            {key}
+          </kbd>
         </button>
       ))}
     </nav>
@@ -640,7 +656,7 @@ function ContextBar({ slim = false }: { slim?: boolean }) {
             <I.IconBox />
           </Act>
         )}
-        <Act label="Rotate" keys="R" onClick={() => rotatePlacementSmart(p.id, Math.PI / 2)}>
+        <Act label="Rotate" tip="Rotate 90°" keys="R" onClick={() => rotatePlacementSmart(p.id, Math.PI / 2)}>
           <I.IconRotate />
         </Act>
         {!packed && (
@@ -767,9 +783,9 @@ function ContextBar({ slim = false }: { slim?: boolean }) {
   )
 }
 
-function Act({ label, keys, onClick, children, danger, on, filled }: { label: string; keys?: string; onClick: () => void; children: ReactNode; danger?: boolean; on?: boolean; filled?: boolean }) {
+function Act({ label, tip, keys, onClick, children, danger, on, filled }: { label: string; tip?: string; keys?: string; onClick: () => void; children: ReactNode; danger?: boolean; on?: boolean; filled?: boolean }) {
   return (
-    <button className={`hud-act${danger ? ' danger' : ''}${on ? ' on' : ''}${filled ? ' filled' : ''}`} onClick={onClick} aria-label={label} title={keys ? `${label} (${keys})` : label}>
+    <button className={`hud-act${danger ? ' danger' : ''}${on ? ' on' : ''}${filled ? ' filled' : ''}`} onClick={onClick} aria-label={label} title={keys ? `${tip ?? label} (${keys})` : (tip ?? label)}>
       {children}
       <span>{label}</span>
     </button>
@@ -1058,7 +1074,11 @@ const SHORTCUTS: [string, string][] = [
   ['Arrows', 'Nudge 1 cm (Shift: 10 cm)'],
   ['Ctrl+D', 'Copy'],
   ['Del', 'Remove'],
-  ['Enter / Esc', 'Done'],
+  ['Drag floor', 'Orbit'],
+  ['Right-drag', 'Pan'],
+  ['Wheel', 'Zoom'],
+  ['Esc', 'Close / deselect'],
+  ['Enter', 'Done'],
   ['Ctrl+Z / Ctrl+Shift+Z', 'Undo, redo'],
   ['?', 'This list'],
 ]
