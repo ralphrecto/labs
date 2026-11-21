@@ -50,7 +50,8 @@
 .dz-hud-design { display: none; }
 @media (max-width: 640px) {
   .dz-hud-icon-col { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; }
-  .dz-hud-design { display: block; max-width: 92px; font: 800 10px/1.1 var(--g-font); color: var(--g-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* The name under the icon is hidden too: the top bar is one row on phones (the sheet names it). */
+  .dz-hud-design { display: none; max-width: 92px; font: 800 10px/1.1 var(--g-font); color: var(--g-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 
 /* Welcome back (Goals.tsx): stays up until tapped or a piece is placed, with the home · design · level line. */

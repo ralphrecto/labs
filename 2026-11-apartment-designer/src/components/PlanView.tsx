@@ -69,9 +69,14 @@ export interface PlanViewProps {
   readOnly?: boolean
   svgRef?: React.RefObject<SVGSVGElement | null>
   title?: string
+  /**
+   * Screen space (CSS px) the game HUD covers at the top, bottom and right: the plan is fitted into
+   * what's left, with a tighter margin. Leave out for the classic editor (whole pane).
+   */
+  inset?: { top: number; bottom: number; right?: number }
 }
 
-export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: PlanViewProps) {
+export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset }: PlanViewProps) {
   const doc = useStore((s) => s.doc)
   const mode = useStore((s) => (readOnly ? 'select' : s.mode))
   const selection = useStore((s) => s.selection)
@@ -122,9 +127,18 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
       return
     }
     const b = bounds(pts)
-    const w = b.maxX - b.minX + 1.6
-    const h = b.maxY - b.minY + 1.6
-    setView({ cx: (b.minX + b.maxX) / 2, cy: (b.minY + b.maxY) / 2, k: Math.min(size.w / w, size.h / h) })
+    const pad = inset ? 0.8 : 1.6
+    const w = b.maxX - b.minX + pad
+    const h = b.maxY - b.minY + pad
+    const top = inset?.top ?? 0
+    const right = inset?.right ?? 0
+    const availW = Math.max(size.w * 0.5, size.w - right)
+    const availH = Math.max(size.h * 0.25, size.h - top - (inset?.bottom ?? 0))
+    const k = Math.min(availW / w, availH / h)
+    // Centre the plan in the part of the pane the HUD leaves visible, not the middle of the pane.
+    const dx = (availW - size.w) / 2
+    const dy = top + availH / 2 - size.h / 2
+    setView({ cx: (b.minX + b.maxX) / 2 - dx / k, cy: (b.minY + b.maxY) / 2 - dy / k, k })
   }
   // Fit on first layout and when the container size first becomes known.
   const fitted = useRef(false)
@@ -135,6 +149,12 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])
+  // Re-fit when the HUD around the game's plan settles into a new shape.
+  const insetKey = inset ? `${Math.round(inset.top)}:${Math.round(inset.bottom)}:${Math.round(inset.right ?? 0)}` : ''
+  useEffect(() => {
+    if (fitted.current) fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insetKey])
   // Re-fit when the whole document is replaced (new apartment, import).
   const aptId = doc.apartment.id
   useEffect(() => {

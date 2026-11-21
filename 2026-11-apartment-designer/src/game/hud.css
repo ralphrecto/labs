@@ -37,21 +37,40 @@
 .hud-right { justify-self: end; display: flex; gap: 8px; }
 .hud-undo { display: contents; }
 @media (max-width: 640px) {
-  .hud-top { grid-template-columns: auto 1fr; grid-template-areas: 'home right' 'center center'; row-gap: 10px; }
-  .hud-home { grid-area: home; padding-right: 5px; }
+  /* One row: the Designs icon, the stars pill and Settings. The Next chip hangs right under the pill. */
+  .hud-top { grid-template-columns: auto 1fr auto; grid-template-areas: 'home center right'; align-items: center; column-gap: 8px; }
+  .hud-home { grid-area: home; padding: 4px; }
+  .hud-right .g-icon.sm { width: 44px; height: 44px; }
   .hud-home-text { display: none; }
   .hud-right { grid-area: right; }
-  .hud-center { grid-area: center; }
+  .hud-center { grid-area: center; min-width: 0; }
   /* Undo and Redo move down beside the dock, within thumb reach: Undo to its left, Redo to its right. */
   .hud-undo .g-icon { position: fixed; z-index: 30; bottom: calc(12px + 15px + env(safe-area-inset-bottom)); width: 44px; height: 44px; box-shadow: var(--g-shadow); }
   .hud-undo .g-icon:first-child { left: max(12px, env(safe-area-inset-left)); }
   .hud-undo .g-icon:last-child { right: max(12px, env(safe-area-inset-right)); }
-  .hud-undo .g-icon:disabled { opacity: 1; color: #c9bcab; box-shadow: var(--g-shadow-sm); }
+  /* Nothing to undo yet: no button, so the corners stay clear (it appears with the first edit). */
+  .hud-undo .g-icon:disabled { visibility: hidden; }
 }
 
 /* ---------- camera buttons */
 .hud-cam { position: absolute; right: max(16px, env(safe-area-inset-right)); top: calc(var(--top-h) + 10px + env(safe-area-inset-top)); z-index: 15; display: flex; flex-direction: column; gap: 8px; }
-@media (max-width: 640px) { .hud-cam { top: calc(124px + env(safe-area-inset-top)); } }
+/* Phones: below the one-row top bar and the Next chip under it. */
+@media (max-width: 640px) { .hud-cam { top: calc(106px + env(safe-area-inset-top)); } }
+@media (max-width: 700px) and (orientation: portrait) {
+  .hud-cam .g-icon.sm { width: 44px; height: 44px; }
+  /* First-run captions sit under the buttons, small, instead of pills beside them. */
+  .hud-cam { gap: 6px; }
+  .hud-cam .hud-cam-row { flex-direction: column; align-items: center; gap: 2px; }
+  .hud-cam .hud-cam-label {
+    position: static; order: 2; transform: none; background: none; box-shadow: none; padding: 0; color: var(--g-ink);
+    font: 800 10px/1.1 var(--g-font); text-shadow: 0 0 3px var(--g-paper), 0 0 3px var(--g-paper); animation: hud-caption 9s ease both;
+  }
+}
+@keyframes hud-caption { 0% { opacity: 0; } 5%, 88% { opacity: 1; } 100% { opacity: 0; } }
+/* Small phones: the column never runs down into the drawer; extra buttons wrap to its left. */
+@media (max-width: 360px) {
+  .hud-cam { max-height: calc(100vh - 106px - var(--dock-h) - 26vh - 12px); flex-wrap: wrap-reverse; align-content: flex-start; column-gap: 8px; }
+}
 .hud-drawer-slot { display: contents; }
 .hud-drawer-slot.tucked .buy-drawer { display: none; }
 .hud-cam-row { position: relative; display: flex; justify-content: flex-end; }
@@ -113,6 +132,10 @@
   .hud-mode { flex-direction: column; gap: 2px; padding: 4px 12px 4px; font-size: 12px; }
   .hud-mode-icon { width: 44px; height: 44px; }
   .hud-mode.on { background: transparent; }
+}
+/* iPhone SE width: a narrower dock so Undo and Redo sit clear of it. */
+@media (max-width: 360px) {
+  .hud-mode { padding: 4px 6px; }
 }
 
 /* ---------- build tray */
@@ -207,8 +230,8 @@
      camera buttons on the right. */
   /* The toast takes the Next chip's place under the stars (the chip hides while it shows, below),
      keeping clear of the camera buttons on the right. */
-  .game:has(.goal-next) .hud-toast .toast { top: calc(var(--top-h) + 46px + env(safe-area-inset-top)); max-width: calc(100vw - 136px); }
-  .game:has(.goal-banner) .hud-toast .toast { top: calc(188px + env(safe-area-inset-top)); }
+  .game:has(.goal-next) .hud-toast .toast { top: calc(62px + env(safe-area-inset-top)); max-width: calc(100vw - 136px); }
+  .game:has(.goal-banner) .hud-toast .toast { top: calc(124px + env(safe-area-inset-top)); }
   /* First-run labels beside the camera buttons would run under the Next chip, so the chip waits
      until they have gone (about 9 s, or the first tap on a camera button). */
   .game:has(.hud-cam.labelled) .goal-next { visibility: hidden; opacity: 0; }
@@ -306,8 +329,10 @@
   .hud-ctx-wrap.slim { width: max-content; }
   .hud-ctx-wrap.slim .hud-ctx-text { max-width: 96px; }
   .hud-ctx-wrap.slim .hud-ctx-text small { display: none; }
-  .hud-ctx-wrap.slim .hud-act { width: 38px; height: 38px; }
+  .hud-ctx-wrap.slim .hud-act { width: 44px; height: 44px; }
 }
+/* iPhone SE width: 44px actions leave no room for a readable name; the thumbnail names the piece. */
+@media (max-width: 360px) { .hud-ctx-wrap.slim .hud-ctx-text { display: none; } }
 
 /* Keyboard shortcuts: a "?" at the bottom left and the list it opens (desktop pointers only). */
 .hud-keys-btn { position: absolute; left: max(16px, env(safe-area-inset-left)); bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 15; font: 900 16px var(--g-font); }
@@ -324,9 +349,32 @@
 @media (hover: none), (pointer: coarse), (max-width: 640px) { .hud-keys-btn, .hud-keys { display: none; } }
 /* ==================== end r3-c ==================== */
 
-/* Phones: while a piece is selected the drawer stays open but shrinks to one row of small
-   thumbnails (no names, sizes or tabs), so the room isn't hidden behind it. */
+/* Phones: the drawer is compact by default, one row of small thumbnails with one-line names and
+   small tab icons (no sizes, presets or tags), so the room isn't hidden behind it. Tapping the
+   open tab again expands it to the full cards (.expanded, GameApp). */
 @media (max-width: 700px) and (orientation: portrait) {
+  .hud-drawer-slot:not(.expanded) .buy-drawer { padding: 6px 0 4px; }
+  .hud-drawer-slot:not(.expanded) .buy-tabs { padding: 2px 12px 4px; }
+  .hud-drawer-slot:not(.expanded) .buy-tab { min-width: 46px; }
+  .hud-drawer-slot:not(.expanded) .buy-tab-icon { width: 36px; height: 36px; }
+  .hud-drawer-slot:not(.expanded) .buy-tab-icon svg { width: 28px; height: 28px; }
+  .hud-drawer-slot:not(.expanded) .buy-tab-icon > svg:not(.item-thumb) { width: 18px; height: 18px; }
+  .hud-drawer-slot:not(.expanded) .buy-tab-label,
+  .hud-drawer-slot:not(.expanded) .buy-size,
+  .hud-drawer-slot:not(.expanded) .buy-presets,
+  .hud-drawer-slot:not(.expanded) .buy-tag { display: none; }
+  .hud-drawer-slot:not(.expanded) .buy-grid { padding: 6px 12px 4px; gap: 8px; scroll-padding: 0 12px; }
+  .hud-drawer-slot:not(.expanded) .buy-card { width: 72px; animation: none; }
+  .hud-drawer-slot:not(.expanded) .buy-hit { padding: 4px 4px 5px; }
+  .hud-drawer-slot:not(.expanded) .buy-thumb { height: 56px; margin: 0 0 2px; border-radius: 10px; }
+  .hud-drawer-slot:not(.expanded) .buy-thumb svg { width: 48px !important; height: 48px !important; }
+  .hud-drawer-slot:not(.expanded) .buy-name { display: block; max-width: 100%; font-size: 11px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* The open tab carries a small chevron: tap it again to see more (or less). */
+  .buy-tab.on .buy-tab-icon::after {
+    content: ''; position: absolute; left: 50%; bottom: -7px; width: 7px; height: 7px; margin-left: -4px; border: solid var(--g-coral); border-width: 2px 0 0 2px;
+    transform: rotate(45deg); background: none;
+  }
+  .hud-drawer-slot.expanded .buy-tab.on .buy-tab-icon::after { transform: rotate(225deg); bottom: -9px; }
   .buy-drawer:has(> .hud-ctx-wrap.slim) { padding: 6px 0 4px; }
   .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-tabs,
   .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-name,
