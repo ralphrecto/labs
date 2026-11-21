@@ -69,4 +69,8 @@
 .dz-picker { display: flex; flex-direction: column; gap: 8px; padding: 12px; flex: 1 1 100%; }
 .dz-picker-h { margin: 0; font-size: 0.95em; }
 .dz-picker-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--g-line, #e6dccf); background: var(--g-card, #fff); color: inherit; text-align: left; cursor: pointer; min-height: 44px; }
-.dz-picker-opt small { opacity: 0.75; }
+.dz-picker-opt small { opacity: 0.75; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+
+/* "Dream ★": a small ribbon in a remix card's top corner, clear of the ⋯ menu. */
+.dz-design { position: relative; }
+.dz-dream { position: absolute; top: 8px; right: 44px; z-index: 1; font-size: 11px; line-height: 1.4; padding: 2px 8px; border-radius: 999px; background: #ffc24b; color: #5a3d00; font-weight: 700; pointer-events: none; }

@@ -548,8 +548,13 @@ export function LevelUpCard() {
           <>
             <small>Remix complete!</small>
             <strong>{remixDone.name}</strong>
-            <em className="goal-levelup-goal">Twist ✓ {remixDone.twist}</em>
-            <span>Your {ordinal(remixDone.count)} Dream home here</span>
+            <em
+              className="goal-levelup-goal"
+              style={{ display: 'inline-block', alignSelf: 'center', padding: '2px 10px', borderRadius: 999, background: '#dcefd9', color: '#2f6b2a', fontStyle: 'normal', fontWeight: 600 }}
+            >
+              Twist ✓ {remixDone.twist}
+            </em>
+            <span>That's your {ordinal(remixDone.count)} Dream home!</span>
           </>
         ) : (
           <>

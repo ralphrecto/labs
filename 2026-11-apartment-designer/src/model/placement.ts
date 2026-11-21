@@ -234,6 +234,16 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
   const hw = item.width / 2
   const hd = item.depth / 2
   const solid = !item.floorLevel
+  // A remix rebuilds around the same big pieces: where the source design had this kind of piece,
+  // a spot scores a little lower, so the rebuild visibly differs (the other side of the bed, the
+  // other end of the sofa) whenever a nearly-as-good spot exists.
+  const remixSrc = layout.remix ? doc.layouts.find((l) => l.id === layout.remix!.from) : undefined
+  // (Not pieces that need a wall: walls are scarce, and one taken early leaves the desk nowhere.)
+  const srcSpots = remixSrc && !WALL_BACKED.has(cat)
+    ? remixSrc.placements.flatMap((p) => (byId.get(p.itemId)?.category === cat && !layout.placements.some((q) => q.x === p.x && q.y === p.y) ? [v(p.x, p.y)] : []))
+    : []
+  /** Rooms named for eating (a kitchen or dining room), for a dining table to lean toward. */
+  const eatRooms = rooms.filter((r) => DINING.test(r.name))
 
   // Floor kept for pieces still to come: other pieces may stand there only when nothing else fits.
   // A bedroom with no bed keeps a bed-sized spot (with room to get in) free, so a desk or dresser
@@ -361,6 +371,20 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
       const gap = Math.min(...near.map((o) => dist(v(o.p.x, o.p.y), c) - Math.hypot(o.item.width, o.item.depth) / 2 - r0))
       s += Math.max(-0.5, Math.min(gap, 0.8)) * 4
     } else s += 3
+    // A dining table keeps out of the living corner: off the floor in front of a sofa (and its
+    // view of the TV, above), toward the kitchen or dining side of the room.
+    if (cat === 'dining-table') {
+      for (const o of solids) {
+        if (o.item.category !== 'sofa' || o.room?.id !== room.id) continue
+        const sc = v(o.p.x, o.p.y)
+        const away = dist(sc, c)
+        s += Math.min(away, 4) * 1.5
+        if (away < 3.5 && dot(rot(v(0, 1), o.p.rotation), norm(sub(c, sc))) > 0.5) s -= 8
+      }
+      const eat = eatRooms.filter((r) => r.id !== room.id)
+      if (eat.length && !DINING.test(room.name)) s -= Math.min(...eat.map((r) => Math.min(dist(c, centroid(r.polygon)), 6))) * 0.8
+    }
+    if (srcSpots.some((q) => dist(q, c) < 0.6)) s -= 6
     if (opts.near) s -= dist(opts.near, c) * 1.5
     return s
   }

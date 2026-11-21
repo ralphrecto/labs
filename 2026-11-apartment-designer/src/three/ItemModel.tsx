@@ -4,7 +4,9 @@ import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useSt
 import { useGame } from '../game/gameStore'
 import * as THREE from 'three'
 import { LAMPS } from '../model/placement'
-import type { Item } from '../model/types'
+import type { Doc, Item } from '../model/types'
+import { pointInPolygon } from '../model/geometry'
+import { activeLayout, useStore } from '../store'
 import { reduceMotion } from '../motion'
 import { legs, PAL, PartMesh, rng, shade, type Part } from './furnitureKit'
 import { restyle, useStyle } from './style'
@@ -339,16 +341,27 @@ function shadeDims(item: Item) {
   return { shadeH, s, bulbY: h - shadeH * 0.6 }
 }
 
-/** A pendant: a dome shade over the table, a bulb inside, and a cord up toward the ceiling. */
-const PENDANT_CORD = 0.9
-function pendant(item: Item): Part[] {
+/** How high a pendant hangs above its host table's top (matches Scene3D's 0.76 m lift). */
+const PENDANT_DROP = 0.76
+/** A dining table's usual height and a usual ceiling, when the pendant isn't told its own. */
+const PENDANT_HOST_H = 0.75
+const PENDANT_CEILING = 2.5
+
+/**
+ * A pendant: a dome shade over the table, a bulb inside, and a cord up to a small canopy on the
+ * ceiling. The cord runs from the shade's top to the ceiling (clamped so it never vanishes or
+ * dangles absurdly). The shade casts no shadow: by day its dome left a stain-like blob on the table.
+ */
+function pendant(item: Item, hostH = PENDANT_HOST_H, ceiling = PENDANT_CEILING): Part[] {
   const h = item.height
   const s = Math.min(item.width, item.depth)
+  const cord = clamp(ceiling - (hostH + PENDANT_DROP + h), 0.25, 0.9)
   return [
-    { kind: 'cyl', size: [s, h * 0.7, s], pos: [0, h * 0.35, 0], top: 0.32, seg: 24, color: item.color ?? PAL.shade },
-    { kind: 'cyl', size: [s * 0.3, h * 0.3, s * 0.3], pos: [0, h * 0.85, 0], top: 0.6, seg: 16, color: item.color ?? PAL.shade },
+    { kind: 'cyl', size: [s, h * 0.7, s], pos: [0, h * 0.35, 0], top: 0.32, seg: 24, color: item.color ?? PAL.shade, noShadow: true },
+    { kind: 'cyl', size: [s * 0.3, h * 0.3, s * 0.3], pos: [0, h * 0.85, 0], top: 0.6, seg: 16, color: item.color ?? PAL.shade, noShadow: true },
     { kind: 'ball', size: [0.08, 0.09, 0.08], pos: [0, h * 0.25, 0], color: PAL.shade, noShadow: true },
-    { kind: 'cyl', size: [0.012, PENDANT_CORD, 0.012], pos: [0, h + PENDANT_CORD / 2, 0], seg: 8, color: PAL.dark, noShadow: true },
+    { kind: 'cyl', size: [0.008, cord, 0.008], pos: [0, h + cord / 2, 0], seg: 8, color: '#5a4e44', noShadow: true },
+    { kind: 'cyl', size: [0.11, 0.025, 0.11], pos: [0, h + cord - 0.0125, 0], seg: 18, color: PAL.dark, noShadow: true },
   ]
 }
 
@@ -436,7 +449,7 @@ function ottoman(item: Item): Part[] {
 }
 
 /** Procedural looks for catalog categories. Local frame: width on x, depth on z, front is +z, floor at y=0. */
-export function parts(item: Item): Part[] {
+export function parts(item: Item, hang?: { hostH?: number; ceiling?: number }): Part[] {
   switch (item.category) {
     case 'sofa':
     case 'armchair':
@@ -470,7 +483,7 @@ export function parts(item: Item): Part[] {
     case 'table-lamp':
       return tableLamp(item)
     case 'pendant':
-      return pendant(item)
+      return pendant(item, hang?.hostH, hang?.ceiling)
     case 'plant':
       return plant(item)
     default: {
@@ -484,7 +497,7 @@ export function parts(item: Item): Part[] {
 /** A cardboard moving box with a strip of tape across the top and down the front and back. */
 function movingBox(item: Item): Part[] {
   const { width: w, depth: d, height: h } = item
-  const card = '#c9a57a'
+  const card = '#c8a27a'
   const tape = '#e6cf9c'
   const tw = Math.min(0.06, w * 0.14)
   return [
@@ -498,9 +511,28 @@ function movingBox(item: Item): Part[] {
 /** Plants and lamps are all curves: an edge outline on them is a scribble, so they show selection by the ring alone. */
 const ORGANIC = new Set(['plant', 'floor-lamp', 'table-lamp', 'pendant'])
 
+/** The height of the table a pendant hangs over (in the active design), if it hangs over one. */
+function pendantHostHeight(doc: Doc, itemId: string): number | undefined {
+  const l = activeLayout(doc)
+  const p = l.placements.find((x) => x.itemId === itemId)
+  const host = p?.on ? l.placements.find((x) => x.id === p.on) : undefined
+  return host ? doc.items.find((i) => i.id === host.itemId)?.height : undefined
+}
+
+/** The ceiling height of the room a pendant hangs in (the lowest ceiling when it's in none). */
+function pendantCeiling(doc: Doc, itemId: string): number | undefined {
+  const p = activeLayout(doc).placements.find((x) => x.itemId === itemId)
+  if (!doc.rooms.length) return undefined
+  const room = p && doc.rooms.find((r) => pointInPolygon({ x: p.x, y: p.y }, r.polygon))
+  return room?.ceilingHeight ?? Math.min(...doc.rooms.map((r) => r.ceilingHeight))
+}
+
 export function ProceduralItem({ item, highlight }: { item: Item; highlight?: string }) {
   const { style } = useStyle()
-  const specs = useMemo(() => parts(item), [item])
+  // A pendant's cord runs up to the real ceiling over its real table.
+  const hostH = useStore((st) => (item.category === 'pendant' ? pendantHostHeight(st.doc, item.id) : undefined))
+  const ceiling = useStore((st) => (item.category === 'pendant' ? pendantCeiling(st.doc, item.id) : undefined))
+  const specs = useMemo(() => parts(item, { hostH, ceiling }), [item, hostH, ceiling])
   const lineStyle = style === 'blueprint' || style === 'scan' || style === 'classic'
   const hl = ORGANIC.has(item.category) && !lineStyle ? undefined : highlight
   return (

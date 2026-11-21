@@ -205,11 +205,11 @@ export function unpackDoc(d0: Doc, placementId: string): UnpackResult | null {
   return { doc: d, ids, placed, waiting }
 }
 
-/** "Unpacked a plant and a table lamp, the rug is waiting in Mine". */
+/** "Unpacked a plant and a table lamp", or "Unpacked a plant · rug waiting in Mine" (short: two lines). */
 export function unpackMessage(r: Pick<UnpackResult, 'placed' | 'waiting'>): string {
   const head = r.placed.length ? `Unpacked ${listOf(r.placed.map(withArticle))}` : 'Unpacked the box'
   if (!r.waiting.length) return head
-  return `${head}, ${listOf(r.waiting.map((n) => `the ${n}`))} ${r.waiting.length > 1 ? 'are' : 'is'} waiting in Mine`
+  return `${head} · ${listOf(r.waiting)} waiting in Mine`
 }
 
 export const useStore = create<State>((set, get) => ({

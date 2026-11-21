@@ -725,7 +725,9 @@ describe('remix this home (round 8)', () => {
   })
 
   it('offers only twists the plan can take', () => {
-    expect(applicableTwists(sampleDoc())).toEqual(expect.arrayContaining(['window-seat', 'bed-swap', 'talk-corner', 'open-floor', 'less-is-more']))
+    expect(applicableTwists(sampleDoc())).toEqual(expect.arrayContaining(['bed-swap', 'talk-corner', 'less-is-more']))
+    // The sample's sofa already looks out of the window: no challenge in that.
+    expect(applicableTwists(sampleDoc())).not.toContain('window-seat')
     const bare = emptyDoc()
     bare.rooms.push(rectRoom('Office', 0, 0, 3, 3))
     const t = applicableTwists(bare, () => false)
@@ -852,6 +854,12 @@ describe('remix this home (round 8)', () => {
     expect(dream, `Dream home after ${dream} placements`).toBeGreaterThanOrEqual(6)
     expect(dream).toBeLessThanOrEqual(25)
     expect(twistOf(d).done).toBe(true)
+    // The rebuild isn't a carbon copy: some of the smaller pieces land somewhere new.
+    const src = d.layouts.find((x) => x.id === l.remix!.from)!
+    const spot = (p: { itemId: string; x: number; y: number }) => `${cat(d, p as never)}:${p.x.toFixed(1)}:${p.y.toFixed(1)}`
+    const before = new Set(src.placements.map(spot))
+    const fresh = layoutOf(d).placements.filter((p) => !ANCHORS.has(cat(d, p)))
+    expect(fresh.filter((p) => !before.has(spot(p))).length).toBeGreaterThanOrEqual(3)
     // Turn the sofa away from the window: the twist opens and Dream home is out of reach.
     const sofa = layoutOf(d).placements.find((p) => cat(d, p) === 'sofa')!
     sofa.rotation = 0

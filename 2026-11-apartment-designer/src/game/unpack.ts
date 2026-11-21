@@ -15,6 +15,9 @@ export function unpackAndCelebrate(placementId: string): string[] {
   const box = activeLayout(st.doc).placements.find((p) => p.id === placementId)
   if (!box || !isPackedBox(placementId)) return []
   const ids = st.unpackBox(placementId)
+  // Keep the first piece selected: the selection bar stays up, so the camera doesn't refit to the
+  // whole home (which would play the pop tiny) and the player's eye stays on the spot.
+  if (ids.length) useStore.getState().select({ kind: 'placement', id: ids[0] })
   useGame.getState().setUnpacked({ key: Date.now(), ids, at: { x: box.x, y: box.y } })
   return ids
 }
