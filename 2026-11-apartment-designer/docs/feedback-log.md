@@ -296,3 +296,19 @@ Reviewers: cozy first-timer (14 Next taps to Dream home, no dead ends), lighting
 - The pendant has no thumbnail, and its cord is a fixed length rather than reaching the ceiling.
 - The polaroid caption should lead with the level at the top; frame tighter.
 - Harness: the first Lifelike tap after opening the picker still misses.
+
+## Round 9 (2026-11-21 19:30-20:15 UTC)
+
+Reviewers: desktop player, cozy player on choices, art director (remix and unpack re-check).
+
+Shipped:
+- **Pick one:** each hinted step offers 2-3 variant cards (size, shape or colour), with "From your boxes" first when you own one. The game remembers your colour taste per family (wood, fabric, light) and puts that pick first.
+- **Unpack all boxes:** the unpack goal stays urgent until both boxes are open (or 8 pieces). The next box is selected after one opens, and the camera holds on the unpacked spot. The confetti is no longer clipped.
+- **Desktop:** the drawer is a right side column at ≥1100px, so the home fills about 40% of the screen (was 12%). Zoom to cursor, mouse rows in the shortcuts, key badges on mode buttons, Plan labels that avoid furniture, and Look framed between the bars.
+- **Art:** a pendant thumbnail (was a box), a pendant cord sized to the ceiling with a canopy and no shadow blob, a kraft-coloured box, a softer evening sky, and "Pendant" naming.
+- **Remix:** twist picker shows the hint and an emoji, the card reads "That's your Nth Dream home!" with a green twist pill, a Dream corner ribbon, copies left out of the Dream count, twists the home already meets are hidden, the twist goal points at the piece to move, and remixes land pieces in new spots.
+- **Placement:** the dining table keeps away from the sofa front and leans to the kitchen.
+
+Rolled over: "From your boxes" pick is untested in the browser; plan labels on a shared wall sit close; 700-1100px still uses the bottom sheet; toast copy for 3+ items.
+
+209 tests pass.

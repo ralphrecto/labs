@@ -75,8 +75,8 @@
 /* Moving boxes: the filled Unpack action, and a small confetti burst where the box stood. */
 .game button.hud-act.filled, .game button.hud-act.filled:hover:not(:disabled) { background: var(--g-coral-fill); color: #fff; box-shadow: 0 3px 0 var(--g-coral-ledge); }
 .hud-act.filled svg { color: #fff; }
-.unpack-burst { position: relative; inset: auto; width: 0; height: 0; overflow: visible; }
-.unpack-burst i { top: 0; left: 0; width: 8px; height: 11px; animation: unpack-burst 0.9s cubic-bezier(0.2, 0.7, 0.4, 1) both; }
+.goal-confetti.unpack-burst { position: relative; inset: auto; width: 0; height: 0; overflow: visible; }
+.goal-confetti.unpack-burst i { top: 0; left: 0; width: 8px; height: 11px; animation: unpack-burst 0.9s cubic-bezier(0.2, 0.7, 0.4, 1) both; }
 @keyframes unpack-burst {
   0% { opacity: 1; translate: 0 0; rotate: 0deg; scale: 0.4; }
   60% { opacity: 1; scale: 1; }
