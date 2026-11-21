@@ -223,3 +223,40 @@ Reviewers: cozy gamer first session, phone clarity and clutter, lighting designe
 - Rugs under the dining table and the bed; a conversation-seating goal; catalog roles (benches, stools).
 - Real iPhone finger-drag check.
 - Harness: the first style tap after opening the picker sometimes misses.
+
+## Round 7 (2026-11-21, 06:20 to 07:10 UTC)
+
+Reviewers: art director on evening mode and the compact layout, lamp-hosting design spec, returning player (three sessions on one profile, plus a blank design and a scanned home).
+
+**Fixed**
+- Table lamps stand on furniture:
+  - New `table-lamp` category with `Placement.on` hosting. Lamps go on nightstands, side tables, desks and dressers, and refuse politely when there's no surface.
+  - A lamp follows its host when the host is moved or rotated, and comes off or moves to another surface when the host is deleted (`reconcileHosts` in store update).
+  - Old saves are migrated, and copying a design keeps the lamps on their hosts.
+- New bonus goals: a reading light on each open side of the bed, and a lamp on the desk.
+- Evening:
+  - Sunlight patches hidden; Lifelike's environment light is dimmed.
+  - A cool blue dusk with a gradient sky and dusk windows with stars.
+  - Amber lamp shades with brighter light.
+  - "Take its photo" on the Dream home card turns evening on.
+- Compact drawer: tab labels stay, card names fit, the link card is calmer, and the caret no longer overlaps. A stale hint pill now clears itself.
+- Next-chip dead ends:
+  - The coffee-table loop is fixed: a piece the layout already has becomes a "move it" goal, and a coffee table lands in front of the sofa.
+  - A bedroom keeps room for a bed.
+  - A "Make room for a bed" goal replaces the silent skip.
+  - An empty design of the sample reaches Dream home in 19 steps, and the sample in 14, both checked by tests.
+- Top level: the goals sheet shows how many bonus goals are left. The Dream home card ignores taps for 1.5 s and closes only from the backdrop or its close button.
+- Removed the floor-lamp floor halo, which spilled past walls onto the backdrop.
+
+**Backlog (next rounds)**
+- Variations are exact copies with nothing to climb. Remix with anchor pieces only plus a twist challenge, and celebrate a variation's first Dream home.
+- Tappable moving boxes that unpack into owned decor (plan in /tmp/claude-0/r7-plan-boxes.md, which may be gone; re-derive it from the round 7 thread if needed).
+- Pendant light over the dining table; layered-light goal.
+- Cartoon and Clay dusk still read warm brown rather than blue; the sky gradient is hidden by the ground plane in Dollhouse.
+- The Designs sheet can't tell an untouched copy from its source.
+- The Dream card's close button reuses the goals sheet style, so check how it looks.
+- Reading-corner goal buys a new lamp even when spare lamps exist.
+- Short climb on one-room scanned homes (8 steps).
+- Harness:
+  - The style picker closes after each pick, so later style taps miss.
+  - Backdate the last visit with addInitScript before load, because pagehide overwrites it.
