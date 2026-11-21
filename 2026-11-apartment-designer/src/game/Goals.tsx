@@ -444,6 +444,15 @@ export function VibeMeter() {
 
 /** Opens the drawer on the goal's tab (out of any tool or selection), or the goals sheet at the goal. */
 function showGoal(g: Goal) {
+  // Unpack your boxes: select the box (its bar offers Unpack), rather than opening the drawer.
+  if (g.id === 'unpack' && g.near) {
+    const st = useStore.getState()
+    if (st.mode !== 'select') st.setMode('select')
+    useGame.setState({ mode: 'buy', sheet: null, buyHint: null })
+    useStore.setState({ selection: { kind: 'placement', id: g.near } })
+    if (g.hint) st.notify(g.hint)
+    return
+  }
   // A goal fixed by moving a piece (an overlap, a piece in a wall, a blocked door): select that piece.
   const kind = !g.tab ? MOVE_GOAL[g.id] : undefined
   const issue = kind ? lastIssues.find((i) => i.kind === kind && i.severity !== 'info' && i.placementIds.length) : undefined

@@ -19,6 +19,7 @@ import { BuyDrawer, CATEGORY_GROUPS, ShopSheet } from './BuyDrawer'
 import { flushEditRun, rotatePlacementSmart } from './editActions'
 import { ItemThumb } from './ItemThumb'
 import { GoalsSheet, LevelUpCard, VibeMeter } from './Goals'
+import { unpackAndCelebrate } from './unpack'
 import { useGame, type GameMode } from './gameStore'
 import * as I from './icons'
 import { Onboarding } from './Onboarding'
@@ -630,17 +631,28 @@ function ContextBar({ slim = false }: { slim?: boolean }) {
     title = item.name
     sub = `${formatLength(item.width, units)} × ${formatLength(item.depth, units)}`
     warn = issues.find((i) => i.placementIds[0] === p.id && i.severity !== 'info')?.message ?? null
+    // A packed moving box: Unpack comes first; copying or painting a box is beside the point.
+    const packed = !!item.unpack?.length && !item.unpacked
     actions = (
       <>
+        {packed && (
+          <Act label="Unpack" filled onClick={() => unpackAndCelebrate(p.id)}>
+            <I.IconBox />
+          </Act>
+        )}
         <Act label="Rotate" keys="R" onClick={() => rotatePlacementSmart(p.id, Math.PI / 2)}>
           <I.IconRotate />
         </Act>
-        <Act label="Copy" keys="Ctrl+D" onClick={() => s.duplicatePlacement(p.id)}>
-          <I.IconCopy />
-        </Act>
-        <Act label="Color" on={paint} onClick={() => setPaint(!paint)}>
-          <I.IconPalette />
-        </Act>
+        {!packed && (
+          <Act label="Copy" keys="Ctrl+D" onClick={() => s.duplicatePlacement(p.id)}>
+            <I.IconCopy />
+          </Act>
+        )}
+        {!packed && (
+          <Act label="Color" on={paint} onClick={() => setPaint(!paint)}>
+            <I.IconPalette />
+          </Act>
+        )}
         <Act label="Details" onClick={() => open('details')}>
           <I.IconMore />
         </Act>
@@ -755,9 +767,9 @@ function ContextBar({ slim = false }: { slim?: boolean }) {
   )
 }
 
-function Act({ label, keys, onClick, children, danger, on }: { label: string; keys?: string; onClick: () => void; children: ReactNode; danger?: boolean; on?: boolean }) {
+function Act({ label, keys, onClick, children, danger, on, filled }: { label: string; keys?: string; onClick: () => void; children: ReactNode; danger?: boolean; on?: boolean; filled?: boolean }) {
   return (
-    <button className={`hud-act${danger ? ' danger' : ''}${on ? ' on' : ''}`} onClick={onClick} aria-label={label} title={keys ? `${label} (${keys})` : label}>
+    <button className={`hud-act${danger ? ' danger' : ''}${on ? ' on' : ''}${filled ? ' filled' : ''}`} onClick={onClick} aria-label={label} title={keys ? `${label} (${keys})` : label}>
       {children}
       <span>{label}</span>
     </button>

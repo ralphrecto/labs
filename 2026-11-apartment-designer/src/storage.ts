@@ -1,5 +1,6 @@
 import { hostAt, HOSTED } from './model/placement'
 import type { Doc, Item } from './model/types'
+import { SAMPLE_BOX_CONTENTS } from './model/sample'
 
 // Everything lives in the browser. The rest of the app only talks to these functions, so a
 // server-backed store (e.g. Supabase) can replace them later.
@@ -316,7 +317,17 @@ export function parseDoc(raw: string): Doc | null {
   if (typeof d.apartment.name === 'string' && d.apartment.name.startsWith('Sample apartment'))
     for (const l of d.layouts) if (l.name === 'Current') l.name = 'Move-in day'
   migrateTableLamps(d as Doc)
+  migrateSampleBoxes(d as Doc)
   return d as Doc
+}
+
+/** The sample's moving boxes used to be empty: give old saves of it the same contents as a new sample. */
+function migrateSampleBoxes(d: Doc) {
+  if (typeof d.apartment.name !== 'string' || !d.apartment.name.startsWith('Sample apartment')) return
+  const boxes = (d.items as Item[]).filter((i) => i.name === 'Moving box' && i.unpack === undefined)
+  boxes.forEach((b, k) => {
+    if (k < SAMPLE_BOX_CONTENTS.length) b.unpack = [...SAMPLE_BOX_CONTENTS[k]]
+  })
 }
 
 /**

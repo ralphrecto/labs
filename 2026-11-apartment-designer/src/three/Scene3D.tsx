@@ -1,4 +1,4 @@
-import { ContactShadows, Edges, OrbitControls } from '@react-three/drei'
+import { ContactShadows, Edges, Html, OrbitControls } from '@react-three/drei'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import * as THREE from 'three'
@@ -12,7 +12,9 @@ import { activeLayout, useStore } from '../store'
 import { ItemModel } from './ItemModel'
 import { viewFrame } from './viewFrame'
 import { scanCenter, scanCorners, useScanRuntime } from '../scan/runtime'
-import { reduceMotion } from '../motion'
+import { POP_MS, POP_STAGGER_MS, reduceMotion } from '../motion'
+import { useGame } from '../game/gameStore'
+import { isPackedBox, unpackAndCelebrate } from '../game/unpack'
 
 // The scan backdrop pulls in the splat renderer, so it loads on first use.
 const ScanBackdrop = lazy(() => import('./ScanBackdrop').then((m) => ({ default: m.ScanBackdrop })))
@@ -387,6 +389,66 @@ function Hop({ on, children }: { on: boolean; children: ReactNode }) {
   return <group ref={ref}>{children}</group>
 }
 
+/**
+ * A piece that just came out of a moving box pops in: scale 0 → 1.1 → 1 with a small hop, each
+ * piece POP_STAGGER_MS after the one before (not with reduced motion).
+ */
+function Pop({ id, children }: { id: string; children: ReactNode }) {
+  const unpacked = useGame((s) => s.unpacked)
+  const order = unpacked ? unpacked.ids.indexOf(id) : -1
+  const ref = useRef<THREE.Group>(null)
+  const start = useRef(0)
+  useLayoutEffect(() => {
+    if (!unpacked || order < 0 || reduceMotion || Date.now() - unpacked.key > 2000) return
+    start.current = performance.now() + order * POP_STAGGER_MS
+    ref.current?.scale.setScalar(0.001)
+  }, [unpacked, order])
+  useFrame(() => {
+    const g = ref.current
+    if (!g || !start.current) return
+    const t = (performance.now() - start.current) / POP_MS
+    if (t < 0) return g.scale.setScalar(0.001)
+    if (t >= 1) {
+      g.scale.setScalar(1)
+      g.position.y = 0
+      start.current = 0
+      return
+    }
+    const s = t < 0.6 ? 1.1 * (1 - (1 - t / 0.6) ** 3) : 1.1 - 0.1 * ((t - 0.6) / 0.4)
+    g.scale.setScalar(Math.max(0.001, s))
+    g.position.y = 0.12 * Math.sin(Math.PI * t)
+  })
+  return <group ref={ref}>{children}</group>
+}
+
+const BURST_COLORS = ['#e0603a', '#ffc24b', '#5fa67f', '#4f8be8', '#b5835a']
+/** A small confetti burst where a moving box was just unpacked. */
+function UnpackBurst() {
+  const unpacked = useGame((s) => s.unpacked)
+  if (!unpacked?.at || reduceMotion || Date.now() - unpacked.key > 2000) return null
+  return (
+    <Html key={unpacked.key} position={[unpacked.at.x, 0.4, unpacked.at.y]} center zIndexRange={[20, 0]} style={{ pointerEvents: 'none' }}>
+      <div className="goal-confetti unpack-burst" aria-hidden>
+        {Array.from({ length: 18 }, (_, i) => {
+          const a = (i / 18) * Math.PI * 2
+          const r = 46 + ((i * 29) % 30)
+          return (
+            <i
+              key={i}
+              style={{
+                background: BURST_COLORS[i % BURST_COLORS.length],
+                ['--dx' as string]: `${Math.round(Math.cos(a) * r)}px`,
+                ['--dy' as string]: `${Math.round(Math.sin(a) * r - 30)}px`,
+                animationDelay: `${(i % 3) * 0.04}s`,
+              }}
+            />
+          )
+        })}
+      </div>
+    </Html>
+  )
+}
+
 const WOBBLE_MS = 420
 /** A gentle side-to-side shake ("no room there") each time `kick` goes up (not with reduced motion). */
 function Wobble({ kick, children }: { kick: number; children: ReactNode }) {
@@ -453,7 +515,9 @@ function PlacedItem({
     <group position={[p.x, lift, p.y]} rotation={[0, -p.rotation, 0]} onPointerDown={(e) => onGrab(e, p)}>
       <Wobble kick={wobble}>
       <Hop on={selected}>
+        <Pop id={p.id}>
         <ItemModel item={item} highlight={highlight} />
+        </Pop>
         {/* Models from a URL draw their own materials, so their outline is the bounding box. */}
         {selected && item.glbUrl && !tint && (
           <mesh position={[0, h / 2, 0]} raycast={noRaycast}>
@@ -522,7 +586,7 @@ function Scene({
   // to the scan only while there are no rooms yet. The classic editor keeps its own setting.
   const scanOnly = style === 'classic' ? scan3d === 'scan-only' && hasVisibleScan : style === 'scan' && hasVisibleScan
   const showScan = style === 'classic' ? scan3d !== 'off' : style === 'scan' || !doc.rooms.length
-  const drag = useRef<{ id: string; grab: Vec2; moved: boolean; sx: number; sy: number; slop: number; start: Placement; lastClean: Placement; base: Conflicts | null } | null>(null)
+  const drag = useRef<{ id: string; grab: Vec2; moved: boolean; sx: number; sy: number; slop: number; start: Placement; lastClean: Placement; base: Conflicts | null; again?: boolean } | null>(null)
   /** The piece being dragged and whether it fits where it is (drives the floor footprint). */
   const [dragFx, setDragFx] = useState<{ id: string; ok: boolean } | null>(null)
   /** Pieces that just bounced back from a bad drop, and how many times (each bump wobbles once). */
@@ -553,13 +617,15 @@ function Scene({
     e.stopPropagation()
     floorDown.current = false
     const s = useStore.getState()
+    // A second tap on a moving box that's already selected unpacks it (see onUp).
+    const again = s.selection?.kind === 'placement' && s.selection.id === p.id
     s.select({ kind: 'placement', id: p.id })
     const w = p.on ? hitAt(e, lift(p)) : hit(e)
     if (!w) return
     // A finger jitters: it has to travel a few pixels before a tap turns into a drag.
     const ne = e.nativeEvent
     const slop = ne.pointerType === 'touch' ? 8 : 3
-    drag.current = { id: p.id, grab: sub(w, v(p.x, p.y)), moved: false, sx: ne.clientX, sy: ne.clientY, slop, start: p, lastClean: p, base: null }
+    drag.current = { id: p.id, grab: sub(w, v(p.x, p.y)), moved: false, sx: ne.clientX, sy: ne.clientY, slop, start: p, lastClean: p, base: null, again }
     if (controls.current) controls.current.enabled = false
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
@@ -653,6 +719,7 @@ function Scene({
     if (dragFx) setDragFx(null)
     drag.current = null
     if (controls.current) controls.current.enabled = true
+    if (d && !d.moved && d.again && isPackedBox(d.id)) unpackAndCelebrate(d.id)
   }
 
   // A drop that lands off the furniture (or a lost pointer capture) still ends the drag.
@@ -789,6 +856,7 @@ function Scene({
           />
         ))}
       </group>
+      <UnpackBurst />
       {!eye && <FitCamera key={(doc.scans ?? []).length} inset={inset} spin={autoRotate} focus={focusRoom} full={fullFrame} />}
       <ViewOffset inset={eye || fullFrame ? undefined : inset} />
       {eye ? (

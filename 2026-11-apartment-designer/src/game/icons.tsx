@@ -42,3 +42,5 @@ export const IconHome = P('M3 11 12 3l9 8M5 9.5V21h14V9.5')
 export const IconWalk = P('M13 4.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM9 21l2-6 3 3v3M7 12l3-4h4l3 4M11 15l-1-4')
 /** Stacked cards: your homes and designs. */
 export const IconDesigns = P('M7 7h12a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1ZM4 16V5a1 1 0 0 1 1-1h11M9.5 16.5l2.5-3 2 2 1.5-1.5 2 2.5')
+/** A moving box with its flaps open. */
+export const IconBox = P('M4 9h16v11H4zM4 9l2-4h12l2 4M9 13h6M4 9 2 6M20 9l2-3')

@@ -4,6 +4,12 @@ import { nanoid } from 'nanoid'
 
 export const uid = () => nanoid(10)
 
+/** What's in the sample's two moving boxes: enough for the first few goals (rooms used, light, plant, rug). */
+export const SAMPLE_BOX_CONTENTS: readonly (readonly string[])[] = [
+  ['plant', 'table-lamp'],
+  ['rug', 'plant', 'floor-lamp'],
+]
+
 export function rectRoom(name: string, x: number, y: number, w: number, d: number, ceiling = 2.6): Room {
   return {
     id: uid(),
@@ -70,8 +76,8 @@ export function sampleDoc(opts: { settled?: boolean } = {}): Doc {
     placements.push(at(coffee, 2.0, 2.45), at(table, 4.3, 1.2, Math.PI / 2), at(chair1, 3.55, 1.2, -Math.PI / 2), at(chair2, 4.3, 2.35, Math.PI))
   } else {
     // Moving boxes, stacked in the corner away from the doors.
-    const box1 = itemFromCatalog(catalogEntry('box'), uid(), { name: 'Moving box', width: 0.5, depth: 0.4, height: 0.4, owned: true })
-    const box2 = itemFromCatalog(catalogEntry('box'), uid(), { name: 'Moving box', width: 0.5, depth: 0.4, height: 0.4, owned: true })
+    const box1 = itemFromCatalog(catalogEntry('box'), uid(), { name: 'Moving box', width: 0.5, depth: 0.4, height: 0.4, owned: true, unpack: [...SAMPLE_BOX_CONTENTS[0]] })
+    const box2 = itemFromCatalog(catalogEntry('box'), uid(), { name: 'Moving box', width: 0.5, depth: 0.4, height: 0.4, owned: true, unpack: [...SAMPLE_BOX_CONTENTS[1]] })
     items.push(box1, box2)
     placements.push(at(box1, 4.85, 0.3), at(box2, 4.3, 0.3, 0.2))
   }

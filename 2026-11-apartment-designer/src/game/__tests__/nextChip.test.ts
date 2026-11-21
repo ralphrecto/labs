@@ -6,6 +6,7 @@ import type { Doc, Item, Placement } from '../../model/types'
 import { findDrop, polygonGap } from '../../model/placement'
 import { orientedRect, v } from '../../model/geometry'
 import { LEVELS, nextGoal, scoreHome } from '../goals'
+import { unpackDoc } from '../../store'
 
 const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
 const score = (d: Doc) => scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)))
@@ -44,6 +45,10 @@ function followNext(d: Doc, max = 40) {
     if (s.level.index === LEVELS.length - 1) return { dream: i, log }
     const next = nextGoal(s, fits)
     log.push(`${i} ★${s.stars} ${next?.id}:${next?.item ?? '(move)'}`)
+    if (next?.id === 'unpack' && next.near) {
+      Object.assign(d, unpackDoc(d, next.near)!.doc)
+      continue
+    }
     if (!next?.item || !next.tab) break
     const key = `${next.id}:${next.item}`
     repeats = key === last && s.stars <= best ? repeats + 1 : 1

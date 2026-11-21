@@ -44,6 +44,8 @@ interface GameState {
   evening: boolean
   /** When set, Look mode's shutter takes a photo as soon as it's showing (the Dream home card's "Take its photo"). */
   photoRequest: number
+  /** Pieces that just came out of a moving box (they pop in one by one) and where the box stood (for the confetti). */
+  unpacked: { key: number; ids: string[]; at?: { x: number; y: number } } | null
 
   setPhase: (p: Phase) => void
   setMode: (m: GameMode) => void
@@ -65,6 +67,7 @@ interface GameState {
   /** Switch to Look mode and have the shutter take a photo there. */
   requestPhoto: () => void
   consumePhotoRequest: () => void
+  setUnpacked: (u: GameState['unpacked']) => void
 }
 
 const ONBOARDED_KEY = 'apartment-designer:onboarded'
@@ -164,6 +167,7 @@ export const useGame = create<GameState>((set) => ({
   levelUp: null,
   evening: false,
   photoRequest: 0,
+  unpacked: null,
   classic: (() => {
     try {
       return localStorage.getItem(CLASSIC_KEY) === '1'
@@ -221,4 +225,5 @@ export const useGame = create<GameState>((set) => ({
   setEvening: (evening) => set({ evening }),
   requestPhoto: () => set({ mode: 'look', sheet: null, levelUp: null, photoRequest: Date.now() }),
   consumePhotoRequest: () => set({ photoRequest: 0 }),
+  setUnpacked: (unpacked) => set({ unpacked }),
 }))

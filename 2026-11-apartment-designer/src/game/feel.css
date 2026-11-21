@@ -34,3 +34,17 @@
 @media (prefers-reduced-motion: reduce) {
   .feel-loss, .feel-hint-pill, .feel-dream, .feel-dream .goal-levelup-card { animation: none; }
 }
+
+/* Moving boxes: the filled Unpack action, and a small confetti burst where the box stood. */
+.game button.hud-act.filled, .game button.hud-act.filled:hover:not(:disabled) { background: var(--g-coral-fill); color: #fff; box-shadow: 0 3px 0 var(--g-coral-ledge); }
+.hud-act.filled svg { color: #fff; }
+.unpack-burst { position: relative; inset: auto; width: 0; height: 0; overflow: visible; }
+.unpack-burst i { top: 0; left: 0; width: 8px; height: 11px; animation: unpack-burst 0.9s cubic-bezier(0.2, 0.7, 0.4, 1) both; }
+@keyframes unpack-burst {
+  0% { opacity: 1; translate: 0 0; rotate: 0deg; scale: 0.4; }
+  60% { opacity: 1; scale: 1; }
+  100% { opacity: 0; translate: var(--dx) calc(var(--dy) + 40px); rotate: 360deg; scale: 0.8; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .unpack-burst { display: none; }
+}

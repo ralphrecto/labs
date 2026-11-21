@@ -4,6 +4,7 @@ import { catalogEntry, itemFromCatalog } from '../../model/catalog'
 import { emptyDoc, rectRoom, sampleDoc } from '../../model/sample'
 import type { Doc, Item, Placement } from '../../model/types'
 import { findDrop } from '../../model/placement'
+import { unpackDoc } from '../../store'
 import { bankableLevel, bestLevelKey, DREAM_BONUS_STARS, inferEntrance, LEVEL_FRACTIONS, LEVELS, levelThresholds, nextGoal, scoreHome, SNAG_LEVEL_CAP, WARNING_LEVEL_CAP, withBestLevel, type Goal } from '../goals'
 
 const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
@@ -209,6 +210,8 @@ describe('scoreHome', () => {
 
   it('asks for 90 cm on main walkways and 60 cm on secondary ones', () => {
     const d = sampleDoc()
+    // Packed moving boxes don't count as furniture; as plain boxes the sample has enough pieces for the flow goals.
+    for (const i of d.items) delete i.unpack
     expect(goal(d, (g) => g.id === 'walkways')!.done).toBe(true)
     const withPaths = (widths: Record<string, number>) => {
       const a = analyze(d, layoutOf(d))
@@ -297,6 +300,8 @@ describe('scoreHome', () => {
 
   it('infers the front door when none is marked', () => {
     const d = sampleDoc()
+    // Packed moving boxes don't count as furniture; as plain boxes the sample has enough pieces for the flow goals.
+    for (const i of d.items) delete i.unpack
     const front = d.rooms[0].openings.find((o) => o.entrance)!
     front.entrance = false
     expect(inferEntrance(d)).toEqual({ roomId: d.rooms[0].id, openingId: front.id })
@@ -550,6 +555,10 @@ describe('round 5 (play-test review)', () => {
         expect(s.goals.filter((g) => g.bonus && g.done).reduce((t, g) => t + g.stars, 0)).toBeGreaterThanOrEqual(DREAM_BONUS_STARS)
       }
       const next = nextGoal(s, fits)
+      if (next?.id === 'unpack' && next.near) {
+        Object.assign(d, unpackDoc(d, next.near)!.doc)
+        continue
+      }
       if (!next?.item || !next.tab) break
       const item = itemFromCatalog(catalogEntry(next.item), `nx${i}`)
       const r = findDrop(d, layoutOf(d), item, { nextTo: next.item === 'floor-lamp' || next.item === 'table-lamp' ? next.near : undefined })
@@ -661,6 +670,13 @@ describe('round 6 (play-test review)', () => {
         break
       }
       const next = nextGoal(s, fits)
+      // "Unpack your boxes": the chip selects the box and its bar unpacks it; that's a step too.
+      if (next?.id === 'unpack' && next.near) {
+        const r = unpackDoc(d, next.near)
+        expect(r, 'unpack chip points at a packed box').not.toBeNull()
+        Object.assign(d, r!.doc)
+        continue
+      }
       if (!next?.item || !next.tab) break
       const key = `${next.id}:${next.item}`
       repeats = key === last && s.stars <= best ? repeats + 1 : 1

@@ -43,6 +43,8 @@ export interface Goal {
    * before a bed): Next turns the goal into "make room" and selects it.
    */
   makeRoom?: { id: string; name: string; room?: string }
+  /** Next suggests this before anything else (unpacking the moving boxes on move-in day). */
+  urgent?: boolean
 }
 
 export interface HomeScore {
@@ -248,6 +250,12 @@ const STAND_IN_GOALS: Record<string, string[]> = { storage: ['bookshelf', 'sideb
 /** Goals that make a living room cozy, suggested first when the home is a living space. */
 const LIVING_GOAL = /^(sit|coffee:|rug|light|plant|nook|rooms-used|sofa-tv|tv-distance)/
 
+/** Placements in the layout that are moving boxes still packed. */
+export function packedBoxIds(doc: Doc, layout: Layout): Set<string> {
+  const packed = new Set(doc.items.filter((i) => i.unpack?.length && !i.unpacked).map((i) => i.id))
+  return new Set(layout.placements.filter((p) => packed.has(p.itemId)).map((p) => p.id))
+}
+
 /**
  * The goal to suggest next: the unfinished one closest to done that the player can act on now
  * (goals waiting on something else are skipped), favouring ones the furniture drawer finishes.
@@ -257,6 +265,8 @@ const LIVING_GOAL = /^(sit|coffee:|rug|light|plant|nook|rooms-used|sofa-tv|tv-di
  */
 export function nextGoal(score: HomeScore, fits?: (category: string) => boolean): Goal | undefined {
   const open = score.goals.filter((g) => !g.done && !g.locked)
+  const urgent = open.find((g) => g.urgent && g.near)
+  if (urgent) return urgent
   // Fix what's broken before buying more: errors, a tight walkway or a blocked door, then a TV the sofa can't see.
   for (const id of FIX_FIRST) {
     const g = open.find((x) => x.id === id && x.snag)
@@ -352,7 +362,9 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const add = (g: Omit<Goal, 'progress'> & { progress?: number }) => goals.push({ ...g, progress: g.done ? 1 : g.progress })
   const rooms = doc.rooms.filter((r) => polygonArea(r.polygon) >= RULES.minRoomArea)
   const anything = placed.some((x) => !x.floor)
-  const solidPieces = placed.filter((x) => !x.floor)
+  // Packed moving boxes are clutter, not furniture: they don't count toward MIN_PIECES.
+  const packedIds = packedBoxIds(doc, layout)
+  const solidPieces = placed.filter((x) => !x.floor && !packedIds.has(x.id))
   const cleanShare = solidPieces.length ? solidPieces.filter((x) => x.clean).length / solidPieces.length : 0
   /** Flow goals grow with the furniture: clean share, scaled until the home has a few pieces. */
   const flowProgress = cleanShare * Math.min(1, solidPieces.length / MIN_PIECES)
@@ -939,6 +951,23 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       bonus: true,
     })
   }
+
+  // Unpack your boxes: a bonus, and the cheapest first win on move-in day (ranked first by Next
+  // while the home has fewer than MIN_PIECES pieces besides the boxes).
+  const boxes = doc.items.filter((i) => i.unpack?.length)
+  if (boxes.length)
+    add({
+      id: 'unpack',
+      title: 'Unpack your boxes',
+      hint: 'Tap a moving box, then Unpack.',
+      category: 'basics',
+      bonus: true,
+      stars: boxes.length,
+      done: boxes.every((b) => b.unpacked),
+      progress: boxes.filter((b) => b.unpacked).length / boxes.length,
+      near: placed.find((x) => packedIds.has(x.id))?.id,
+      urgent: solidPieces.length < MIN_PIECES && packedIds.size > 0,
+    })
 
   // What to move when a core goal's piece has nowhere to go: the biggest piece in the room it
   // belongs in (the bedroom for a bed), pieces that could live in another room first.

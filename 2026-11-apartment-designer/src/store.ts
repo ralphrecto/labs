@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { catalogEntry, itemFromCatalog, type CatalogEntry } from './model/catalog'
-import { add, dist, norm, scale, sub } from './model/geometry'
+import { add, dist, norm, pointInPolygon, scale, sub } from './model/geometry'
 import { findDrop, HOSTED, reconcileHosts, type DropResult } from './model/placement'
 import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
@@ -86,6 +86,12 @@ interface State extends UIState {
   updatePlacement: (id: string, patch: Partial<Placement>) => void
   deletePlacement: (id: string) => void
   duplicatePlacement: (id: string) => void
+  /**
+   * Unpack a moving box (an item with `unpack`): its contents become owned pieces placed near it
+   * (or waiting in Mine when nothing fits) and the box goes, all in one undoable step. Returns the
+   * new placement ids.
+   */
+  unpackBox: (placementId: string) => string[]
   rotatePlacement: (id: string, delta: number) => void
 
   addLayout: () => void
@@ -144,6 +150,59 @@ function tellHosted(d: Doc, watch: ReturnType<typeof hostedOn>, notify: (m: stri
   const host = now?.on && l.placements.find((p) => p.id === now.on)
   if (host) notify(`The ${w.lamp.toLowerCase()} moved to the ${(names.get(host.itemId) ?? 'other table').toLowerCase()}.`)
   else notify(`The ${w.lamp.toLowerCase()} came off with the ${w.host.toLowerCase()}.`)
+}
+
+const withArticle = (name: string) => `${/^[aeiou]/.test(name) ? 'an' : 'a'} ${name}`
+const listOf = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`)
+
+/** What unpackDoc did: the new doc, the new placement ids, and the names placed and left waiting in Mine. */
+export interface UnpackResult {
+  doc: Doc
+  ids: string[]
+  placed: string[]
+  waiting: string[]
+}
+
+/**
+ * Unpack the moving box at `placementId` in the active layout (pure; see State.unpackBox). The box's
+ * placement goes and its item is marked `unpacked`; each category inside becomes an owned item
+ * placed at the nearest free spot to the box. Null when it isn't a packed box.
+ */
+export function unpackDoc(d0: Doc, placementId: string): UnpackResult | null {
+  const box = activeLayout(d0).placements.find((p) => p.id === placementId)
+  const item = box && d0.items.find((i) => i.id === box.itemId)
+  if (!box || !item?.unpack?.length || item.unpacked) return null
+  const at = { x: box.x, y: box.y }
+  let d = mapLayout({ ...d0, items: d0.items.map((i) => (i.id === item.id ? { ...i, unpacked: true } : i)) }, (l) => ({ ...l, placements: l.placements.filter((p) => p.id !== placementId) }))
+  const ids: string[] = []
+  const placed: string[] = []
+  const waiting: string[] = []
+  for (const c of item.unpack) {
+    const it = itemFromCatalog(catalogEntry(c), uid(), { owned: true })
+    d = { ...d, items: [...d.items, it] }
+    // Nearest first: a spot in the box's own room if there is one, then anywhere it suits.
+    const home = d.rooms.find((r) => pointInPolygon(at, r.polygon))
+    const local = home ? defaultDrop({ ...d, rooms: [home] }, it, at) : null
+    const drop = local?.ok ? local : defaultDrop(d, it, at)
+    const name = it.name.toLowerCase()
+    if (!drop.ok) {
+      waiting.push(name)
+      continue
+    }
+    const pid = uid()
+    const s = drop.spot
+    d = mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: it.id, x: s.x, y: s.y, rotation: s.rotation, ...(s.on ? { on: s.on } : {}) }] }))
+    ids.push(pid)
+    placed.push(name)
+  }
+  return { doc: d, ids, placed, waiting }
+}
+
+/** "Unpacked a plant and a table lamp, the rug is waiting in Mine". */
+export function unpackMessage(r: Pick<UnpackResult, 'placed' | 'waiting'>): string {
+  const head = r.placed.length ? `Unpacked ${listOf(r.placed.map(withArticle))}` : 'Unpacked the box'
+  if (!r.waiting.length) return head
+  return `${head}, ${listOf(r.waiting.map((n) => `the ${n}`))} ${r.waiting.length > 1 ? 'are' : 'is'} waiting in Mine`
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -343,6 +402,14 @@ export const useStore = create<State>((set, get) => ({
     get().update((d) => mapLayout(d, (l) => ({ ...l, placements: l.placements.filter((p) => p.id !== id) })))
     tellHosted(get().doc, watch, get().notify)
     set({ selection: null })
+  },
+  unpackBox: (placementId) => {
+    const r = unpackDoc(get().doc, placementId)
+    if (!r) return []
+    get().update(() => r.doc)
+    set({ selection: null, mode: 'select' })
+    get().notify(unpackMessage(r))
+    return r.ids
   },
   duplicatePlacement: (id) => {
     const d0 = get().doc

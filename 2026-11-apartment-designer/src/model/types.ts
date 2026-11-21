@@ -84,6 +84,10 @@ export interface Item {
   /** Items detected in a scan: which scan, and how sure the detector was about the type (0..1). */
   scanId?: string
   confidence?: number
+  /** A moving box: the catalog categories inside it, unpacked with the Unpack action. */
+  unpack?: string[]
+  /** The box has been unpacked (its placement is gone; the item stays so the goal can count it). */
+  unpacked?: boolean
 }
 
 export interface Placement {
