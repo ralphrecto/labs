@@ -535,7 +535,9 @@ function Scene({
   })
   const pById = new Map(layout.placements.map((p) => [p.id, p]))
   /** How high a piece stands: a table lamp on its host's top, everything else on the floor. */
-  const lift = (p: Placement) => (p.on ? byId.get(pById.get(p.on)?.itemId ?? '')?.height ?? 0 : 0)
+  // A table lamp stands on its host's top; a pendant hangs 76 cm above the dining table.
+  const lift = (p: Placement) =>
+    p.on ? (byId.get(pById.get(p.on)?.itemId ?? '')?.height ?? 0) + (byId.get(p.itemId)?.category === 'pendant' ? 0.76 : 0) : 0
 
   const hit = (e: ThreeEvent<PointerEvent>) => {
     const pt = new THREE.Vector3()
