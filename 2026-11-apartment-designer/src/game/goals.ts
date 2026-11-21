@@ -1,6 +1,6 @@
 // Home score: interior-design rules of thumb, checked against the real plan geometry,
 // turned into goals, stars, a level and a "vibe" number for the game HUD. Pure logic, no React.
-import type { Analysis } from '../analysis'
+import { analyze, type Analysis } from '../analysis'
 import { COMFORTABLE_WALKWAY, MIN_WALKWAY, placedItems, walkingPaths, type PathReport } from '../model/checks'
 import { BEDROOM, BEDROOM_ONLY, DINING, LIVING, NEXT_TO_REACH, nookTarget, OFFICE, polygonGap, UTILITY_ROOM, VIEW_OK } from '../model/placement'
 import { add as add2, closestPointOnSegment, convexOverlap, orientedRect, dist, dot, lerp, norm, openingEndpoints, pointInPolygon, polygonArea, polygonInsideRoom, rot, scale, sub, v, wallInwardNormal, wallSegments } from '../model/geometry'
@@ -1093,7 +1093,20 @@ export function applicableTwists(doc: Doc, fits?: (category: string) => boolean)
     if (t === 'talk-corner') return !fits || fits('armchair')
     if (t === 'bed-swap') return doc.rooms.some((r) => BEDROOM.test(r.name) && !UTILITY_ROOM.test(r.name))
     return true
-  })
+  }).filter((t) => !(layout && ALREADY_MET_CHECK.has(t) && twistMetBy(doc, layout, t)))
+}
+
+/** Twists a design can already satisfy as it stands: no challenge if the source already does it. */
+const ALREADY_MET_CHECK = new Set<TwistId>(['window-seat', 'talk-corner', 'open-floor'])
+
+/** Whether `layout`, scored as if it were a remix with this twist, already has the twist done. */
+function twistMetBy(doc: Doc, layout: Layout, t: TwistId): boolean {
+  try {
+    const probe: Layout = { ...layout, remix: { from: layout.id, twist: t, anchors: 0 } }
+    return !!scoreHome(doc, probe, analyze(doc, probe)).goals.find((g) => g.id === `twist:${t}`)?.done
+  } catch {
+    return false
+  }
 }
 
 /** A remix of `source`: only its anchor pieces, with new placement ids, standing on nothing. */
@@ -1147,6 +1160,9 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
   let done = false
   let progress = 0
   let hint = TWISTS[t].hint
+  /** The piece to turn or move (Next selects it), and a catalog piece the twist needs, if any. */
+  let near: string | undefined
+  let item: string | undefined
   if (t === 'window-seat') {
     for (const s of of('sofa')) {
       if (!s.room) continue
@@ -1154,10 +1170,14 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
         if (o.kind !== 'window') continue
         const [a, b] = openingEndpoints(s.room, o)
         const d = dot(front(s), norm(sub(lerp(a, b, 0.5), s.center)))
+        if (d >= progress || !near) near = s.id
         progress = Math.max(progress, clamp01(d))
         if (d > 0.7) done = true
       }
     }
+    near ??= of('sofa')[0]?.id
+    const sofa = placed.find((x) => x.id === near)
+    if (!done && sofa) hint = `Turn the ${sofa.name.toLowerCase()} to look out of a window in the ${sofa.room?.name.toLowerCase() ?? 'room'}.`
   } else if (t === 'fresh-spots') {
     const anchors = placed.filter((x) => ANCHORS.has(x.category))
     const moved = anchors.filter((x) => {
@@ -1166,7 +1186,14 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
     })
     done = !src || (anchors.length > 0 && moved.length === anchors.length)
     progress = anchors.length ? moved.length / anchors.length : 0
+    const stay = anchors.find((x) => !moved.includes(x))
+    if (!done && stay) {
+      near = stay.id
+      const left = anchors.length - moved.length
+      hint = `Move the ${stay.name.toLowerCase()} at least 80 cm from its old spot${left > 1 ? ` (${left} big pieces still to move)` : ''}.`
+    }
   } else if (t === 'bed-swap') {
+    near = of('bed')[0]?.id
     done = of('bed').some((b) => {
       const s = srcOf(b)
       if (!s) return true
@@ -1187,15 +1214,22 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
         if (facing < -0.5 && toward && d <= 2.4) done = true
         progress = Math.max(progress, 0.3 + 0.7 * clamp01((1 - facing) / 1.5) * (toward ? 1 : 0.5) * clamp01(2.4 / Math.max(d, 0.01)))
       }
+    // Point at the armchair to turn (or the sofa), or ask for an armchair when there's only one seat.
+    near = (of('armchair')[0] ?? seats[0])?.id
+    if (!done && seats.length < 2) {
+      item = 'armchair'
+      hint = 'Add an armchair, then turn it and the sofa to face each other, less than 2.4 m apart.'
+    }
   } else if (t === 'open-floor') {
     const room = rooms.find((r) => LIVING.test(r.name)) ?? of('sofa')[0]?.room ?? rooms[0]
     if (room) {
       const c = centroid(room.polygon)
       const pieces = inRoom(room).filter((x) => !x.floor)
-      const near = (x: P) => pointInPolygon(c, x.body) || x.body.some((q, i) => closestPointOnSegment(c, q, x.body[(i + 1) % x.body.length]).distance < 1.0)
-      const clear = pieces.filter((x) => !near(x))
+      const near0 = (x: P) => pointInPolygon(c, x.body) || x.body.some((q, i) => closestPointOnSegment(c, q, x.body[(i + 1) % x.body.length]).distance < 1.0)
+      const clear = pieces.filter((x) => !near0(x))
       done = pieces.length >= 4 && clear.length === pieces.length
       progress = pieces.length ? (clear.length / pieces.length) * Math.min(1, pieces.length / 4) : 0
+      near = pieces.find((x) => near0(x))?.id
       if (!done && clear.length < pieces.length) hint = `Move ${pieces.length - clear.length === 1 ? 'one piece' : `${pieces.length - clear.length} pieces`} out of the middle of the ${room.name.toLowerCase()} (1 m around its centre).`
     }
   } else if (t === 'less-is-more') {
@@ -1204,5 +1238,14 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
     progress = n ? Math.min(1, 10 / n) : 1
     hint = `${n} of 10 pieces. ${TWISTS[t].hint}`
   }
-  return { id: `twist:${t}`, title: TWISTS[t].title, hint, category: 'style', stars: 3, done, progress: done ? 1 : clamp01(progress) }
+  return {
+    id: `twist:${t}`,
+    title: TWISTS[t].title,
+    hint,
+    category: 'style',
+    stars: 3,
+    done,
+    progress: done ? 1 : clamp01(progress),
+    ...(done ? {} : { near, ...(item ? { item, tab: TAB_OF[item] } : {}) }),
+  }
 }

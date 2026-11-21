@@ -301,7 +301,7 @@ export function DesignsSheetBody() {
         <HomesStrip onRenameHome={() => setRenamingHome(true)} />
       )}
       <h3 className="hud-h3">Designs for {doc.apartment.name}</h3>
-      <DreamCount scores={scores} total={doc.layouts.length} />
+      <DreamCount scores={scores} />
       <div className="dz-designs">
         {doc.layouts.map((l) => {
           const active = l.id === doc.activeLayoutId
@@ -309,6 +309,7 @@ export function DesignsSheetBody() {
           const sc = scores.get(l.id)
           return (
             <div key={l.id} className={`dz-design g-card${active ? ' on' : ''}`}>
+              {l.remix && sc?.dream && !sc.sameAs && <span className="dz-dream">Dream ★</span>}
               <button className="dz-design-main" onClick={() => s.setActiveLayout(l.id)} aria-pressed={active}>
                 <DesignThumb doc={doc} layout={l} />
                 <span className="dz-design-text">
@@ -329,7 +330,7 @@ export function DesignsSheetBody() {
                     ) : (
                       sc && (
                         <span className="dz-score">
-                          ★{sc.stars} · {sc.level}
+                          ★{sc.stars} · {l.remix?.dreamAt ? 'Dream reached' : sc.level}
                           {l.remix && !sc.dream && (
                             <span className="dz-bar" aria-hidden>
                               <i style={{ width: `${Math.round(sc.progress * 100)}%` }} />
@@ -338,7 +339,7 @@ export function DesignsSheetBody() {
                         </span>
                       )
                     )}
-                    {l.remix && <RemixBadge l={l} done={!!sc?.twistDone} dream={!!sc?.dream} />}
+                    {l.remix && <RemixBadge l={l} done={!!sc?.twistDone} />}
                     {best === l.id && (
                       <span className="dz-crown" title="Your best design">
                         <Crown />
@@ -397,8 +398,8 @@ export function openRemixPicker() {
   useGame.getState().openSheet('layouts')
 }
 
-/** "↻ Twist: Sofa faces the window ✓", and a "Dream ★" ribbon once the remix reached Dream home. */
-function RemixBadge({ l, done, dream }: { l: Layout; done: boolean; dream: boolean }) {
+/** "↻ Twist: Sofa faces the window ✓" (the "Dream ★" ribbon sits in the card's corner). */
+function RemixBadge({ l, done }: { l: Layout; done: boolean }) {
   const t = TWISTS[l.remix!.twist]
   if (!t) return null
   return (
@@ -407,20 +408,32 @@ function RemixBadge({ l, done, dream }: { l: Layout; done: boolean; dream: boole
         ↻ Twist: {t.title}
         {done && ' ✓'}
       </span>
-      {dream && <span className="dz-ribbon">Dream ★</span>}
     </>
   )
 }
 
 /** "2 of 3 designs are Dream homes", once there is more than one design and at least one Dream home. */
-function DreamCount({ scores, total }: { scores: Map<string, { dream: boolean } | null>; total: number }) {
-  const n = [...scores.values()].filter((x) => x?.dream).length
+function DreamCount({ scores }: { scores: Map<string, { dream: boolean; sameAs?: string } | null> }) {
+  // An untouched copy is the same design again: it counts toward neither side.
+  const own = [...scores.values()].filter((x) => !x?.sameAs)
+  const total = own.length
+  const n = own.filter((x) => x?.dream).length
   if (total < 2 || n === 0) return null
   return (
     <p className="dz-dreams">
       {n} of {total} designs {n === 1 ? 'is a Dream home' : 'are Dream homes'}
     </p>
   )
+}
+
+/** A small picture for each twist in the picker. */
+const TWIST_EMOJI: Record<string, string> = {
+  'talk-corner': '💬',
+  'open-floor': '🕺',
+  'window-seat': '🪟',
+  'fresh-spots': '🔀',
+  'bed-swap': '🛏️',
+  'less-is-more': '🍃',
 }
 
 /**
@@ -462,8 +475,11 @@ export function RemixPicker() {
             useGame.getState().openSheet(null)
           }}
         >
-          <strong>{TWISTS[t].name}</strong>
-          <small>{TWISTS[t].title}</small>
+          <strong>
+            {TWIST_EMOJI[t] ? `${TWIST_EMOJI[t]} ` : ''}
+            {TWISTS[t].name}
+          </strong>
+          <small>{TWISTS[t].hint}</small>
         </button>
       ))}
       <button className="g-btn sm ghost" onClick={() => useRemixPicker.setState({ open: false })}>

@@ -505,6 +505,23 @@ const SHOTS: Record<string, Shot> = {
     sx: 50,
     sw: 20,
   },
+  pendant: {
+    draw: (p) => (
+      <>
+        <polygon points={pts([[30, 54], [70, 54], [80, GROUND - 2], [20, GROUND - 2]])} fill="#ffe7a3" opacity={0.22} stroke="none" />
+        <ellipse cx={50} cy={GROUND - 2} rx={28} ry={5} fill="#ffe7a3" opacity={0.45} stroke="none" />
+        <rect x={42} y={6} width={16} height={4} rx={2} fill={p.metal.t} stroke={p.line} />
+        <path d="M50 10V29" stroke={p.line} strokeWidth={1.6} />
+        <path d="M45 29h10l2 6H43z" fill={p.base.s} stroke={p.line} />
+        <path d="M26 53Q28 35 50 34Q72 35 74 53Z" fill={p.base.f} stroke={p.line} />
+        <path d="M33 48Q36 39 46 37" stroke={p.base.t} strokeWidth={3} fill="none" />
+        <ellipse cx={50} cy={53} rx={24} ry={3.5} fill={p.base.s} stroke={p.line} />
+        <circle cx={50} cy={55.5} r={4.5} fill="#fff3d6" stroke={p.line} strokeWidth={1.4} />
+      </>
+    ),
+    sx: 50,
+    sw: 14,
+  },
   plant: {
     draw: (p) => {
       const leaf = (cx: number, cy: number, rot: number, s = 1, lit = false) => (

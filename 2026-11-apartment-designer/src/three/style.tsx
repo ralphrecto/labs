@@ -186,7 +186,7 @@ function eveningBackdrop() {
   c.height = 256
   const g = c.getContext('2d')!
   const grad = g.createLinearGradient(0, 0, 0, 256)
-  grad.addColorStop(0, '#232a55')
+  grad.addColorStop(0, '#2a2f52')
   grad.addColorStop(1, '#5b4a78')
   g.fillStyle = grad
   g.fillRect(0, 0, 4, 256)

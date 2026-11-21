@@ -64,7 +64,7 @@ describe('moving boxes', () => {
 
   it('says what is waiting in Mine', () => {
     expect(unpackMessage({ placed: ['plant', 'table lamp'], waiting: [] })).toBe('Unpacked a plant and a table lamp')
-    expect(unpackMessage({ placed: ['plant', 'floor lamp'], waiting: ['rug'] })).toBe('Unpacked a plant and a floor lamp, the rug is waiting in Mine')
+    expect(unpackMessage({ placed: ['plant', 'floor lamp'], waiting: ['rug'] })).toBe('Unpacked a plant and a floor lamp · rug waiting in Mine')
   })
 
   it('gives old saves of the sample box contents', () => {
