@@ -339,6 +339,19 @@ function shadeDims(item: Item) {
   return { shadeH, s, bulbY: h - shadeH * 0.6 }
 }
 
+/** A pendant: a dome shade over the table, a bulb inside, and a cord up toward the ceiling. */
+const PENDANT_CORD = 0.9
+function pendant(item: Item): Part[] {
+  const h = item.height
+  const s = Math.min(item.width, item.depth)
+  return [
+    { kind: 'cyl', size: [s, h * 0.7, s], pos: [0, h * 0.35, 0], top: 0.32, seg: 24, color: item.color ?? PAL.shade },
+    { kind: 'cyl', size: [s * 0.3, h * 0.3, s * 0.3], pos: [0, h * 0.85, 0], top: 0.6, seg: 16, color: item.color ?? PAL.shade },
+    { kind: 'ball', size: [0.08, 0.09, 0.08], pos: [0, h * 0.25, 0], color: PAL.shade, noShadow: true },
+    { kind: 'cyl', size: [0.012, PENDANT_CORD, 0.012], pos: [0, h + PENDANT_CORD / 2, 0], seg: 8, color: PAL.dark, noShadow: true },
+  ]
+}
+
 /** A table lamp: a ceramic body, a short neck, a bulb and a fabric shade. */
 function tableLamp(item: Item): Part[] {
   const h = item.height
@@ -456,6 +469,8 @@ export function parts(item: Item): Part[] {
       return lamp(item)
     case 'table-lamp':
       return tableLamp(item)
+    case 'pendant':
+      return pendant(item)
     case 'plant':
       return plant(item)
     default: {
@@ -481,7 +496,7 @@ function movingBox(item: Item): Part[] {
 }
 
 /** Plants and lamps are all curves: an edge outline on them is a scribble, so they show selection by the ring alone. */
-const ORGANIC = new Set(['plant', 'floor-lamp', 'table-lamp'])
+const ORGANIC = new Set(['plant', 'floor-lamp', 'table-lamp', 'pendant'])
 
 export function ProceduralItem({ item, highlight }: { item: Item; highlight?: string }) {
   const { style } = useStyle()
@@ -589,7 +604,7 @@ const MAX_LAMP_LIGHTS = 8
 let lampLights = 0
 const GLOW = '#ffcf8a'
 const SHADE_GLOW = '#ffb25e'
-const SHADE_EMISSIVE = '#ff9a3c'
+const SHADE_EMISSIVE = '#ffa24a'
 
 /** In the evening a floor lamp glows: a warm bulb and shade, and a small warm light at shade height. */
 function LampGlow({ item }: { item: Item }) {
@@ -605,6 +620,24 @@ function LampGlow({ item }: { item: Item }) {
     }
   }, [evening])
   if (!evening) return null
+  if (item.category === 'pendant') {
+    // Matches pendant(): the dome glows and a soft cone of light falls on the table below.
+    const h = item.height
+    const s = Math.min(item.width, item.depth)
+    return (
+      <group>
+        <mesh position={[0, h * 0.35, 0]} renderOrder={1}>
+          <cylinderGeometry args={[(s / 2) * 0.32 * 1.02, (s / 2) * 1.02, h * 0.7 * 1.01, 24, 1, true]} />
+          <meshStandardMaterial color={SHADE_GLOW} emissive={SHADE_EMISSIVE} emissiveIntensity={1.2} toneMapped={false} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh position={[0, h * 0.25, 0]}>
+          <sphereGeometry args={[0.05, 16, 12]} />
+          <meshStandardMaterial color="#fff3d6" emissive={GLOW} emissiveIntensity={2} toneMapped={false} />
+        </mesh>
+        {lit && <PendantSpot y={h * 0.2} />}
+      </group>
+    )
+  }
   // Matches lamp() and tableLamp(): the shade's size and the bulb's height.
   const h = item.height
   const { shadeH, s, bulbY } = shadeDims(item)
@@ -614,7 +647,7 @@ function LampGlow({ item }: { item: Item }) {
     <group>
       <mesh position={[0, h - shadeH / 2, 0]} renderOrder={1}>
         <cylinderGeometry args={[(s / 2) * top * 1.02, (s / 2) * 1.02, shadeH * 1.01, 20, 1, true]} />
-        <meshStandardMaterial color={SHADE_GLOW} emissive={SHADE_EMISSIVE} emissiveIntensity={1.6} toneMapped={false} side={THREE.DoubleSide} />
+        <meshStandardMaterial color={SHADE_GLOW} emissive={SHADE_EMISSIVE} emissiveIntensity={1.2} toneMapped={false} side={THREE.DoubleSide} />
       </mesh>
       <mesh position={[0, bulbY, 0]}>
         <sphereGeometry args={[0.055, 16, 12]} />
@@ -622,11 +655,27 @@ function LampGlow({ item }: { item: Item }) {
       </mesh>
       {lit &&
         (table ? (
-          <pointLight position={[0, bulbY, 0]} color="#ffb36b" intensity={2.6} distance={2.6} decay={1.8} castShadow={false} />
+          <pointLight position={[0, bulbY, 0]} color="#ffb070" intensity={2.2} distance={2.2} decay={2} castShadow={false} />
         ) : (
-          <pointLight position={[0, bulbY, 0]} color="#ffb36b" intensity={5} distance={4.5} decay={1.6} castShadow={false} />
+          // A little toward the room (the shade's open side), so the wall behind isn't blown out.
+          <pointLight position={[0, bulbY, 0.15]} color="#ffb070" intensity={4} distance={3.2} decay={2} castShadow={false} />
         ))}
     </group>
+  )
+}
+
+/** The pendant's light: a spot straight down onto the table (its target hangs just below it). */
+function PendantSpot({ y }: { y: number }) {
+  const target = useMemo(() => {
+    const o = new THREE.Object3D()
+    o.position.set(0, y - 1, 0)
+    return o
+  }, [y])
+  return (
+    <>
+      <primitive object={target} />
+      <spotLight position={[0, y, 0]} target={target} color="#ffb070" intensity={6} distance={2.2} angle={0.9} penumbra={0.6} decay={2} castShadow={false} />
+    </>
   )
 }
 

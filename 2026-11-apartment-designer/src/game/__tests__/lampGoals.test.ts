@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { analyze } from '../../analysis'
 import { catalogEntry, itemFromCatalog } from '../../model/catalog'
+import { findDrop } from '../../model/placement'
 import { emptyDoc, rectRoom } from '../../model/sample'
 import type { Doc, Item, Placement } from '../../model/types'
 import { useStore } from '../../store'
@@ -89,5 +90,40 @@ describe('bedside and desk light goals', () => {
     expect(now.rotation).toBeCloseTo(Math.PI / 4)
     expect(Math.abs(now.x - stand.x)).toBeLessThan(0.25)
     expect(Math.abs(now.y - stand.y)).toBeLessThan(0.2)
+  })
+
+  it('a nightstand the game would refuse is never suggested: no bedside goal there', () => {
+    // A bed in the studio's living room while the home has a bedroom: findDrop keeps nightstands in the bedroom.
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 4, 4), rectRoom('Bedroom', 4, 0, 4, 4))
+    const bedItem = itemFromCatalog(catalogEntry('bed'), 'probe')
+    const bed = put(d, 'bed', 2, bedItem.depth / 2 + 0.05)
+    expect(findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry('nightstand'), 'probe-ns'), { nextTo: bed.id }).ok).toBe(false)
+    expect(score(d).goals.filter((g) => g.id.startsWith(`bedside-light:${bed.id}`))).toEqual([])
+    // In a bedroom, both sides are on offer.
+    const { d: d2, bed: bed2 } = bedroom()
+    expect(score(d2).goals.filter((g) => g.id.startsWith(`bedside-light:${bed2.id}`) && g.item === 'nightstand')).toHaveLength(2)
+  })
+
+  it('soft light done says so, not "bring it within"', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 5, 5))
+    put(d, 'sofa', 2.5, 0.6)
+    put(d, 'floor-lamp', 4, 0.4)
+    const g = score(d).goals.find((x) => x.id === 'light')!
+    expect(g.done).toBe(true)
+    expect(g.hint).toBe('A warm pool of light by the sofa.')
+  })
+
+  it('a pendant over the dining table finishes the dining light', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Dining', 0, 0, 4, 4))
+    const table = put(d, 'dining-table', 2, 2)
+    let g = score(d).goals.find((x) => x.id === `dining-light:${table.id}`)!
+    expect(g.done).toBe(false)
+    expect(g.item).toBe('pendant')
+    put(d, 'pendant', 2, 2, 0, { on: table.id })
+    g = score(d).goals.find((x) => x.id === `dining-light:${table.id}`)!
+    expect(g.done).toBe(true)
   })
 })

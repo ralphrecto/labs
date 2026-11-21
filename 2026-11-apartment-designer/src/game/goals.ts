@@ -7,6 +7,8 @@ import { add as add2, closestPointOnSegment, convexOverlap, orientedRect, dist, 
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 import { centroid, normalizeAngle } from '../model/geometry'
 import type { Placement, TwistId } from '../model/types'
+import { catalogEntry, itemFromCatalog } from '../model/catalog'
+import { findDrop } from '../model/placement'
 
 export type GoalCategory = 'basics' | 'comfort' | 'flow' | 'style'
 
@@ -600,12 +602,24 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     const near = stands.filter((x) => x.l.y <= 0 && x.gap <= RULES.nightstandGap && Math.abs(x.l.x) >= bed.hw * 0.9)
     const twin = 2 * bed.hw < 1.2
     const nearest = near.slice().sort((a, b) => a.gap - b.gap)[0]
-    // A side pushed against a wall has no room for a nightstand: no light goal there.
-    const open = (sd: number) => !!bed.room && polygonInsideRoom(orientedRect(bed.center, 0.2, 0.2, bed.rotation, v(sd * (bed.hw + 0.22), -bed.hd + 0.25)), bed.room.polygon)
+    // A side with no room for a real nightstand (against a wall, or another piece in the way) gets
+    // no light goal: the goal never suggests a nightstand the game would then refuse. The same spots
+    // findDrop tries (a real nightstand's size, 3 or 10 cm off the bed, by the pillows), and findDrop
+    // itself has the last word (doors, walkways, the rest of its rules).
+    const ns = catalogEntry('nightstand')
+    const solid = placed.filter((x) => x.id !== bed.id && !x.floor && !x.host)
+    const open = (sd: number) =>
+      !!bed.room &&
+      [0.03, 0.1].some((gap) => {
+        const body = orientedRect(bed.center, ns.width / 2, ns.depth / 2, bed.rotation, v(sd * (bed.hw + gap + ns.width / 2), -bed.hd + ns.depth / 2))
+        return polygonInsideRoom(body, bed.room!.polygon) && !solid.some((x) => convexOverlap(body, x.body))
+      })
+    let canDrop: boolean | undefined
+    const dropOk = () => (canDrop ??= findDrop(doc, layout, itemFromCatalog(ns, '__bedside-probe'), { nextTo: bed.id }).ok)
     const sides = twin ? [nearest ? Math.sign(nearest.l.x) || 1 : open(1) || !open(-1) ? 1 : -1] : [-1, 1]
     for (const sd of sides) {
       const stand = near.filter((x) => Math.sign(x.l.x) === sd).sort((a, b) => a.gap - b.gap)[0]?.n
-      if (!stand && !twin && !open(sd)) continue
+      if (!stand && ((!twin && !open(sd)) || !dropOk())) continue
       const lit = of('table-lamp', 'floor-lamp').some((l) => {
         const q = toLocal(bed, l.center)
         return q.x * sd >= bed.hw * 0.9 && q.y <= 0 && polygonGap(bed.body, l.body) <= RULES.bedsideLamp
@@ -676,7 +690,9 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     title: 'Soft light by the seats',
     hint: !livingSeats.length
       ? 'Add a sofa or armchair, then a floor lamp beside it.'
-      : Number.isFinite(nearestLamp)
+      : nearestLamp <= RULES.lampReach
+        ? 'A warm pool of light by the sofa.'
+        : Number.isFinite(nearestLamp)
         ? `Your lamp is ${cm(nearestLamp)} from the seats; bring it within ${cm(RULES.lampReach)}.`
         : `Add a floor lamp or table lamp near the seats in the ${livingSeats[0].room!.name}.`,
     tab: !livingSeats.length ? (ofAny(...SEATING).length ? undefined : 'living') : Number.isFinite(nearestLamp) ? undefined : 'decor',
@@ -791,6 +807,24 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       progress: lit ? 1 : 0,
       stars: 1,
       roomId: desk.room?.id,
+      category: 'comfort',
+      bonus: true,
+    })
+  }
+  // A pendant hung over each dining table: a warm pool of light on the meal.
+  for (const table of of('dining-table')) {
+    const lit = of('pendant').some((l) => l.host === table.id)
+    add({
+      id: `dining-light:${table.id}`,
+      title: 'A pendant over the table',
+      hint: lit ? 'Dinner in a warm pool of light.' : 'Hang a pendant light over the dining table.',
+      tab: lit ? undefined : 'decor',
+      item: lit ? undefined : 'pendant',
+      near: table.id,
+      done: lit,
+      progress: lit ? 1 : 0,
+      stars: 1,
+      roomId: table.room?.id,
       category: 'comfort',
       bonus: true,
     })

@@ -195,6 +195,12 @@ function eveningBackdrop() {
   return duskBackdrop
 }
 
+/** Cartoon floors and walls after dark: mixed 30% toward a dusk blue, so the room reads cool, not brown. */
+function toonDusk(hex: string, dusk: boolean) {
+  if (!dusk) return hex
+  return '#' + new THREE.Color(hex).lerp(new THREE.Color('#7d8cc9'), 0.3).getHexString()
+}
+
 function SurfaceMaterial({ role, color, highlight, map, side }: SurfaceProps) {
   const { style } = useStyle()
   const evening = useGame((s) => s.evening)
@@ -240,7 +246,7 @@ function SurfaceMaterial({ role, color, highlight, map, side }: SurfaceProps) {
     case 'toon':
       return (
         <meshToonMaterial
-          color={map ? '#ffffff' : toonHex(color)}
+          color={toonDusk(map ? '#ffffff' : toonHex(color), evening && (role === 'floor' || role === 'wall'))}
           map={map ?? null}
           gradientMap={toonRamp()}
           emissive={emissive}
@@ -375,6 +381,13 @@ export function StyleEnvironment() {
  * Lights for the style. Cartoon wants one strong sun for clean bands; Lifelike leans on the environment.
  * `extent` is the radius (m) the shadows need to cover around `target`: the home's footprint plus a margin.
  */
+/** The evening rig per style: a cool ambient, a blue sky/indigo ground bounce and a moon key light. */
+const EVENING_LIGHTS = {
+  toon: { ambColor: '#7088d8', amb: 0.32, sky: '#5f78cc', ground: '#1f2442', hemi: 0.3, moonColor: '#9fb4ff', moon: 0.45 },
+  clay: { ambColor: '#7b90d6', amb: 0.36, sky: '#6a80cc', ground: '#232a48', hemi: 0.34, moonColor: '#a6b6ff', moon: 0.4 },
+  real: { ambColor: '#6f86d6', amb: 0.05, sky: '#5f78cc', ground: '#1f2442', hemi: 0.45, moonColor: '#a6b6ff', moon: 0.6 },
+} as const
+
 export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; extent?: number }) {
   const { style } = useStyle()
   const shadows = STYLE_STAGE[style].shadows
@@ -417,25 +430,24 @@ export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; ex
       }
     }
   }, [evening, scene, style])
-  // Evening is a cool blue dusk (a blue-violet sky light, a plum bounce from below, a low warm
-  // sunset rim) with the lamps making warm pools: dim enough for the lamps to matter, never murky.
-  const sunK = evening ? 0.15 : 1
-  const ambK = evening ? 0.3 : 1
-  const hemiK = evening ? 0.45 : 1
+  // Evening is a cool moonlit blue with the lamps making the warm pools. The sunset stays in the
+  // window glass only: an orange key light turns Cartoon and Clay rooms brown. Absolute per-style
+  // values (not multipliers on the day rig), tuned live.
   if (style === 'blueprint' || style === 'scan') return <ambientLight intensity={1} />
-  const hemiSky = evening ? '#7480c0' : style === 'toon' ? '#fff8ec' : style === 'real' || style === 'clay' ? '#fff4e4' : '#ffffff'
-  const hemiGround = evening ? '#3d2c3c' : style === 'toon' ? '#e7b48c' : style === 'clay' ? '#d9c6aa' : '#b9a98f'
+  const dusk = evening ? EVENING_LIGHTS[style === 'clay' || style === 'real' ? style : 'toon'] : null
+  const hemiSky = dusk ? dusk.sky : style === 'toon' ? '#fff8ec' : style === 'real' || style === 'clay' ? '#fff4e4' : '#ffffff'
+  const hemiGround = dusk ? dusk.ground : style === 'toon' ? '#e7b48c' : style === 'clay' ? '#d9c6aa' : '#b9a98f'
   return (
     <>
-      <ambientLight intensity={ambK * (style === 'toon' ? 0.9 : style === 'real' ? 0 : style === 'clay' ? 1.15 : 0.8)} color={evening ? '#9aa6dc' : style === 'toon' ? '#ffe9d6' : style === 'clay' ? '#fff4e6' : '#ffffff'} />
-      <hemisphereLight key={evening ? 'dusk' : 'day'} args={[hemiSky, hemiGround, hemiK * (style === 'real' ? 0.7 : style === 'clay' ? 0.9 : 0.6)]} />
+      <ambientLight intensity={dusk ? dusk.amb : style === 'toon' ? 0.9 : style === 'real' ? 0 : style === 'clay' ? 1.15 : 0.8} color={dusk ? dusk.ambColor : style === 'toon' ? '#ffe9d6' : style === 'clay' ? '#fff4e6' : '#ffffff'} />
+      <hemisphereLight key={evening ? 'dusk' : 'day'} args={[hemiSky, hemiGround, dusk ? dusk.hemi : style === 'real' ? 0.7 : style === 'clay' ? 0.9 : 0.6]} />
       <primitive object={aim} />
       <directionalLight
         key={`${r.toFixed(2)}`}
         position={sun.pos as unknown as [number, number, number]}
         target={aim}
-        intensity={sun.intensity * sunK}
-        color={evening ? '#ff9a6b' : sun.color}
+        intensity={dusk ? dusk.moon : sun.intensity}
+        color={dusk ? dusk.moonColor : sun.color}
         castShadow={shadows}
         shadow-mapSize={[2048, 2048]}
         shadow-camera-left={-r}

@@ -156,7 +156,7 @@ function tellHosted(d: Doc, watch: ReturnType<typeof hostedOn>, notify: (m: stri
   const now = l.placements.find((p) => p.id === w.id)
   const host = now?.on && l.placements.find((p) => p.id === now.on)
   if (host) notify(`The ${w.lamp.toLowerCase()} moved to the ${(names.get(host.itemId) ?? 'other table').toLowerCase()}.`)
-  else notify(`The ${w.lamp.toLowerCase()} came off with the ${w.host.toLowerCase()}.`)
+  else notify(`The ${w.lamp.toLowerCase()} came off with the ${w.host.toLowerCase()}. It’s waiting in Mine.`)
 }
 
 const withArticle = (name: string) => `${/^[aeiou]/.test(name) ? 'an' : 'a'} ${name}`

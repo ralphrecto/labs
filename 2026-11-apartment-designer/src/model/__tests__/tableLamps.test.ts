@@ -127,6 +127,52 @@ describe('table lamps on furniture', () => {
     expect(layoutOf(twice).placements.some((p) => p.id === lamp.id)).toBe(false)
   })
 
+  it('never wanders to a desk (same room or another): it comes off and waits in Mine', () => {
+    const { d, left } = bedroom(1)
+    put(d, 'desk', 2, 3.5)
+    d.rooms.push(rectRoom('Office', 4, 0, 4, 4))
+    put(d, 'desk', 6, 3.5)
+    const lamp = put(d, 'table-lamp', left.x, left.y, 0, { on: left.id })
+    const next: Doc = { ...d, layouts: d.layouts.map((l) => ({ ...l, placements: l.placements.filter((p) => p.id !== left.id) })) }
+    const report = { removed: [] as string[], rehosted: [] as string[] }
+    const out = reconcileHosts(d, next, report)
+    expect(layoutOf(out).placements.some((p) => p.id === lamp.id)).toBe(false)
+    expect(report.removed).toEqual([lamp.id])
+    // The item itself stays owned.
+    expect(out.items.some((i) => i.id === lamp.itemId)).toBe(true)
+  })
+
+  it('a desk holds one lamp', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Office', 0, 0, 4, 4))
+    const desk = put(d, 'desk', 2, 3.5)
+    const r = findDrop(d, layoutOf(d), lampItem())
+    expect(r.ok && r.spot.on).toBe(desk.id)
+    if (r.ok) put(d, 'table-lamp', r.spot.x, r.spot.y, r.spot.rotation, { on: r.spot.on })
+    expect(findDrop(d, layoutOf(d), lampItem()).ok).toBe(false)
+  })
+
+  it('a pendant hangs over the centre of a dining table, and only there', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Dining', 0, 0, 4, 4))
+    put(d, 'side-table', 0.4, 0.4)
+    const pendant = () => itemFromCatalog(catalogEntry('pendant'), 'probe-pendant')
+    const none = findDrop(d, layoutOf(d), pendant())
+    expect(none.ok).toBe(false)
+    if (!none.ok) expect(none.reason).toBe('A pendant hangs over a dining table. Add one first.')
+    const table = put(d, 'dining-table', 2, 2)
+    const r = findDrop(d, layoutOf(d), pendant())
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.spot.on).toBe(table.id)
+    expect(r.spot.x).toBeCloseTo(2)
+    expect(r.spot.y).toBeCloseTo(2)
+    put(d, 'pendant', r.spot.x, r.spot.y, r.spot.rotation, { on: r.spot.on })
+    expect(findDrop(d, layoutOf(d), pendant()).ok).toBe(false)
+    // A table lamp never takes the dining table.
+    expect(findDrop(d, layoutOf(d), lampItem()).ok && (findDrop(d, layoutOf(d), lampItem()) as { spot: { on?: string } }).spot.on).not.toBe(table.id)
+  })
+
   it('old saves: a short "Table lamp" floor lamp on a nightstand becomes a table lamp standing on it', () => {
     const { d, left } = bedroom()
     const old = put(d, 'floor-lamp', left.x, left.y, 0, {}, { name: 'Table lamp', height: 0.55, width: 0.3, depth: 0.3 })

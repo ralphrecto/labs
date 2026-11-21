@@ -21,7 +21,7 @@ export const CATEGORY_GROUPS: { key: string; label: string; emoji?: string; cate
   { key: 'bedroom', label: 'Bedroom', emoji: '🛏️', categories: ['bed', 'nightstand', 'dresser', 'wardrobe'] },
   { key: 'dining', label: 'Dining', emoji: '🍽️', categories: ['dining-table', 'dining-chair', 'bench', 'sideboard'] },
   { key: 'work', label: 'Work', emoji: '💻', categories: ['desk', 'office-chair', 'bookshelf'] },
-  { key: 'decor', label: 'Decor', emoji: '🪴', categories: ['plant', 'floor-lamp', 'table-lamp', 'rug', 'box'] },
+  { key: 'decor', label: 'Decor', emoji: '🪴', categories: ['plant', 'floor-lamp', 'table-lamp', 'pendant', 'rug', 'box'] },
   { key: 'mine', label: 'Mine', emoji: '⭐', categories: [] },
 ]
 
