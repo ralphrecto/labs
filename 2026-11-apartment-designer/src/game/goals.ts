@@ -72,9 +72,9 @@ export const RULES = {
   coffeeMin: 0.45,
   coffeeMax: 0.5,
   densityMin: 0.15,
-  /** Designers aim for about a third of the floor; a bedroom can take a little more. */
+  /** Designers aim for about a third of the floor; a bedroom can take a little more (about 40%). */
   densityMax: 0.35,
-  densityMaxBedroom: 0.38,
+  densityMaxBedroom: 0.42,
   /** Free floor along the side of a bed to get in (both sides for a double or bigger). */
   bedSide: 0.6,
   /** TV viewing distance as a multiple of the screen diagonal (the stand's width stands in for it). */
@@ -163,7 +163,7 @@ const cm = (m: number) => `${Math.round(m * 100)} cm`
 export const LEVEL_FRACTIONS = [0, 0, 0.35, 0.75, 0.92, 1]
 /** Bonus stars Dream home also needs (or all the bonus stars on offer, when there are fewer). */
 export const DREAM_BONUS_STARS = 3
-/** Bonus or style goals Dream home also needs done, on top of every basics and comfort goal. */
+/** Bonus or style goals Dream home also needs done, on top of every core goal. */
 export const DREAM_EXTRA_GOALS = 2
 /** The highest level a layout with warnings (a blocked clearance, say) can reach: Designer home. */
 export const WARNING_LEVEL_CAP = 4
@@ -490,8 +490,11 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   for (const room of rooms) {
     if (UTILITY_ROOM.test(room.name)) continue
     const area = polygonArea(room.polygon)
+    // A desk chair pulled up to its desk tucks under it at night: it doesn't crowd the room.
+    const desksHere = inRoom(room).filter((x) => x.category === 'desk')
+    const tucked = (x: (typeof placed)[number]) => x.category === 'office-chair' && desksHere.some((dk) => polygonGap(dk.body, x.body) <= RULES.chairToTable)
     const used = inRoom(room)
-      .filter((x) => !x.floor)
+      .filter((x) => !x.floor && !tucked(x))
       .reduce((a, x) => a + polygonArea(x.body), 0)
     const f = used / area
     const pct = Math.round(f * 100)
@@ -843,15 +846,15 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const bonusStars = goals.reduce((a, g) => a + (g.bonus && g.done ? g.stars : 0), 0)
   const uncapped = levelAt(stars, thresholds)
   // Stars alone race to the top (bonus goals add stars too), so the top levels also need goals done:
-  // Designer home every core flow goal, Dream home every core basics and comfort goal as well, plus
-  // DREAM_EXTRA_GOALS bonus or style goals.
+  // Designer home every core flow goal, Dream home every core goal (basics, comfort and style) as
+  // well, plus DREAM_EXTRA_GOALS bonus or style goals.
   const coreOpen = (...cats: GoalCategory[]) => goals.some((g) => !g.bonus && !g.done && cats.includes(g.category))
   const extras = goals.filter((g) => g.done && (g.bonus || g.category === 'style')).length
   // Snags hold the level at Cozy (so does an open flow goal, or more than one open basics or comfort goal); warnings on screen, an open snag goal
-  // (a blocked view of the TV), an open basics or comfort goal or too few extras hold it at Designer home.
+  // (a blocked view of the TV), an open basics, comfort or style goal or too few extras hold it at Designer home.
   const cap = capped || coreOpen('flow') || goals.filter((g) => !g.bonus && !g.done && (g.category === 'basics' || g.category === 'comfort')).length > 1
     ? SNAG_LEVEL_CAP
-    : warnings > 0 || goals.some((g) => g.snag) || bonusStars < Math.min(DREAM_BONUS_STARS, bonusMax) || coreOpen('basics', 'comfort') || extras < DREAM_EXTRA_GOALS
+    : warnings > 0 || goals.some((g) => g.snag) || bonusStars < Math.min(DREAM_BONUS_STARS, bonusMax) || coreOpen('basics', 'comfort', 'style') || extras < DREAM_EXTRA_GOALS
       ? WARNING_LEVEL_CAP
       : LEVELS.length - 1
   const level = uncapped.index > cap ? levelAt(stars, thresholds, cap) : uncapped

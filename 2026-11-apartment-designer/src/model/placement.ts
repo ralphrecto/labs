@@ -68,7 +68,7 @@ const AT_TABLE = new Set(['dining-chair', 'bench'])
 const AGAINST_WALL = 1000
 /** Share of a room's floor that furniture may cover before it feels crammed (as the density goal). */
 const FILL_MAX = 0.35
-const FILL_MAX_BEDROOM = 0.38
+const FILL_MAX_BEDROOM = 0.42
 /** Small things that may go in a bathroom or hall. */
 const UTILITY_OK = new Set(['plant', 'box', 'rug'])
 

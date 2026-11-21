@@ -647,7 +647,7 @@ describe('round 6 (play-test review)', () => {
     expect(goal(d, (g) => g.id === 'nook')!.done).toBe(true)
   })
 
-  it('takes a dozen placements or more to reach Dream home by the Next chip, with no dead-end loops', () => {
+  it('reaches Dream home by the Next chip in 12 to 25 placements, with no dead-end loops', () => {
     const d = sampleDoc()
     const fits = (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
     let dream = -1
@@ -673,6 +673,7 @@ describe('round 6 (play-test review)', () => {
       d.items.push(item)
       layoutOf(d).placements.push({ id: `dnp${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
     }
-    expect(dream === -1 || dream >= 12, `Dream home after ${dream} placements`).toBe(true)
+    expect(dream, `Dream home after ${dream} placements`).toBeGreaterThanOrEqual(12)
+    expect(dream).toBeLessThanOrEqual(25)
   }, 60000)
 })
