@@ -13,6 +13,7 @@ import { ImportDialog, Photo } from '../components/AddDialogs'
 import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
 import { ItemThumb } from './ItemThumb'
+import { familyOf, picksFor, type Pick } from './swatches'
 import './buy.css'
 import './feel.css'
 
@@ -43,6 +44,8 @@ interface SizeChip {
   width: number
   depth: number
   height?: number
+  /** The colour it's placed in (a "Pick one" card); otherwise the category's own. */
+  color?: string
 }
 
 /** Size chips per category, from the retail sizes in starterCatalog.ts: [chip label, starter id]. */
@@ -63,6 +66,24 @@ function sizeChips(entry: CatalogEntry): SizeChip[] {
     return p ? [{ label, name: p.name, width: p.width, depth: p.depth, height: p.height }] : []
   })
 }
+/** A "Pick one" card as a preset: the starter piece's name and size, in the pick's colour. */
+export function pickChip(pick: Pick): SizeChip | null {
+  const p = STARTER.get(pick.id)
+  return p ? { label: pick.label, name: p.name, width: p.width, depth: p.depth, height: p.height, color: pick.color } : null
+}
+
+/** The item a preset places: its name, size and colour over the category's defaults. */
+export function presetItem(entry: CatalogEntry, id: string, preset?: SizeChip): Item {
+  if (!preset) return itemFromCatalog(entry, id)
+  return itemFromCatalog(entry, id, {
+    name: preset.name,
+    width: preset.width,
+    depth: preset.depth,
+    ...(preset.height ? { height: preset.height } : {}),
+    ...(preset.color ? { color: preset.color } : {}),
+  })
+}
+
 /** "Box" reads as a generic custom piece in the drawer. */
 const displayName = (e: CatalogEntry) => (e.category === 'box' ? 'Custom box' : e.name)
 
@@ -145,9 +166,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
 
   const place = (entry: CatalogEntry, preset?: SizeChip) => {
     const st = useStore.getState()
-    const item = preset
-      ? itemFromCatalog(entry, uid(), { name: preset.name, width: preset.width, depth: preset.depth, ...(preset.height ? { height: preset.height } : {}) })
-      : itemFromCatalog(entry, uid())
+    const item = presetItem(entry, uid(), preset)
     // A goal about one room ("Nothing in the Bathroom yet") puts the piece it pointed at in that room, if it fits there.
     const room = hint?.category === entry.category && hint.roomId ? st.doc.rooms.find((r) => r.id === hint.roomId) : undefined
     const there = room ? dropIn(st.doc, item, room) : null
@@ -168,6 +187,9 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     }
     if (!res.ok) return
     if (hint) useGame.getState().setBuyHint(null)
+    // Taste memory: the colour picked for a family (wood, fabric, light) is offered first next time.
+    const fam = preset?.color ? familyOf(entry.category) : undefined
+    if (fam) useGame.getState().setTaste(fam, preset!.color!)
     const name = (preset ? preset.name : displayName(entry)).replace(/^(\w)(?=[a-z])/, (c) => c.toLowerCase())
     st.notify(`Placed ${article(name)} ${name}${res.roomName ? ` in the ${res.roomName}` : ''}.`)
     celebrate(entry.category + (preset ? `:${preset.label}` : ''))
@@ -176,7 +198,8 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     const st = useStore.getState()
     const res = st.placeItem(item.id) // adds a placement of the same item and selects it
     if (!res.ok) return
-    st.notify(`Placed another “${item.name}”${res.roomName ? ` in the ${res.roomName}` : ''}.`)
+    if (hint) useGame.getState().setBuyHint(null)
+    st.notify(`Placed ${counts.get(item.id) ? 'another' : 'your'} “${item.name}”${res.roomName ? ` in the ${res.roomName}` : ''}.`)
     celebrate(item.id)
   }
   const shop = () => useGame.getState().openSheet('shop')
@@ -190,6 +213,25 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   }
 
   const isPopped = (key: string) => popped?.key === key
+
+  // "Pick one": 2-3 variants of the hinted piece, each placed in one tap. A piece of that kind
+  // still waiting in your boxes (owned, not placed) comes first, so Next never sells you a copy.
+  const taste = useGame((s) => s.taste)
+  const pickCards: PickCard[] = []
+  let pickCount = 0
+  if (hintEntry) {
+    const boxed = mine.find((i) => i.category === hintEntry.category && i.owned && !counts.get(i.id))
+    if (boxed) pickCards.push({ key: boxed.id, label: 'From your boxes', name: boxed.name, category: boxed.category, color: boxed.color, mine: true, onClick: () => placeMine(boxed) })
+    const chips = picksFor(hintEntry.category, taste).flatMap((pk) => {
+      const chip = pickChip(pk)
+      return chip ? [{ chip, taste: !!pk.taste }] : []
+    })
+    pickCount = chips.length
+    for (const { chip, taste: liked } of chips.slice(0, 3 - pickCards.length))
+      pickCards.push({ key: `${hintEntry.category}:${chip.label}`, label: chip.label, name: chip.name, category: hintEntry.category, color: chip.color, taste: liked, onClick: () => place(hintEntry, chip) })
+  }
+  const showPicker = pickCount >= 2
+  const firstPick = showPicker ? pickCards[0]?.onClick : undefined
 
   return (
     <div className="buy-drawer" role="region" aria-label="Buy furniture">
@@ -209,7 +251,8 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
         ))}
       </div>
 
-      {hintEntry && (
+      {hintEntry && showPicker && <HintPicker title={displayName(hintEntry)} room={hintRoom} cards={pickCards} popped={popped?.key} />}
+      {hintEntry && !showPicker && (
         <div className="feel-hint-pill" role="status">
           Tap <b>{displayName(hintEntry)}</b>
           {hintRoom ? (
@@ -264,7 +307,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
               const chips = sizeChips(entry)
               return (
                 <div key={cat} className={`buy-card ${isPopped(cat) || popped?.key.startsWith(cat + ':') ? 'pop' : ''}${hint?.category === cat ? ' hinted' : ''}`} style={{ ['--i' as string]: k }} draggable onDragStart={(e) => onDrag(e, cat)}>
-                  <button className="buy-hit" onClick={() => place(entry)} aria-label={`Place ${article(name)} ${name.toLowerCase()}`}>
+                  <button className="buy-hit" onClick={() => (hint?.category === cat && firstPick ? firstPick() : place(entry))} aria-label={`Place ${article(name)} ${name.toLowerCase()}`}>
                     <span className="buy-thumb">
                       <ItemThumb category={cat} color={entry.color} size={78} />
                     </span>
@@ -291,6 +334,54 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
             <ShopCard onClick={shop} i={group.categories.length} />
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+interface PickCard {
+  key: string
+  label: string
+  /** The placed piece's name, for the card's spoken label. */
+  name: string
+  category: string
+  color?: string
+  /** In the colour the player picked last for this family. */
+  taste?: boolean
+  /** A piece of yours from a moving box, placed rather than bought. */
+  mine?: boolean
+  onClick: () => void
+}
+
+/** The "Pick one" row floating above the drawer while the Next chip's hint is up. */
+function HintPicker({ title, room, cards, popped }: { title: string; room?: string; cards: PickCard[]; popped?: string }) {
+  return (
+    <div className="feel-pick" role="group" aria-label={`Pick one ${title.toLowerCase()}${room ? ` for the ${room}` : ''}`}>
+      <div className="feel-pick-head">
+        Pick one{room ? (
+          <>
+            {' '}
+            <span aria-hidden>→</span> <b>{room}</b>
+          </>
+        ) : null}
+      </div>
+      <div className="feel-pick-row">
+        {cards.map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            className={`feel-pick-card${c.mine ? ' mine' : ''}${popped === c.key ? ' pop' : ''}`}
+            onClick={c.onClick}
+            aria-label={c.mine ? `Place your ${c.name.toLowerCase()} from your boxes` : `Place ${article(c.name)} ${c.name.toLowerCase()}, ${c.label}${c.taste ? ', your style' : ''}`}
+            title={c.mine ? c.name : `${c.name}, ${c.label}`}
+          >
+            <span className="feel-pick-thumb">
+              <ItemThumb category={c.category} color={c.color ?? '#a3907d'} size={40} />
+              {c.taste && <span className="feel-pick-dot" title="Your style" aria-hidden />}
+            </span>
+            <span className="feel-pick-label">{c.label}</span>
+          </button>
+        ))}
       </div>
     </div>
   )

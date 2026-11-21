@@ -113,6 +113,8 @@ const NEEDS_ROOM = new Set(['bed', 'wardrobe', 'dresser', 'desk'])
 const STORAGE = new Set(['dresser', 'wardrobe', 'bookshelf', 'sideboard', 'console-table'])
 /** Flow goals only count once the home has this many solid pieces. */
 export const MIN_PIECES = 4
+/** Unpacking stays Next's first suggestion while the home has fewer pieces than this (boxes aside). */
+export const UNPACK_URGENT_PIECES = 8
 /** A room this big with no walls between living and eating has space for a dining table. */
 const OPEN_PLAN_AREA = 20
 /** Smallest room that takes a bed with space to walk round it. */
@@ -989,7 +991,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   }
 
   // Unpack your boxes: a bonus, and the cheapest first win on move-in day (ranked first by Next
-  // while the home has fewer than MIN_PIECES pieces besides the boxes).
+  // while the home has fewer than UNPACK_URGENT_PIECES pieces besides the boxes).
   const boxes = doc.items.filter((i) => i.unpack?.length)
   if (boxes.length)
     add({
@@ -1002,7 +1004,9 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       done: boxes.every((b) => b.unpacked),
       progress: boxes.filter((b) => b.unpacked).length / boxes.length,
       near: placed.find((x) => packedIds.has(x.id))?.id,
-      urgent: solidPieces.length < MIN_PIECES && packedIds.size > 0,
+      // Stays first while any box is still packed and the home is still sparse, so the second box
+      // gets unpacked too (not only the first).
+      urgent: solidPieces.length < UNPACK_URGENT_PIECES && packedIds.size > 0,
     })
 
   // ---- Remix twist ------------------------------------------------------

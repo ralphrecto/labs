@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { RenderStyle } from '../three/style'
+import type { Family } from './swatches'
 
 // Game-level UI state: which phase the player is in and which mode the HUD shows.
 // Document edits still go through `useStore` (src/store.ts); this store never touches the doc.
@@ -46,6 +47,8 @@ interface GameState {
   photoRequest: number
   /** Pieces that just came out of a moving box (they pop in one by one) and where the box stood (for the confetti). */
   unpacked: { key: number; ids: string[]; at?: { x: number; y: number } } | null
+  /** The colour last picked per material family (wood, fabric, light); the hint picker offers it first. */
+  taste: Partial<Record<Family, string>>
 
   setPhase: (p: Phase) => void
   setMode: (m: GameMode) => void
@@ -68,6 +71,8 @@ interface GameState {
   requestPhoto: () => void
   consumePhotoRequest: () => void
   setUnpacked: (u: GameState['unpacked']) => void
+  /** Remember the colour of a placed pick for its family. */
+  setTaste: (family: Family, color: string) => void
 }
 
 const ONBOARDED_KEY = 'apartment-designer:onboarded'
@@ -75,6 +80,16 @@ const CLASSIC_KEY = 'apartment-designer:classic'
 const STYLE_KEY = 'apartment-designer:render-style'
 const BEST_LEVEL_KEY = 'apartment-designer:best-level'
 const LAST_VISIT_KEY = 'apartment-designer:last-visit'
+const TASTE_KEY = 'apartment-designer:taste'
+
+function readTaste(): Partial<Record<Family, string>> {
+  try {
+    const v = JSON.parse(localStorage.getItem(TASTE_KEY) ?? '{}')
+    return v && typeof v === 'object' ? (v as Partial<Record<Family, string>>) : {}
+  } catch {
+    return {}
+  }
+}
 /** Away this long counts as coming back. */
 export const WELCOME_BACK_MS = 6 * 60 * 60 * 1000
 const STYLE_IDS: RenderStyle[] = ['toon', 'real', 'scan', 'clay', 'blueprint']
@@ -168,6 +183,7 @@ export const useGame = create<GameState>((set) => ({
   evening: false,
   photoRequest: 0,
   unpacked: null,
+  taste: readTaste(),
   classic: (() => {
     try {
       return localStorage.getItem(CLASSIC_KEY) === '1'
@@ -226,4 +242,15 @@ export const useGame = create<GameState>((set) => ({
   requestPhoto: () => set({ mode: 'look', sheet: null, levelUp: null, photoRequest: Date.now() }),
   consumePhotoRequest: () => set({ photoRequest: 0 }),
   setUnpacked: (unpacked) => set({ unpacked }),
+  setTaste: (family, color) =>
+    set((s) => {
+      if (s.taste[family] === color) return s
+      const taste = { ...s.taste, [family]: color }
+      try {
+        localStorage.setItem(TASTE_KEY, JSON.stringify(taste))
+      } catch {
+        // Private mode: remembered for this visit.
+      }
+      return { taste }
+    }),
 }))
