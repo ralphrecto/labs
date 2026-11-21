@@ -626,13 +626,6 @@ function LampGlow({ item }: { item: Item }) {
         ) : (
           <pointLight position={[0, bulbY, 0]} color="#ffb36b" intensity={5} distance={4.5} decay={1.6} castShadow={false} />
         ))}
-      {/* A faint warm pool on the floor (floor lamps only: a table lamp's group stands on its host's top). */}
-      {!table && (
-        <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={2}>
-          <circleGeometry args={[1.1, 40]} />
-          <meshBasicMaterial color="#ffb36b" transparent opacity={0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
-        </mesh>
-      )}
     </group>
   )
 }
