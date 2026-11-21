@@ -2,7 +2,7 @@
 // turned into goals, stars, a level and a "vibe" number for the game HUD. Pure logic, no React.
 import type { Analysis } from '../analysis'
 import { COMFORTABLE_WALKWAY, MIN_WALKWAY, placedItems, walkingPaths, type PathReport } from '../model/checks'
-import { BEDROOM, DINING, LIVING, MIN_DRAWER_FRONT, nookTarget, OFFICE, polygonGap, UTILITY_ROOM, VIEW_OK } from '../model/placement'
+import { BEDROOM, DINING, LIVING, NEXT_TO_REACH, nookTarget, OFFICE, polygonGap, UTILITY_ROOM, VIEW_OK } from '../model/placement'
 import { add as add2, closestPointOnSegment, convexOverlap, orientedRect, dist, dot, lerp, norm, openingEndpoints, pointInPolygon, polygonArea, polygonInsideRoom, rot, scale, sub, v, wallInwardNormal, wallSegments } from '../model/geometry'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 
@@ -97,7 +97,6 @@ export const RULES = {
 const SEATING = new Set(['sofa', 'armchair'])
 /** Pieces you use from the front or sides: short of that space, they don't count toward goals. */
 const NEEDS_ROOM = new Set(['bed', 'wardrobe', 'dresser', 'desk'])
-const DRAWERS = new Set(['dresser', 'wardrobe'])
 const STORAGE = new Set(['dresser', 'wardrobe', 'bookshelf', 'sideboard', 'console-table'])
 /** Flow goals only count once the home has this many solid pieces. */
 export const MIN_PIECES = 4
@@ -164,6 +163,8 @@ const cm = (m: number) => `${Math.round(m * 100)} cm`
 export const LEVEL_FRACTIONS = [0, 0, 0.35, 0.75, 0.92, 1]
 /** Bonus stars Dream home also needs (or all the bonus stars on offer, when there are fewer). */
 export const DREAM_BONUS_STARS = 3
+/** Bonus or style goals Dream home also needs done, on top of every basics and comfort goal. */
+export const DREAM_EXTRA_GOALS = 2
 /** The highest level a layout with warnings (a blocked clearance, say) can reach: Designer home. */
 export const WARNING_LEVEL_CAP = 4
 /** The highest level a layout with snags (errors, a tight walkway, a blocked door) can reach: Cozy. */
@@ -232,7 +233,6 @@ const STAND_INS: Record<string, string[]> = {
   sofa: ['armchair'],
   nightstand: ['side-table'],
   'dining-chair': ['bench'],
-  'office-chair': ['dining-chair'],
 }
 const STAND_IN_GOALS: Record<string, string[]> = { storage: ['bookshelf', 'sideboard', 'console-table', 'wardrobe', 'dresser'], sit: STAND_INS.sofa }
 /** Goals that make a living room cozy, suggested first when the home is a living space. */
@@ -301,18 +301,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   // (A coffee table inside the sofa's knee room is the point of a coffee table, so only a wall in
   // the way counts there; beds, wardrobes, dressers and desks need their space whatever blocks it.)
   const catOf = new Map(placed.map((x) => [x.id, x.category]))
-  // A dresser or wardrobe needs 75 cm in front to open; 75–90 cm is snug but fine (no snag).
-  const snugFront = new Set(
-    placed
-      .filter((x) => DRAWERS.has(x.category) && x.room)
-      .filter((x) => {
-        const zone = orientedRect(x.center, x.hw, MIN_DRAWER_FRONT / 2, x.rotation, v(0, x.hd + MIN_DRAWER_FRONT / 2))
-        return polygonInsideRoom(zone, x.room!.polygon, 0.01) && !placed.some((o) => o.id !== x.id && !o.floor && convexOverlap(zone, o.body, 0.005))
-      })
-      .map((x) => x.id),
-  )
-  const soft = (i: Analysis['issues'][number]) => i.kind === 'clearance' && i.id.split(':')[2] === 'front' && snugFront.has(i.placementIds[0])
-  const issues = analysis.issues.filter((i) => !soft(i))
+  // (A dresser or wardrobe is only flagged short of MIN_DRAWER_FRONT, so 75–90 cm is no snag.)
+  const issues = analysis.issues
   const clearanceSnag = (id: string) => issues.some((i) => i.kind === 'clearance' && i.severity !== 'info' && i.placementIds[0] === id)
   const cramped = new Set(
     issues
@@ -388,12 +378,20 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   // A chair jammed against a wall or another piece (no room to pull it out) doesn't count.
   const chairs = of('dining-chair', 'bench').filter((c) => !clearanceSnag(c.id))
   const servedTable = tables.some((t) => chairs.some((c) => polygonGap(t.body, c.body) <= RULES.chairToTable))
+  // Chairs at the table that don't count (no room to pull them out): the table is the problem, so
+  // Next points at moving it off the wall rather than buying yet another chair.
+  const stuckChairs = !servedTable && tables.length > 0 && ofAny('dining-chair', 'bench').some((c) => tables.some((t) => polygonGap(t.body, c.body) <= RULES.chairToTable))
   if (canEat) add({
     id: 'eat',
     title: 'A table to eat at',
-    hint: !tables.length ? 'Add a dining table and a chair or two.' : 'Pull a chair up to the dining table.',
-    tab: 'dining',
-    item: tables.length ? 'dining-chair' : 'dining-table',
+    hint: !tables.length
+      ? 'Add a dining table and a chair or two.'
+      : stuckChairs
+        ? 'The chairs have no room to pull out. Move the dining table off the wall.'
+        : 'Pull a chair up to the dining table.',
+    tab: stuckChairs ? undefined : 'dining',
+    item: stuckChairs ? undefined : tables.length ? 'dining-chair' : 'dining-table',
+    near: stuckChairs ? tables[0].id : undefined,
     done: servedTable,
     progress: tables.length ? 0.5 : chairs.length ? 0.25 : 0,
     stars: 2,
@@ -581,7 +579,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
       ? 'Add a sofa or armchair, then a floor lamp beside it.'
       : Number.isFinite(nearestLamp)
         ? `Your lamp is ${cm(nearestLamp)} from the seats; bring it within ${cm(RULES.lampReach)}.`
-        : `Add a floor lamp near the seats in the ${livingSeats[0].room!.name}.`,
+        : `Add a floor lamp or table lamp near the seats in the ${livingSeats[0].room!.name}.`,
     tab: !livingSeats.length ? 'living' : Number.isFinite(nearestLamp) ? undefined : 'decor',
     item: !livingSeats.length ? 'armchair' : 'floor-lamp',
     done: nearestLamp <= RULES.lampReach,
@@ -728,16 +726,22 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   }
   const armchairs = of('armchair')
   const nookFor = ofAny('armchair').length ? nookTarget(doc, layout) : undefined
-  const nook = armchairs.some((a) => of('floor-lamp', 'side-table', 'bookshelf').some((x) => polygonGap(a.body, x.body) <= 0.5))
+  // Only a real lamp makes it a reading corner; a side table or bookshelf beside the chair is a start.
+  const nook = armchairs.some((a) => of('floor-lamp').some((x) => polygonGap(a.body, x.body) <= NEXT_TO_REACH))
+  const nookStart = armchairs.some((a) => of('side-table', 'bookshelf').some((x) => polygonGap(a.body, x.body) <= NEXT_TO_REACH))
   add({
     id: 'nook',
     title: 'A cozy reading corner',
-    hint: ofAny('armchair').length ? 'Tuck a floor lamp, side table or bookshelf next to the armchair.' : 'Add an armchair with a lamp or bookshelf beside it.',
+    hint: !ofAny('armchair').length
+      ? 'Add an armchair with a lamp beside it.'
+      : nookStart
+        ? 'Nice start. Now stand a lamp next to the armchair to read by.'
+        : 'Stand a floor lamp or table lamp next to the armchair.',
     tab: ofAny('armchair').length ? 'decor' : 'living',
     item: ofAny('armchair').length ? 'floor-lamp' : 'armchair',
     near: nookFor,
     done: nook,
-    progress: ofAny('armchair').length ? 0.5 : 0,
+    progress: nookStart ? 0.7 : ofAny('armchair').length ? 0.5 : 0,
     stars: 2,
     category: 'style',
   })
@@ -838,11 +842,16 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const bonusMax = goals.reduce((a, g) => a + (g.bonus ? g.stars : 0), 0)
   const bonusStars = goals.reduce((a, g) => a + (g.bonus && g.done ? g.stars : 0), 0)
   const uncapped = levelAt(stars, thresholds)
-  // Snags hold the level at Cozy; warnings on screen, an open snag goal (a blocked view of the TV)
-  // or too few bonus stars hold it at Designer home.
-  const cap = capped
+  // Stars alone race to the top (bonus goals add stars too), so the top levels also need goals done:
+  // Designer home every core flow goal, Dream home every core basics and comfort goal as well, plus
+  // DREAM_EXTRA_GOALS bonus or style goals.
+  const coreOpen = (...cats: GoalCategory[]) => goals.some((g) => !g.bonus && !g.done && cats.includes(g.category))
+  const extras = goals.filter((g) => g.done && (g.bonus || g.category === 'style')).length
+  // Snags hold the level at Cozy (so does an open flow goal, or more than one open basics or comfort goal); warnings on screen, an open snag goal
+  // (a blocked view of the TV), an open basics or comfort goal or too few extras hold it at Designer home.
+  const cap = capped || coreOpen('flow') || goals.filter((g) => !g.bonus && !g.done && (g.category === 'basics' || g.category === 'comfort')).length > 1
     ? SNAG_LEVEL_CAP
-    : warnings > 0 || goals.some((g) => g.snag) || bonusStars < Math.min(DREAM_BONUS_STARS, bonusMax)
+    : warnings > 0 || goals.some((g) => g.snag) || bonusStars < Math.min(DREAM_BONUS_STARS, bonusMax) || coreOpen('basics', 'comfort') || extras < DREAM_EXTRA_GOALS
       ? WARNING_LEVEL_CAP
       : LEVELS.length - 1
   const level = uncapped.index > cap ? levelAt(stars, thresholds, cap) : uncapped

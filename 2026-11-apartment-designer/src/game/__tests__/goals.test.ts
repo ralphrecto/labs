@@ -40,7 +40,8 @@ describe('scoreHome', () => {
     expect(s.errors).toBe(0)
     // Several core goals still open: storage, a table, light, a plant, the bathroom...
     expect(s.goals.filter((g) => !g.done && !g.bonus).length).toBeGreaterThanOrEqual(6)
-    expect(s.level.toNext).toBeGreaterThanOrEqual(3)
+    // The bed's head is against a solid wall from the start (round 6), so one star fewer to go.
+    expect(s.level.toNext).toBeGreaterThanOrEqual(2)
   })
 
   it('scores the sample apartment', () => {
@@ -375,7 +376,8 @@ describe('scoreHome', () => {
     const d = furnishedSample()
     const s = score(d)
     expect(s.errors).toBe(0)
-    expect(s.level.index).toBeGreaterThan(SNAG_LEVEL_CAP)
+    // Designer home also needs the core goals done (round 6), so the furnished sample may sit at Cozy.
+    expect(s.level.index).toBeGreaterThanOrEqual(SNAG_LEVEL_CAP)
     const tight = tightened(d, 'Living room', 0.45)
     expect(tight.stars).toBeLessThanOrEqual(s.stars)
     expect(tight.level.index).toBe(SNAG_LEVEL_CAP)
@@ -557,7 +559,8 @@ describe('round 5 (play-test review)', () => {
     }
     // The sample takes a good few placements to go from Lived-in to Designer home.
     const designer = levels.indexOf('Designer home')
-    expect(designer === -1 || designer >= 8, levels.join(' > ')).toBe(true)
+    // (Chairs now count at the table right away, so it's a little quicker than round 5's 8.)
+    expect(designer === -1 || designer >= 6, levels.join(' > ')).toBe(true)
     expect(score(d).errors).toBe(0)
   }, 60000)
 
@@ -590,4 +593,86 @@ describe('round 5 (play-test review)', () => {
     layoutOf(d).placements.push({ id: 'lampP', itemId: lamp.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
     expect(goal(d, (g) => g.id === 'nook')!.done).toBe(true)
   })
+})
+
+describe('round 6 (play-test review)', () => {
+  let k = 0
+  const drop = (d: Doc, category: string, over: Partial<Item> = {}) => {
+    const item = itemFromCatalog(catalogEntry(category), `r6i${++k}`, over)
+    const r = findDrop(d, layoutOf(d), item)
+    expect(r.ok, r.ok ? '' : r.reason).toBe(true)
+    if (!r.ok) return undefined
+    d.items.push(item)
+    const p = { id: `r6p${k}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation }
+    layoutOf(d).placements.push(p)
+    return p
+  }
+
+  it('seats two chairs at a dining table for four with room to pull them out', () => {
+    const d = sampleDoc()
+    drop(d, 'dining-table', { width: 1.22, depth: 0.76 })
+    const c1 = drop(d, 'dining-chair')!
+    const c2 = drop(d, 'dining-chair')!
+    const chairIssues = analyze(d, layoutOf(d)).issues.filter((i) => i.kind === 'clearance' && (i.placementIds.includes(c1.id) || i.placementIds.includes(c2.id)))
+    expect(chairIssues.map((i) => i.message)).toEqual([])
+    expect(goal(d, (g) => g.id === 'eat')!.done).toBe(true)
+  })
+
+  it('asks to move the table off the wall when the chairs at it have no room to pull out', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Dining room', 0, 0, 4, 4))
+    const chairItem = itemFromCatalog(catalogEntry('dining-chair'), 'probe')
+    const tableItem = itemFromCatalog(catalogEntry('dining-table'), 'probe2')
+    const table = place(d, 'dining-table', 2, chairItem.depth + 0.05 + tableItem.depth / 2)
+    place(d, 'dining-chair', 2, chairItem.depth / 2, 0) // against the wall, facing the table
+    const g = goal(d, (g) => g.id === 'eat')!
+    expect(g.done).toBe(false)
+    expect(g.hint).toMatch(/off the wall/i)
+    expect(g.item).toBeUndefined()
+    expect(g.near).toBe(table.id)
+  })
+
+  it('needs a real lamp for the reading corner: a side table alone is a start', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 5, 4))
+    place(d, 'armchair', 2, 2)
+    const a = itemFromCatalog(catalogEntry('armchair'), 'probe')
+    const side = place(d, 'side-table', 2 + a.width / 2 + 0.3, 2)
+    const g = goal(d, (g) => g.id === 'nook')!
+    expect(g.done).toBe(false)
+    expect(g.progress).toBeGreaterThan(0.5)
+    expect(g.progress).toBeLessThan(1)
+    side.y = 3.5
+    place(d, 'floor-lamp', 2 + a.width / 2 + 0.3, 2)
+    expect(goal(d, (g) => g.id === 'nook')!.done).toBe(true)
+  })
+
+  it('takes a dozen placements or more to reach Dream home by the Next chip, with no dead-end loops', () => {
+    const d = sampleDoc()
+    const fits = (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
+    let dream = -1
+    let last = ''
+    let repeats = 0
+    let best = -1
+    for (let i = 0; i < 30; i++) {
+      const s = score(d)
+      if (s.level.index === LEVELS.length - 1) {
+        dream = i
+        break
+      }
+      const next = nextGoal(s, fits)
+      if (!next?.item || !next.tab) break
+      const key = `${next.id}:${next.item}`
+      repeats = key === last && s.stars <= best ? repeats + 1 : 1
+      expect(repeats, `${key} offered ${repeats} times without progress`).toBeLessThanOrEqual(3)
+      last = key
+      best = Math.max(best, s.stars)
+      const item = itemFromCatalog(catalogEntry(next.item), `dn${i}`)
+      const r = findDrop(d, layoutOf(d), item, { nextTo: next.near })
+      if (!r.ok) break
+      d.items.push(item)
+      layoutOf(d).placements.push({ id: `dnp${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
+    }
+    expect(dream === -1 || dream >= 12, `Dream home after ${dream} placements`).toBe(true)
+  }, 60000)
 })

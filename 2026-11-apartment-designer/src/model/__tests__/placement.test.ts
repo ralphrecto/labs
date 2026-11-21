@@ -57,7 +57,7 @@ describe('findDrop', () => {
     if (p) {
       expect(checkLayout(d, layoutOf(d)).filter((i) => i.severity === 'error')).toEqual([])
       expect(roomOf(d, p).name).not.toBe('Bathroom')
-    } else expect(reason).toMatch(/No free spot/)
+    } else expect(reason).toMatch(/No free spot|full/)
   })
 
   it('never puts a bed in the living room of the sample home (round 2 regression)', () => {

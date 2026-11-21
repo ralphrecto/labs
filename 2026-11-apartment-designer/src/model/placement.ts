@@ -11,7 +11,6 @@ import {
   bounds,
   centroid,
   clearanceZones,
-  closestPointOnSegment,
   convexOverlap,
   dist,
   doorSwing,
@@ -30,7 +29,9 @@ import {
   wallSegments,
 } from './geometry'
 import type { Doc, Item, Layout, Placement, Room, Vec2 } from './types'
-import { sideCompanion, walkingPaths } from './checks'
+import { chairBackNeed, CHAIR_REACH, DRAWER_PIECES, MIN_DRAWER_FRONT, polygonGap, sideCompanion, TABLE_PULL_OUT, walkingPaths } from './checks'
+
+export { chairBackNeed, MIN_DRAWER_FRONT, polygonGap, TABLE_PULL_OUT }
 
 /** Rooms that aren't for living in: furniture other than small decor stays out. */
 export const UTILITY_ROOM = /bath|wc|toilet|closet|laundry|storage|utility|pantry|hall|entry|corridor/i
@@ -54,22 +55,20 @@ const LIVING_ONLY = new Set(['sofa', 'tv-stand', 'coffee-table', 'rug', 'ottoman
 /** Pieces that only make sense pulled up to a partner: they never land far from it. */
 const PARTNERS: Record<string, string[]> = { 'dining-chair': ['dining-table'], bench: ['dining-table'], 'office-chair': ['desk'], nightstand: ['bed'] }
 /** A piece counts as "with" its partner when this close (edge to edge, m): a chair pulled up, a nightstand against the bed. */
-export const PARTNER_REACH: Record<string, number> = { 'dining-chair': 0.3, bench: 0.3, 'office-chair': 0.35, nightstand: 0.15 }
+export const PARTNER_REACH: Record<string, number> = { 'dining-chair': CHAIR_REACH, bench: CHAIR_REACH, 'office-chair': 0.35, nightstand: 0.15 }
 /** Pieces whose front must stay open: someone gets in or sits down, or doors and drawers swing out. */
 const FRONT_OPEN = new Set(['bed', 'wardrobe', 'dresser', 'desk'])
 /** Wall pieces that never stand out in the open room: with no free wall, they get a friendly refusal. */
 const WALL_ONLY = new Set(['desk', 'bookshelf', 'sideboard', 'wardrobe', 'dresser', 'console-table'])
-/** Storage whose doors or drawers need this much free floor in front, at the very least (m). Up to the catalog ideal is a soft preference. */
-export const MIN_DRAWER_FRONT = 0.75
-const DRAWER_PIECES = new Set(['dresser', 'wardrobe'])
-/** Pull-out space (m) kept free along the long sides of a dining table that seats four or more. */
-export const TABLE_PULL_OUT = 0.75
 /** A dining table this long (m) seats four or more. */
 const FOUR_SEATER = 1.2
 /** Pieces that may stand in a dining table's pull-out space. */
 const AT_TABLE = new Set(['dining-chair', 'bench'])
 /** Score cost of a table for four with a long side to the wall: any spot off the wall wins. */
 const AGAINST_WALL = 1000
+/** Share of a room's floor that furniture may cover before it feels crammed (as the density goal). */
+const FILL_MAX = 0.35
+const FILL_MAX_BEDROOM = 0.38
 /** Small things that may go in a bathroom or hall. */
 const UTILITY_OK = new Set(['plant', 'box', 'rug'])
 
@@ -149,19 +148,6 @@ export function roomAffinity(room: Room, category: string, allRooms: Room[]): nu
   // The sofa, TV and rug don't spill into the kitchen when there's a living room for them.
   if (LIVING_ONLY.has(category) && DINING.test(room.name) && !LIVING.test(room.name) && allRooms.some(isLiving)) s -= 40
   return s
-}
-
-/** Smallest distance between two convex polygons (0 when they touch or overlap). */
-export function polygonGap(a: Vec2[], b: Vec2[]): number {
-  if (convexOverlap(a, b, 0)) return 0
-  let best = Infinity
-  for (const [pts, poly] of [
-    [a, b],
-    [b, a],
-  ] as const)
-    for (const pt of pts)
-      for (let i = 0; i < poly.length; i++) best = Math.min(best, closestPointOnSegment(pt, poly[i], poly[(i + 1) % poly.length]).distance)
-  return best
 }
 
 const fmtSize = (it: DropItem, units: Doc['apartment']['units']) =>
@@ -259,6 +245,12 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
         const fz = orientedRect(c, hw, frontZone / 2, rotation, v(0, hd + frontZone / 2))
         if (!polygonInsideRoom(fz, room.polygon, 0.01)) return null
         for (const o of solids) if (convexOverlap(fz, o.body, 0.005) && !sideCompanion(cat, 'front', o.item.category)) return null
+        // A desk's chair sits in front of it (centered or a little to one side): that spot can't
+        // be between a sofa and its TV, or the chair has nowhere to go.
+        if (cat === 'desk' && viewZones.some((z) => z.tv)) {
+          const seat = (u: number) => orientedRect(c, 0.33, 0.35, rotation, v(u, hd + 0.35))
+          if (![0, -0.25, 0.25].some((u) => !viewZones.some((z) => z.tv && convexOverlap(seat(u), z.poly, 0.005)))) return null
+        }
       }
       for (const z of openFronts) if (convexOverlap(body, z.poly, 0.005) && !sideCompanion(z.owner, z.side, cat)) return null
       // Nothing solid between a sofa and its TV but a coffee table, ottoman, lamp or the like.
@@ -286,7 +278,13 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     if (!solid) return s
     const pl = { id: '', itemId: '', x: c.x, y: c.y, rotation }
     // A dining table needs room to pull chairs out, though it has no clearance of its own.
-    const asItem = cat === 'dining-table' ? { ...(item as Item), clearance: { front: 0.75, back: 0.75, left: 0.5, right: 0.5 } } : (item as Item)
+    // A dining chair at a table needs its pull-out measured from the table edge (chairBackNeed), as the checks do.
+    const asItem =
+      cat === 'dining-table'
+        ? { ...(item as Item), clearance: { front: TABLE_PULL_OUT, back: TABLE_PULL_OUT, left: 0.5, right: 0.5 } }
+        : cat === 'dining-chair' && item.clearance
+          ? { ...(item as Item), clearance: { ...item.clearance, back: chairBackNeed({ item: item as Item, body }, diningTables) } }
+          : (item as Item)
     // A dining chair with no room behind it to pull it out doesn't count as a seat: it goes elsewhere at the table if it can.
     const blockedCost = cat === 'dining-chair' ? 16 : 6
     for (const z of clearanceZones(asItem, pl)) {
@@ -294,6 +292,9 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
       else if (solids.some((o) => convexOverlap(z.poly, o.body, 0.005) && !sideCompanion(item.category, z.side, o.item.category))) s -= blockedCost
     }
     if (!VIEW_OK.has(cat)) for (const z of viewZones) if (convexOverlap(body, z.poly, 0.005)) s -= 10
+    // A room past the designers' third of the floor feels crammed (the density goal): a roomier room wins.
+    const fill = (solids.filter((o) => o.room?.id === room.id).reduce((a, o) => a + polygonArea(o.body), 0) + 4 * hw * hd) / polygonArea(room.polygon)
+    if (fill > (BEDROOM.test(room.name) ? FILL_MAX_BEDROOM : FILL_MAX)) s -= 20
     for (const z of zonesOfOthers) if (convexOverlap(body, z.poly, 0.005) && !sideCompanion(z.owner, z.side, item.category)) s -= 6
     // Some breathing room from other pieces in this room (centers vs. rough radii).
     const r0 = Math.hypot(hw, hd)
@@ -306,9 +307,18 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     return s
   }
 
-  function consider(c: Vec2, rotation: number, bonus: number) {
+  const diningTables = solids.filter((o) => o.item.category === 'dining-table')
+  /** True when a dining chair here has no room behind it to pull out (a wall or a piece in the way). */
+  function chairBackBlocked(c: Vec2, rotation: number, body: Vec2[], room: Room): boolean {
+    const need = chairBackNeed({ item: item as Item, body }, diningTables)
+    const z = orientedRect(c, hw, need / 2, rotation, v(0, -hd - need / 2))
+    return !polygonInsideRoom(z, room.polygon, 0.01) || solids.some((o) => convexOverlap(z, o.body, 0.005))
+  }
+
+  function consider(c: Vec2, rotation: number, bonus: number, reject?: (c: Vec2, rotation: number, body: Vec2[], room: Room) => boolean) {
     const ok = legal(c, rotation)
     if (!ok) return
+    if (reject?.(c, rotation, ok.body, ok.room)) return
     cands.push({ c, rotation: normAngle(rotation), room: ok.room, body: ok.body, score: bonus - ok.penalty + softScore(c, rotation, ok.body, ok.room) })
   }
 
@@ -325,18 +335,35 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     for (const t of ofCat('dining-table')) {
       const thw = t.item.width / 2
       const thd = t.item.depth / 2
-      for (const [n, along, off, long] of [
-        [v(0, 1), thw, thd, thw >= thd],
-        [v(0, -1), thw, thd, thw >= thd],
-        [v(1, 0), thd, thw, thd > thw],
-        [v(-1, 0), thd, thw, thd > thw],
-      ] as [Vec2, number, number, boolean][]) {
+      const sides = (
+        [
+          [v(0, 1), thw, thd, thw >= thd],
+          [v(0, -1), thw, thd, thw >= thd],
+          [v(1, 0), thd, thw, thd > thw],
+          [v(-1, 0), thd, thw, thd > thw],
+        ] as [Vec2, number, number, boolean][]
+      ).map(([n, along, off, long]) => {
+        // Free floor off this side of the table (m, up to the full pull-out), ignoring the chairs already at it.
+        let free = 0
+        for (let d = 0.05; d <= TABLE_PULL_OUT + 1e-6; d += 0.05) {
+          const strip = orientedRect(v(t.p.x, t.p.y), Math.abs(n.x) ? d / 2 : along, Math.abs(n.x) ? along : d / 2, t.p.rotation, scale(n, off + d / 2))
+          const room = t.room
+          if (!room || !polygonInsideRoom(strip, room.polygon, 0.01)) break
+          if (solids.some((o) => o !== t && !AT_TABLE.has(o.item.category) && convexOverlap(strip, o.body, 0.005))) break
+          free = d
+        }
+        return { n, along, off, long, free }
+      })
+      const anyFree = sides.some((sd) => sd.free >= TABLE_PULL_OUT - 1e-6)
+      for (const { n, along, off, long, free } of sides) {
         const perp = v(-n.y, n.x)
         for (const u of [0, -along / 2, along / 2, -along / 3, along / 3, -(along - hw), along - hw]) {
           if (Math.abs(u) + hw > along + 0.1) continue
           const l = add(scale(n, off + 0.05 + hd), scale(perp, u))
           const nw = rot(n, t.p.rotation)
-          consider(local(t, l), facing(scale(nw, -1)), 25 + (long ? 2 : 0) - Math.abs(u))
+          // The side with the most free floor wins; a chair with no room to pull out is refused
+          // outright while another side of the table is open.
+          consider(local(t, l), facing(scale(nw, -1)), 25 + (long ? 2 : 0) - Math.abs(u) + free * 8, cat === 'dining-chair' && anyFree ? chairBackBlocked : undefined)
         }
       }
     }
@@ -593,7 +620,7 @@ export function tablePullOuts(item: Pick<Item, 'width' | 'depth'>, p: Placement)
 }
 
 /**
- * The armchair that still wants a reading corner (no lamp, side table or bookshelf within reach),
+ * The armchair that still wants a reading corner (no lamp within reach),
  * or undefined. The nook goal's hint points here, and the lamp it suggests lands beside it.
  */
 export function nookTarget(doc: Doc, layout: Layout): string | undefined {
@@ -602,6 +629,6 @@ export function nookTarget(doc: Doc, layout: Layout): string | undefined {
     const it = byId.get(p.itemId)
     return it ? [{ p, it, body: orientedRect(v(p.x, p.y), it.width / 2, it.depth / 2, p.rotation) }] : []
   })
-  const lights = placed.filter((x) => ['floor-lamp', 'side-table', 'bookshelf'].includes(x.it.category))
+  const lights = placed.filter((x) => x.it.category === 'floor-lamp')
   return placed.find((a) => a.it.category === 'armchair' && !lights.some((l) => polygonGap(a.body, l.body) <= NEXT_TO_REACH))?.p.id
 }

@@ -57,7 +57,8 @@ export function sampleDoc(opts: { settled?: boolean } = {}): Doc {
   const hd = (i: typeof sofa) => i.depth / 2
   const items = [sofa, tv, bed]
   const at = (item: typeof sofa, x: number, y: number, rotation = 0) => ({ id: uid(), itemId: item.id, x, y, rotation })
-  const placements = [at(sofa, 2.0, 4.2 - hd(sofa), Math.PI), at(tv, 2.0, hd(tv)), at(bed, 5.32 + 1.8, hd(bed))]
+  // The bed's head goes against the solid wall on the living-room side, not under the window.
+  const placements = [at(sofa, 2.0, 4.2 - hd(sofa), Math.PI), at(tv, 2.0, hd(tv)), at(bed, 5.32 + hd(bed), 1.5, -Math.PI / 2)]
   if (opts.settled) {
     const coffee = itemFromCatalog(catalogEntry('coffee-table'), uid(), { owned: true })
     const rug = itemFromCatalog(catalogEntry('rug'), uid(), { owned: true })
