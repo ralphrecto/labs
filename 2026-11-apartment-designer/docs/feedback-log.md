@@ -187,3 +187,39 @@ Reviewers: interior designer re-check, art director re-check, returning player (
 - Lifelike is still light in the small dollhouse view.
 - Real iPhone finger-drag check.
 - Harness: the first style tap after opening the picker sometimes misses.
+
+## Round 6 (2026-11-20 23:53 to 2026-11-21 00:20 UTC)
+
+Reviewers: cozy gamer first session, phone clarity and clutter, lighting designer.
+
+**Fixed**
+- Dining chairs: a chair's room behind it is now measured from the table edge (`chairBackNeed` in checks.ts), so placement and checks agree. Chairs go to the open side. When none count, the eat goal asks you to move the table off the wall.
+- The dresser warning now matches the 0.75 m placement rule.
+- Level pacing: Dream home needs every core and Style goal plus 2 bonus goals. Designer home needs every flow goal. Following Next on the sample now reaches Dream home in 12 placements (enforced by a test, with no loops).
+- The bedroom density limit is now 42%, and an office chair tucked under its desk doesn't count toward it.
+- The sample bed's headboard sits on a solid wall.
+- Light goals count real lamps only.
+- Phone layout:
+  - Compact drawer by default (tap the open tab to expand), and a one-row top bar.
+  - The plan view fits around the HUD, and one View button replaces map and home.
+  - Disabled undo and redo are hidden, tap targets are 44 px, and iPhone SE overlaps are fixed.
+  - The house now fills 74% of the width on iPhone 14 (was 46%) and 24% of the screen (was 9%).
+- Game feel:
+  - The Next chip stays while goals remain at the top level.
+  - A star loss shows a "−N★ goal · Undo" pill, and level drops wait 2 s.
+  - A "Tap Plant → Bathroom" hint pill.
+  - Dream home gets a confetti card with "Take its photo".
+  - The polaroid is titled with the design and home.
+- Evening mode in Look (unlocks at Cozy): dusk lighting, and lamps glow and cast warm light.
+
+**Backlog (next rounds)**
+- Table lamps are still floor pieces. Next: a `table-lamp` category hosted on nightstands, side tables and desks, plus bedside and desk light goals.
+- Pendant lights over the table; a layered-light goal.
+- Moving boxes should be tappable to unpack into owned decor, with an "Unpack your boxes" goal.
+- The density goal's hint has no piece to suggest; offer "move X to <room>".
+- The expanded drawer on iPhone SE clips the bottom of its cards.
+- Turning off the right inset would let the house fill 89% of the width, but the camera column would overlap it.
+- Evening lamp shades read cream rather than amber in Cartoon.
+- Rugs under the dining table and the bed; a conversation-seating goal; catalog roles (benches, stools).
+- Real iPhone finger-drag check.
+- Harness: the first style tap after opening the picker sometimes misses.
