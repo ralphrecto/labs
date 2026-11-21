@@ -260,3 +260,39 @@ Reviewers: art director on evening mode and the compact layout, lamp-hosting des
 - Harness:
   - The style picker closes after each pick, so later style taps miss.
   - Backdate the last visit with addInitScript before load, because pagehide overwrites it.
+
+## Round 8 (2026-11-21, 13:00 to 14:00 UTC)
+
+Reviewers: cozy first-timer (14 Next taps to Dream home, no dead ends), lighting designer, remix player (who also wrote the specs).
+
+**Fixed / added**
+- **Remix this home:**
+  - Pick a twist, and the new design keeps only the big pieces (bed, sofa, TV stand, wardrobe, dining table).
+  - Six twists: Talk corner, Open floor, Window seat, Fresh start, Bed swap, Less is more. Each is a core 3★ goal, so Dream home needs it.
+  - The new design climbs the levels again (13 Next steps in the test) and gets its own "Remix complete!" Dream card.
+  - The Designs sheet shows a twist badge, a level bar and a Dream ribbon. An untouched copy reads "Same as X". The header shows how many designs are Dream homes.
+- **Moving boxes:**
+  - Tap a box, then Unpack: it pops out a plant, lamps and a rug as owned decor, with confetti. Undo brings the box back.
+  - "Unpack your boxes" is the first Next goal on move-in day, and packed boxes don't count as furniture.
+- **Lighting:**
+  - Dusk is lit by a cool moon instead of an orange sunset, so all three styles read blue with warm lamp pools.
+  - Lamps light pools instead of whole rooms.
+  - A lamp only moves to the same kind of surface in the same room; otherwise it waits in Mine. A desk holds one lamp.
+  - The bedside goal only appears where a nightstand actually fits.
+  - New: a pendant light over the dining table, hung 76 cm above it, with a "Pendant over the table" bonus goal.
+- **Cozy-player fixes:**
+  - Evening survives React's dev double-mount, so the Dream photo is taken at dusk.
+  - The hint pill floats above the drawer, so the named card is readable.
+  - Toasts never show a third line.
+  - The Cozy level-up says evening is unlocked.
+  - Tidy welcome links on narrow phones.
+
+**Backlog (next rounds)**
+- The guided climb has no choices; add a taste decision per step (size presets or colour swatches on the hinted card).
+- Auto-placement crowds the living room (the dining table lands mid-room, the armchair jams against the sofa). Prefer a dining room, or keep the table at least 1.2 m off the sofa front.
+- The reading-corner goal still buys a second floor lamp when one stands nearby.
+- The Window seat twist is already met on the sample; skip twists the source already satisfies.
+- The table lamp from box 1 has nowhere to stand on move-in day.
+- The pendant has no thumbnail, and its cord is a fixed length rather than reaching the ceiling.
+- The polaroid caption should lead with the level at the top; frame tighter.
+- Harness: the first Lifelike tap after opening the picker still misses.
