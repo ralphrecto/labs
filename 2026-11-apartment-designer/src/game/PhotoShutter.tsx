@@ -164,9 +164,15 @@ export function PhotoShutter() {
             {evening ? 'Evening' : 'Day'}
           </button>
         ) : (
-          <button type="button" className="photo-evening locked" disabled aria-label="Evening light is locked. Reach Cozy to unlock evening">
+          <button
+            type="button"
+            className="photo-evening locked"
+            disabled
+            aria-label="Evening light is locked. Reach Cozy to unlock evening"
+            title="Reach Cozy to unlock evening"
+          >
             <span aria-hidden>☾</span>
-            Reach Cozy to unlock evening
+            <span aria-hidden className="photo-evening-text">At Cozy</span>
           </button>
         ))}
       {flash > 0 && <div key={flash} className="photo-flash" aria-hidden />}

@@ -28,7 +28,10 @@
 }
 .photo-evening span { font-size: 16px; }
 .photo-evening.on.on, .game .photo-evening.on { background: #2a3350; color: #ffd9a0; box-shadow: 0 0 0 2px rgba(255, 207, 138, 0.35), var(--g-shadow-sm, 0 2px 6px rgba(0,0,0,.15)); }
-.photo-evening.locked { cursor: default; max-width: calc(50vw - 66px); white-space: normal; text-align: left; height: auto; min-height: 36px; padding: 6px 12px 6px 10px; font-size: 11px; line-height: 1.2; color: var(--g-ink-2, #7a6a5d); opacity: 0.92; }
+.photo-evening { white-space: nowrap; }
+/* Locked: a short "☾ At Cozy" (the full sentence is the label and tooltip). */
+.photo-evening.locked { cursor: default; white-space: nowrap; padding: 0 13px 0 10px; font-size: 12px; color: var(--g-ink-2, #7a6a5d); opacity: 0.92; }
+.photo-evening.locked .photo-evening-text { font-size: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .photo-evening { transition: none; }
   .photo-sheet, .photo-card { animation: none; }

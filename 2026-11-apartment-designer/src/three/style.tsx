@@ -80,7 +80,7 @@ const skies: Partial<Record<string, THREE.Texture>> = {}
  * A vertical sky gradient for window glass: blue up top, bright and pale toward the horizon.
  * Cartoon gets three flat bands; Clay a nearly white, barely blue version.
  */
-function skyTexture(kind: 'smooth' | 'bands' | 'clay') {
+function skyTexture(kind: 'smooth' | 'bands' | 'clay' | 'dusk') {
   const hit = skies[kind]
   if (hit || typeof document === 'undefined') return hit ?? null
   let t: THREE.Texture
@@ -102,7 +102,13 @@ function skyTexture(kind: 'smooth' | 'bands' | 'clay') {
     c.height = 128
     const g = c.getContext('2d')!
     const grad = g.createLinearGradient(0, 0, 0, 128)
-    if (kind === 'clay') {
+    if (kind === 'dusk') {
+      // Evening through the glass: deep blue overhead, a warm sunset band at the horizon.
+      grad.addColorStop(0, '#27305e')
+      grad.addColorStop(0.55, '#4a4577')
+      grad.addColorStop(0.82, '#b9737a')
+      grad.addColorStop(1, '#e98a6b')
+    } else if (kind === 'clay') {
       grad.addColorStop(0, '#dfe6ec')
       grad.addColorStop(1, '#f7f8f8')
     } else {
@@ -112,7 +118,16 @@ function skyTexture(kind: 'smooth' | 'bands' | 'clay') {
     }
     g.fillStyle = grad
     g.fillRect(0, 0, 4, 128)
+    if (kind === 'dusk') {
+      // A few stars in the dark upper half.
+      g.fillStyle = '#fff4d8'
+      for (const [x, y] of [[0, 9], [2, 22], [1, 37], [3, 15], [0, 51]]) g.fillRect(x, y, 1, 1)
+    }
     t = new THREE.CanvasTexture(c)
+    if (kind === 'dusk') {
+      t.magFilter = THREE.NearestFilter
+      t.wrapS = THREE.RepeatWrapping
+    }
   }
   t.colorSpace = THREE.SRGBColorSpace
   t.needsUpdate = true
@@ -155,14 +170,30 @@ interface SurfaceProps {
  */
 export function Surface(props: SurfaceProps) {
   const { style } = useStyle()
-  const night = useGame((s) => s.evening) && props.role === 'window'
+  const night = useGame((s) => s.evening) && (props.role === 'window' || props.role === 'daylight')
   return <SurfaceMaterial key={`${style}-${props.map ? 'map' : 'flat'}${night ? '-night' : ''}`} {...props} />
 }
 
-/** Window glass in the evening: a deep dusk blue instead of the daytime sky. */
-const EVENING_GLASS = '#1d2b4f'
-/** The sky behind the home in the evening. */
-const EVENING_SKY = '#1c2333'
+/** The sky behind the home in the evening (and the ground's glow, so the two meet). */
+const EVENING_SKY = '#2b3566'
+
+let duskBackdrop: THREE.Texture | null = null
+/** The evening backdrop: a vertical gradient from deep blue overhead to a soft violet near the ground. */
+function eveningBackdrop() {
+  if (duskBackdrop || typeof document === 'undefined') return duskBackdrop
+  const c = document.createElement('canvas')
+  c.width = 4
+  c.height = 256
+  const g = c.getContext('2d')!
+  const grad = g.createLinearGradient(0, 0, 0, 256)
+  grad.addColorStop(0, '#232a55')
+  grad.addColorStop(1, '#5b4a78')
+  g.fillStyle = grad
+  g.fillRect(0, 0, 4, 256)
+  duskBackdrop = new THREE.CanvasTexture(c)
+  duskBackdrop.colorSpace = THREE.SRGBColorSpace
+  return duskBackdrop
+}
 
 function SurfaceMaterial({ role, color, highlight, map, side }: SurfaceProps) {
   const { style } = useStyle()
@@ -178,12 +209,13 @@ function SurfaceMaterial({ role, color, highlight, map, side }: SurfaceProps) {
     // Unlit, so the sky stays bright whatever the room's lighting.
     if (style === 'blueprint') return <meshBasicMaterial color={BLUEPRINT_LINE} transparent opacity={0.16} depthWrite={false} side={side} />
     if (style === 'scan') return <meshBasicMaterial color="#cfe6ff" transparent opacity={0.18} depthWrite={false} side={side} />
-    if (evening) return <meshBasicMaterial color={EVENING_GLASS} toneMapped={false} side={side} />
+    if (evening) return <meshBasicMaterial color="#ffffff" map={skyTexture('dusk')} toneMapped={false} side={side} />
     const sky = skyTexture(style === 'toon' ? 'bands' : style === 'clay' ? 'clay' : 'smooth')
     return <meshBasicMaterial color="#ffffff" map={sky} toneMapped={false} side={side} />
   }
   if (role === 'daylight') {
-    if (style === 'blueprint' || style === 'scan') return <meshBasicMaterial visible={false} />
+    // No sun on the floor after dark.
+    if (style === 'blueprint' || style === 'scan' || evening) return <meshBasicMaterial visible={false} />
     if (style === 'toon') return <meshBasicMaterial color="#fff6dc" transparent opacity={0.4} depthWrite={false} side={side} polygonOffset polygonOffsetFactor={-2} />
     return (
       <meshBasicMaterial
@@ -317,20 +349,25 @@ export function StyleEnvironment() {
   const { style } = useStyle()
   const gl = useThree((s) => s.gl)
   const scene = useThree((s) => s.scene)
+  const evening = useGame((s) => s.evening)
   useEffect(() => {
     if (style !== 'real') return
     const exposure = gl.toneMappingExposure
-    gl.toneMappingExposure = 0.72
+    const envK = scene.environmentIntensity
+    // Evening: the studio light all but goes out, so the lamps and the dusk carry the room.
+    gl.toneMappingExposure = evening ? 0.6 : 0.72
+    scene.environmentIntensity = evening ? 0.08 : 1
     const pm = new THREE.PMREMGenerator(gl)
     const env = pm.fromScene(new RoomEnvironment(), 0.04).texture
     scene.environment = env
     return () => {
       scene.environment = null
+      scene.environmentIntensity = envK
       gl.toneMappingExposure = exposure
       env.dispose()
       pm.dispose()
     }
-  }, [style, gl, scene])
+  }, [style, evening, gl, scene])
   return null
 }
 
@@ -359,7 +396,7 @@ export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; ex
   useEffect(() => {
     if (!evening) return
     const before = scene.background
-    scene.background = new THREE.Color(EVENING_SKY)
+    scene.background = eveningBackdrop() ?? new THREE.Color(EVENING_SKY)
     // The big ground plane around the home fills most of the view: give it the same dusk tone
     // (glowing, since there's hardly any light left to show its color).
     const grounds: { m: THREE.MeshStandardMaterial; color: THREE.Color; emissive: THREE.Color }[] = []
@@ -380,21 +417,25 @@ export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; ex
       }
     }
   }, [evening, scene, style])
-  const sunK = evening ? 0.05 : 1
-  const ambK = evening ? 0.12 : 1
-  const hemiK = evening ? 0.15 : 1
+  // Evening is a cool blue dusk (a blue-violet sky light, a plum bounce from below, a low warm
+  // sunset rim) with the lamps making warm pools: dim enough for the lamps to matter, never murky.
+  const sunK = evening ? 0.15 : 1
+  const ambK = evening ? 0.3 : 1
+  const hemiK = evening ? 0.45 : 1
   if (style === 'blueprint' || style === 'scan') return <ambientLight intensity={1} />
+  const hemiSky = evening ? '#7480c0' : style === 'toon' ? '#fff8ec' : style === 'real' || style === 'clay' ? '#fff4e4' : '#ffffff'
+  const hemiGround = evening ? '#3d2c3c' : style === 'toon' ? '#e7b48c' : style === 'clay' ? '#d9c6aa' : '#b9a98f'
   return (
     <>
-      <ambientLight intensity={ambK * (style === 'toon' ? 0.9 : style === 'real' ? 0 : style === 'clay' ? 1.15 : 0.8)} color={style === 'toon' ? '#ffe9d6' : style === 'clay' ? '#fff4e6' : '#ffffff'} />
-      <hemisphereLight args={[style === 'toon' ? '#fff8ec' : style === 'real' || style === 'clay' ? '#fff4e4' : '#ffffff', style === 'toon' ? '#e7b48c' : style === 'clay' ? '#d9c6aa' : '#b9a98f', hemiK * (style === 'real' ? 0.7 : style === 'clay' ? 0.9 : 0.6)]} />
+      <ambientLight intensity={ambK * (style === 'toon' ? 0.9 : style === 'real' ? 0 : style === 'clay' ? 1.15 : 0.8)} color={evening ? '#9aa6dc' : style === 'toon' ? '#ffe9d6' : style === 'clay' ? '#fff4e6' : '#ffffff'} />
+      <hemisphereLight key={evening ? 'dusk' : 'day'} args={[hemiSky, hemiGround, hemiK * (style === 'real' ? 0.7 : style === 'clay' ? 0.9 : 0.6)]} />
       <primitive object={aim} />
       <directionalLight
         key={`${r.toFixed(2)}`}
         position={sun.pos as unknown as [number, number, number]}
         target={aim}
         intensity={sun.intensity * sunK}
-        color={sun.color}
+        color={evening ? '#ff9a6b' : sun.color}
         castShadow={shadows}
         shadow-mapSize={[2048, 2048]}
         shadow-camera-left={-r}

@@ -153,6 +153,15 @@ export function VibeMeter() {
   const next = useNextGoal(score, refused)
   const nextRef = useRef(next)
   nextRef.current = next
+  // When the Next goal moves on to another piece, a hint left from the old one is stale.
+  const nextKey = next ? `${next.id}:${next.item ?? ''}` : ''
+  const lastNextKey = useRef(nextKey)
+  useEffect(() => {
+    if (lastNextKey.current === nextKey) return
+    lastNextKey.current = nextKey
+    const hint = useGame.getState().buyHint
+    if (hint && hint.category !== nextRef.current?.item) useGame.getState().setBuyHint(null)
+  }, [nextKey])
   const toast = useStore((s) => s.toast)
   // A refusal ("The bedroom's full...") while the hint is up: bring the chip back with something that fits.
   useEffect(() => {
@@ -198,6 +207,14 @@ export function VibeMeter() {
     setShown(null)
     setRefused(NO_REFUSALS)
     const fresh = score.goals.filter((g) => g.done && !before.done.has(g.id))
+    // The drawer's hint pill ("Tap Plant → Bathroom") points at a goal's piece: once that goal is
+    // done (it just finished, or every goal asking for that piece there is done), the pill goes.
+    const hint = useGame.getState().buyHint
+    if (hint) {
+      const asks = (g: Goal) => g.item === hint.category && (!hint.roomId || !g.placeIn || g.placeIn === hint.roomId)
+      const behind = score.goals.filter(asks)
+      if (fresh.some(asks) || (behind.length > 0 && behind.every((g) => g.done))) useGame.getState().setBuyHint(null)
+    }
     if (fresh.length > 4) return
     if (score.stars < before.stars) {
       // A loss: say what broke, offer Undo, and clear any cheer (banner, pop, pending level-up).
@@ -496,6 +513,8 @@ export function LevelUpCard() {
             className="g-btn primary feel-dream-photo"
             onClick={(e) => {
               e.stopPropagation()
+              // The dream photo is taken at dusk, with the lamps on (evening unlocks at Cozy).
+              if (levelUp.index >= LEVELS.indexOf('Cozy')) useGame.getState().setEvening(true)
               useGame.getState().requestPhoto()
             }}
           >
