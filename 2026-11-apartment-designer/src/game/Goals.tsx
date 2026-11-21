@@ -267,7 +267,7 @@ export function VibeMeter() {
       const half = score.goals.find((g) => TWO_STEP.has(g.id) && !g.done && (g.progress ?? 0) > (before.progress.get(g.id) ?? 0) && g.item)
       if (half) {
         const what = toast!.replace(/^Placed (an? )?/, '').replace(/ in the .*$/, '').replace(/\.$/, '')
-        useStore.getState().notify(`${what.charAt(0).toUpperCase()}${what.slice(1)} placed. Add a ${piece(half.item!)} to finish ${half.title}.`)
+        useStore.getState().notify(`${what.charAt(0).toUpperCase()}${what.slice(1)} placed. Now add a ${piece(half.item!)} beside it.`)
         setPop({ key: Date.now(), delta: 0, half: true })
       }
     }
@@ -439,7 +439,7 @@ export function VibeMeter() {
           <span className="goal-banner-text">
             <small>Level up! {levelUp.index + 1} of {LEVELS.length}</small>
             {levelUp.name}
-            {levelGoalLine && <em>{levelGoalLine}</em>}
+            {levelUp.name === 'Cozy' ? <em>Evening light unlocked. Try it in Look.</em> : levelGoalLine && <em>{levelGoalLine}</em>}
           </span>
         </button>
       )}

@@ -123,7 +123,11 @@ export function PhotoShutter() {
   }, [photoRequest])
   useEffect(() => () => clearTimeout(photoTimer.current), [])
   // Evening belongs to Look mode: back to daylight for building and buying.
-  useEffect(() => () => useGame.getState().setEvening(false), [])
+  // Evening only lives in Look. Check the mode at unmount: StrictMode's dev double-mount runs this
+  // cleanup while still in Look, and must not undo an evening the Dream card just switched on.
+  useEffect(() => () => {
+    if (useGame.getState().mode !== 'look') useGame.getState().setEvening(false)
+  }, [])
 
   const file = snap?.blob ? new File([snap.blob], snap.file, { type: 'image/png' }) : null
   const canShare = !!file && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })

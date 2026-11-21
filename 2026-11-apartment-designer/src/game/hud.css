@@ -219,7 +219,7 @@
   /* A paper pill like the rest of the HUD, with a honey dot, up to two lines so refusals stay readable. */
   background: var(--g-paper); color: var(--g-ink); box-shadow: var(--g-shadow); border-radius: 999px;
   padding: 7px 14px 7px 26px; font: 800 13px/1.3 var(--g-font);
-  max-width: calc(100vw - 32px); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; text-align: left;
+  max-width: calc(100vw - 32px); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-height: calc(2.6em + 14px); text-align: left;
   background-image: radial-gradient(circle at 14px 50%, var(--g-sun) 0 4px, transparent 4.5px);
   animation: g-pop 0.25s var(--g-ease); transition: top 0.25s var(--g-ease);
 }

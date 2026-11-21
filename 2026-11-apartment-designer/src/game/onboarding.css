@@ -229,3 +229,6 @@
 .onb-ceiling .onb-fix { display: inline-flex; align-items: center; gap: 4px; }
 .onb-ceiling .onb-fix svg { width: 14px; height: 14px; }
 .onb-back-home { margin-top: 4px; font-size: 13px; opacity: 0.85; }
+
+/* Narrow phones: the two welcome links wrap, so drop the dot between them. */
+@media (max-width: 430px) { .onb-dot { display: none; } }

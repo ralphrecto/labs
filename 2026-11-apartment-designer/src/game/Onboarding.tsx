@@ -158,7 +158,7 @@ function Welcome({ onScan }: { onScan: () => void }) {
           >
             Explore a sample home
           </button>
-          <span aria-hidden>·</span>
+          <span className="onb-dot" aria-hidden>·</span>
           <button
             className="onb-link"
             onClick={() => {
