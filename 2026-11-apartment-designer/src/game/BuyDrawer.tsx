@@ -14,6 +14,7 @@ import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
 import { ItemThumb } from './ItemThumb'
 import './buy.css'
+import './feel.css'
 
 export const CATEGORY_GROUPS: { key: string; label: string; emoji?: string; categories: string[] }[] = [
   { key: 'living', label: 'Living', emoji: '🛋️', categories: ['sofa', 'armchair', 'coffee-table', 'side-table', 'ottoman', 'tv-stand', 'console-table'] },
@@ -107,6 +108,8 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   const setTab = useGame((s) => s.setBuyTab)
   const hint = useGame((s) => s.buyHint)
   const units = useStore((s) => s.doc.apartment.units)
+  const hintRoom = useStore((s) => (hint?.roomId ? s.doc.rooms.find((r) => r.id === hint.roomId)?.name : undefined))
+  const hintEntry = hint?.category ? ENTRIES.get(hint.category) : undefined
   const items = useStore((s) => s.doc.items)
   const placements = useStore((s) => activeLayout(s.doc).placements)
   const mine = useMemo(() => items.filter(isMine), [items])
@@ -201,6 +204,19 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
         ))}
       </div>
 
+      {hintEntry && (
+        <div className="feel-hint-pill" role="status">
+          Tap <b>{displayName(hintEntry)}</b>
+          {hintRoom ? (
+            <>
+              {' '}
+              <span aria-label="in the">→</span> <b>{hintRoom}</b>
+            </>
+          ) : (
+            ' to place it'
+          )}
+        </div>
+      )}
       <div className="buy-grid" ref={gridRef} key={group.key} role="tabpanel" aria-label={group.label}>
         {group.key === 'mine' ? (
           <>

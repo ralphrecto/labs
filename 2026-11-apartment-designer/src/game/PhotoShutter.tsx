@@ -1,9 +1,11 @@
 // Look mode's photo moment: one shutter button that snaps the 3D view, frames it as a polaroid
 // with the home's name, level and stars, and offers to share or save it.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { useStore } from '../store'
+import { activeLayout, useStore } from '../store'
+import { useGame } from './gameStore'
 import { useHomeScore } from './Goals'
+import { LEVELS } from './goals'
 import { reduceMotion } from '../motion'
 import './photo.css'
 
@@ -79,7 +81,13 @@ const fileName = (name: string) => `${name.replace(/[^\w\- ]+/g, '').trim().repl
 /** The shutter (only in Look mode) and the polaroid card it opens. */
 export function PhotoShutter() {
   const name = useStore((s) => s.doc.apartment.name)
+  const design = useStore((s) => activeLayout(s.doc).name)
   const score = useHomeScore()
+  const evening = useGame((s) => s.evening)
+  const photoRequest = useGame((s) => s.photoRequest)
+  // Evening is a reward: it unlocks once the home has reached Cozy (in this design).
+  const COZY = LEVELS.indexOf('Cozy')
+  const eveningOpen = Math.max(score.level.index, score.best) >= COZY
   const [snap, setSnap] = useState<Snap | null>(null)
   const [flash, setFlash] = useState(0)
   useEffect(() => () => void (snap && URL.revokeObjectURL(snap.url)), [snap])
@@ -94,7 +102,7 @@ export function PhotoShutter() {
     // 3D canvas, and the renderer keeps its drawing buffer, so the shot is the room as it was.
     if (!reduceMotion) flushSync(() => setFlash((f) => f + 1))
     const compose = () => {
-      const card = composePolaroid(canvas, name, level, score.stars)
+      const card = composePolaroid(canvas, design ? `${design} · ${name}` : name, level, score.stars)
       card.toBlob((blob) => {
         const url = blob ? URL.createObjectURL(blob) : card.toDataURL('image/png')
         setSnap({ url, blob, file: fileName(name) })
@@ -103,6 +111,19 @@ export function PhotoShutter() {
     if (reduceMotion) compose()
     else requestAnimationFrame(() => requestAnimationFrame(compose))
   }
+
+  const takeRef = useRef(take)
+  takeRef.current = take
+  // "Take its photo" from the Dream home card: wait for Look mode's view to settle, then snap.
+  const photoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => {
+    if (!photoRequest) return
+    useGame.getState().consumePhotoRequest()
+    photoTimer.current = setTimeout(() => takeRef.current(), 700)
+  }, [photoRequest])
+  useEffect(() => () => clearTimeout(photoTimer.current), [])
+  // Evening belongs to Look mode: back to daylight for building and buying.
+  useEffect(() => () => useGame.getState().setEvening(false), [])
 
   const file = snap?.blob ? new File([snap.blob], snap.file, { type: 'image/png' }) : null
   const canShare = !!file && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })
@@ -130,6 +151,24 @@ export function PhotoShutter() {
           <circle cx="12" cy="13.2" r="3.4" />
         </svg>
       </button>}
+      {!snap &&
+        (eveningOpen ? (
+          <button
+            type="button"
+            className={`photo-evening${evening ? ' on' : ''}`}
+            onClick={() => useGame.getState().setEvening(!evening)}
+            aria-pressed={evening}
+            aria-label={evening ? 'Evening light on. Switch to day' : 'Switch to evening light'}
+          >
+            <span aria-hidden>{evening ? '☾' : '☀'}</span>
+            {evening ? 'Evening' : 'Day'}
+          </button>
+        ) : (
+          <button type="button" className="photo-evening locked" disabled aria-label="Evening light is locked. Reach Cozy to unlock evening">
+            <span aria-hidden>☾</span>
+            Reach Cozy to unlock evening
+          </button>
+        ))}
       {flash > 0 && <div key={flash} className="photo-flash" aria-hidden />}
       {snap && (
         <div className="photo-sheet" role="dialog" aria-label="Your photo" onClick={() => setSnap(null)}>

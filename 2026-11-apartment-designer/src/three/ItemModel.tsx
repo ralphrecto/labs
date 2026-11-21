@@ -1,6 +1,7 @@
 import { useGLTF } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
-import { Component, Suspense, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useGame } from '../game/gameStore'
 import * as THREE from 'three'
 import type { Item } from '../model/types'
 import { reduceMotion } from '../motion'
@@ -551,7 +552,49 @@ export function ItemModel({ item, highlight }: { item: Item; highlight?: string 
   return (
     <Arrival id={item.id}>
       <ItemLook item={item} highlight={highlight} />
+      {item.category === 'floor-lamp' && <LampGlow item={item} />}
     </Arrival>
+  )
+}
+
+// ------------------------------------------------------------------ evening lamps
+
+/** Point lights are costly (every lit material recompiles per light), so only this many lamps cast light. */
+const MAX_LAMP_LIGHTS = 8
+let lampLights = 0
+const GLOW = '#ffcf8a'
+
+/** In the evening a floor lamp glows: a warm bulb and shade, and a small warm light at shade height. */
+function LampGlow({ item }: { item: Item }) {
+  const evening = useGame((s) => s.evening)
+  const [lit, setLit] = useState(false)
+  useEffect(() => {
+    if (!evening || lampLights >= MAX_LAMP_LIGHTS) return
+    lampLights++
+    setLit(true)
+    return () => {
+      lampLights--
+      setLit(false)
+    }
+  }, [evening])
+  if (!evening) return null
+  // Matches lamp(): the shade's size and the bulb's height.
+  const h = item.height
+  const s = Math.min(item.width, item.depth)
+  const shadeH = clamp(h * 0.2, 0.15, 0.36)
+  const bulbY = h - shadeH * 0.6
+  return (
+    <group>
+      <mesh position={[0, h - shadeH / 2, 0]} renderOrder={1}>
+        <cylinderGeometry args={[(s / 2) * 0.72 * 1.02, (s / 2) * 1.02, shadeH * 1.01, 20, 1, true]} />
+        <meshStandardMaterial color={GLOW} emissive={GLOW} emissiveIntensity={0.9} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[0, bulbY, 0]}>
+        <sphereGeometry args={[0.055, 16, 12]} />
+        <meshStandardMaterial color="#fff3d6" emissive={GLOW} emissiveIntensity={2} toneMapped={false} />
+      </mesh>
+      {lit && <pointLight position={[0, bulbY, 0]} color="#ffb36b" intensity={3} distance={3.5} decay={1.6} castShadow={false} />}
+    </group>
   )
 }
 

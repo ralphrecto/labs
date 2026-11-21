@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { toonHex, type ScanPalette } from '../scan/palette'
+import { useGame } from '../game/gameStore'
 
 // Rendering styles for the 3D view, switched like map layers. Every surface in the scene (walls,
 // floors, furniture) draws through <Surface> and <Ink>, which pick materials for the active style.
@@ -154,11 +155,18 @@ interface SurfaceProps {
  */
 export function Surface(props: SurfaceProps) {
   const { style } = useStyle()
-  return <SurfaceMaterial key={`${style}-${props.map ? 'map' : 'flat'}`} {...props} />
+  const night = useGame((s) => s.evening) && props.role === 'window'
+  return <SurfaceMaterial key={`${style}-${props.map ? 'map' : 'flat'}${night ? '-night' : ''}`} {...props} />
 }
+
+/** Window glass in the evening: a deep dusk blue instead of the daytime sky. */
+const EVENING_GLASS = '#1d2b4f'
+/** The sky behind the home in the evening. */
+const EVENING_SKY = '#1c2333'
 
 function SurfaceMaterial({ role, color, highlight, map, side }: SurfaceProps) {
   const { style } = useStyle()
+  const evening = useGame((s) => s.evening)
   const edge = role === 'cap' || role === 'trim' ? role : null
   if (edge) {
     color = edgeTone(edge, color, style)
@@ -170,6 +178,7 @@ function SurfaceMaterial({ role, color, highlight, map, side }: SurfaceProps) {
     // Unlit, so the sky stays bright whatever the room's lighting.
     if (style === 'blueprint') return <meshBasicMaterial color={BLUEPRINT_LINE} transparent opacity={0.16} depthWrite={false} side={side} />
     if (style === 'scan') return <meshBasicMaterial color="#cfe6ff" transparent opacity={0.18} depthWrite={false} side={side} />
+    if (evening) return <meshBasicMaterial color={EVENING_GLASS} toneMapped={false} side={side} />
     const sky = skyTexture(style === 'toon' ? 'bands' : style === 'clay' ? 'clay' : 'smooth')
     return <meshBasicMaterial color="#ffffff" map={sky} toneMapped={false} side={side} />
   }
@@ -344,17 +353,47 @@ export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; ex
   const aim = useMemo(() => new THREE.Object3D(), [])
   aim.position.copy(target)
   const r = Math.max(2, extent)
+  // Evening: the sun goes down, the sky turns dusk blue and the lamps (ItemModel) carry the room.
+  const evening = useGame((s) => s.evening)
+  const scene = useThree((s) => s.scene)
+  useEffect(() => {
+    if (!evening) return
+    const before = scene.background
+    scene.background = new THREE.Color(EVENING_SKY)
+    // The big ground plane around the home fills most of the view: give it the same dusk tone
+    // (glowing, since there's hardly any light left to show its color).
+    const grounds: { m: THREE.MeshStandardMaterial; color: THREE.Color; emissive: THREE.Color }[] = []
+    scene.traverse((o) => {
+      const mesh = o as THREE.Mesh
+      const g = mesh.geometry as THREE.PlaneGeometry | undefined
+      const m = mesh.material as THREE.MeshStandardMaterial | undefined
+      if (!mesh.isMesh || g?.type !== 'PlaneGeometry' || g.parameters.width < 100 || !m?.emissive) return
+      grounds.push({ m, color: m.color.clone(), emissive: m.emissive.clone() })
+      m.color.set('#000000')
+      m.emissive.set(EVENING_SKY)
+    })
+    return () => {
+      scene.background = before
+      for (const { m, color, emissive } of grounds) {
+        m.color.copy(color)
+        m.emissive.copy(emissive)
+      }
+    }
+  }, [evening, scene, style])
+  const sunK = evening ? 0.05 : 1
+  const ambK = evening ? 0.12 : 1
+  const hemiK = evening ? 0.15 : 1
   if (style === 'blueprint' || style === 'scan') return <ambientLight intensity={1} />
   return (
     <>
-      <ambientLight intensity={style === 'toon' ? 0.9 : style === 'real' ? 0 : style === 'clay' ? 1.15 : 0.8} color={style === 'toon' ? '#ffe9d6' : style === 'clay' ? '#fff4e6' : '#ffffff'} />
-      <hemisphereLight args={[style === 'toon' ? '#fff8ec' : style === 'real' || style === 'clay' ? '#fff4e4' : '#ffffff', style === 'toon' ? '#e7b48c' : style === 'clay' ? '#d9c6aa' : '#b9a98f', style === 'real' ? 0.7 : style === 'clay' ? 0.9 : 0.6]} />
+      <ambientLight intensity={ambK * (style === 'toon' ? 0.9 : style === 'real' ? 0 : style === 'clay' ? 1.15 : 0.8)} color={style === 'toon' ? '#ffe9d6' : style === 'clay' ? '#fff4e6' : '#ffffff'} />
+      <hemisphereLight args={[style === 'toon' ? '#fff8ec' : style === 'real' || style === 'clay' ? '#fff4e4' : '#ffffff', style === 'toon' ? '#e7b48c' : style === 'clay' ? '#d9c6aa' : '#b9a98f', hemiK * (style === 'real' ? 0.7 : style === 'clay' ? 0.9 : 0.6)]} />
       <primitive object={aim} />
       <directionalLight
         key={`${r.toFixed(2)}`}
         position={sun.pos as unknown as [number, number, number]}
         target={aim}
-        intensity={sun.intensity}
+        intensity={sun.intensity * sunK}
         color={sun.color}
         castShadow={shadows}
         shadow-mapSize={[2048, 2048]}

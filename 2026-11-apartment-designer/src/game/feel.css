@@ -1,0 +1,36 @@
+/* Game feel: the star-loss pill, the buy hint pill and the Dream home card. */
+
+/* A soft coral pill under the vibe meter when stars drop: what broke, and Undo. */
+.feel-loss {
+  position: absolute; top: calc(100% + 6px); z-index: 5; display: inline-flex; align-items: center; gap: 8px;
+  max-width: min(330px, calc(100vw - 112px)); padding: 4px 4px 4px 12px; border-radius: 999px;
+  background: color-mix(in srgb, var(--g-coral, #e9785a) 16%, var(--g-paper, #fffdf8)); color: #8a3a26;
+  box-shadow: var(--g-shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.12)); font: 700 12px/1.2 var(--g-font, system-ui); white-space: nowrap; pointer-events: auto;
+  animation: g-fade 0.3s var(--g-ease, ease-out);
+}
+.feel-loss-text { overflow: hidden; text-overflow: ellipsis; }
+.feel-loss-text b { font-weight: 900; color: #b2462c; }
+.feel-loss-undo {
+  flex: none; border: none; cursor: pointer; padding: 4px 11px; border-radius: 999px; background: var(--g-coral, #e9785a); color: #fff;
+  font: 900 12px/1.2 var(--g-font, system-ui);
+}
+.feel-loss-undo:active { transform: scale(0.95); }
+
+/* The instruction behind the Next chip, kept above the cards while its hint is up. */
+.feel-hint-pill {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; margin: 2px 12px 6px; padding: 5px 12px; border-radius: 999px;
+  background: var(--g-sun, #f3b53c); color: #5a3a08; font: 700 12px/1.2 var(--g-font, system-ui); box-shadow: var(--g-shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.12));
+  width: fit-content; max-width: calc(100% - 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  animation: g-fade 0.3s var(--g-ease, ease-out);
+}
+.feel-hint-pill b { font-weight: 900; }
+
+/* Dream home: the full card on every screen, with a photo button. */
+.feel-dream { background: radial-gradient(circle at 50% 42%, rgba(255, 194, 75, 0.3), rgba(45, 38, 32, 0.42) 75%); animation: g-fade 0.4s ease both; }
+/* The usual level-up fades itself out after 3.6 s; this one stays until tapped (or 12 s). */
+.feel-dream .goal-levelup-card { padding-bottom: 22px; animation: g-fade 0.5s var(--g-ease, ease-out) both; }
+.feel-dream .goal-levelup-card strong { font-size: 34px; }
+.feel-dream-photo { margin-top: 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .feel-loss, .feel-hint-pill, .feel-dream, .feel-dream .goal-levelup-card { animation: none; }
+}

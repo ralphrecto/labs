@@ -40,6 +40,10 @@ interface GameState {
   goalFocus: string | null
   /** A level just reached, for the celebration card. */
   levelUp: { key: number; index: number; name: string } | null
+  /** Evening light in the 3D view (lamps glow, the sun goes down): a reward from the Cozy level up. */
+  evening: boolean
+  /** When set, Look mode's shutter takes a photo as soon as it's showing (the Dream home card's "Take its photo"). */
+  photoRequest: number
 
   setPhase: (p: Phase) => void
   setMode: (m: GameMode) => void
@@ -57,6 +61,10 @@ interface GameState {
   celebrateLevel: (index: number, name: string) => void
   clearLevelUp: () => void
   consumeWelcomeBack: () => void
+  setEvening: (on: boolean) => void
+  /** Switch to Look mode and have the shutter take a photo there. */
+  requestPhoto: () => void
+  consumePhotoRequest: () => void
 }
 
 const ONBOARDED_KEY = 'apartment-designer:onboarded'
@@ -154,6 +162,8 @@ export const useGame = create<GameState>((set) => ({
   buyHint: null,
   goalFocus: null,
   levelUp: null,
+  evening: false,
+  photoRequest: 0,
   classic: (() => {
     try {
       return localStorage.getItem(CLASSIC_KEY) === '1'
@@ -208,4 +218,7 @@ export const useGame = create<GameState>((set) => ({
   celebrateLevel: (index, name) => set({ levelUp: { key: Date.now(), index, name } }),
   clearLevelUp: () => set({ levelUp: null }),
   consumeWelcomeBack: () => set({ welcomeBack: false }),
+  setEvening: (evening) => set({ evening }),
+  requestPhoto: () => set({ mode: 'look', sheet: null, levelUp: null, photoRequest: Date.now() }),
+  consumePhotoRequest: () => set({ photoRequest: 0 }),
 }))
