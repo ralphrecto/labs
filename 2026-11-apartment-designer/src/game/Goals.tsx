@@ -1,6 +1,6 @@
 // Goals HUD: the vibe meter pill (stars, level, progress, celebrations), the next-goal chip, the
 // level-up card and the goals sheet.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { useAnalysis } from '../analysis'
 import { catalogEntry, itemFromCatalog } from '../model/catalog'
 import { findDrop } from '../model/placement'
@@ -280,7 +280,8 @@ export function VibeMeter() {
       home: homeName,
       away: lastAwayMs ? ago(lastAwayMs) : undefined,
       line: `${homeName} · ${designName} · ${sc.level.name}, ${sc.stars}★`,
-      top: sc.level.index >= LEVELS.length - 1,
+      // Open bonus goals come before a variation, even at the top level.
+      top: sc.level.index >= LEVELS.length - 1 && !nextRef.current,
     })
     // Only when the flag is raised; the score at that moment is the one to suggest from.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -446,11 +447,15 @@ function showGoal(g: Goal) {
   // A goal fixed by moving a piece (an overlap, a piece in a wall, a blocked door): select that piece.
   const kind = !g.tab ? MOVE_GOAL[g.id] : undefined
   const issue = kind ? lastIssues.find((i) => i.kind === kind && i.severity !== 'info' && i.placementIds.length) : undefined
-  if (issue) {
-    const st = useStore.getState()
+  // Or a goal about a piece you already have (a coffee table to move in front of the sofa, a desk
+  // to move out of the bedroom to make room for a bed): select that piece, never buy another.
+  const st0 = useStore.getState()
+  const moveId = issue ? issue.placementIds[0] : !g.tab && g.near && activeLayout(st0.doc).placements.some((p) => p.id === g.near) ? g.near : undefined
+  if (moveId) {
+    const st = st0
     if (st.mode !== 'select') st.setMode('select')
     useGame.setState({ mode: 'buy', sheet: null, buyHint: null })
-    st.select({ kind: 'placement', id: issue.placementIds[0] })
+    st.select({ kind: 'placement', id: moveId })
     if (g.hint) st.notify(g.hint)
     return
   }
@@ -462,6 +467,8 @@ function showGoal(g: Goal) {
   useGame.getState().showGoal(g)
 }
 
+/** Taps this soon after the Dream home card appears are ignored (ms). */
+const DREAM_TAP_GUARD_MS = 1500
 const CONFETTI = ['var(--g-coral)', 'var(--g-sun)', 'var(--g-sage)', 'var(--g-sky)', 'var(--g-plum)']
 
 /** The level-up moment: a card with confetti, over the HUD, for a few seconds. Tap to close. */
@@ -478,8 +485,16 @@ export function LevelUpCard() {
   // On phones a level-up is a compact banner under the pill (VibeMeter), so the room stays in view.
   // The top level gets the full card everywhere: it's the moment the whole game builds to.
   if (!levelUp || (phone && !dream)) return null
+  // The Dream home card ignores taps for a moment (a tap meant for the Next chip mustn't close it),
+  // then closes only from the backdrop or its close button.
+  const close = (e: ReactMouseEvent) => {
+    if (!dream) return useGame.getState().clearLevelUp()
+    if (Date.now() - levelUp.key < DREAM_TAP_GUARD_MS) return
+    const t = e.target as HTMLElement
+    if (t === e.currentTarget || t.closest('.goal-confetti')) useGame.getState().clearLevelUp()
+  }
   return (
-    <div className={`goal-levelup${dream ? ' feel-dream' : ''}`} key={levelUp.key} role="status" onClick={() => useGame.getState().clearLevelUp()}>
+    <div className={`goal-levelup${dream ? ' feel-dream' : ''}`} key={levelUp.key} role="status" onClick={close}>
       <div className="goal-confetti" aria-hidden>
         {Array.from({ length: reduceMotion ? 0 : dream ? 48 : 24 }, (_, i) => (
           <i
@@ -501,6 +516,19 @@ export function LevelUpCard() {
           <IconSparkle className="goal-spark s2" />
           <IconSparkle className="goal-spark s3" />
         </div>
+        {dream && (
+          <button
+            type="button"
+            className="g-icon sm goal-close"
+            aria-label="Close"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (Date.now() - levelUp.key >= DREAM_TAP_GUARD_MS) useGame.getState().clearLevelUp()
+            }}
+          >
+            <IconClose />
+          </button>
+        )}
         <small>{dream ? 'You did it!' : 'Level up!'}</small>
         <strong>{levelUp.name}</strong>
         <span>
@@ -580,6 +608,11 @@ export function GoalsSheet() {
   const focusId = focused?.locked ? 'locked' : focus
   // One name for the level everywhere: the pill's. The headline only differs when there's nothing yet or a snag.
   const headline = score.headline === score.level.name ? null : score.headline
+  // At the top level the bonus goals are what's left to play for.
+  const bonus = score.goals.filter((g) => g.bonus)
+  const bonusLeft = bonus.filter((g) => !g.done).length
+  const bonusStars = bonus.reduce((a, g) => a + (g.done ? g.stars : 0), 0)
+  const bonusMax = bonus.reduce((a, g) => a + g.stars, 0)
   return (
     <div className="g-scrim" onClick={close}>
       <div ref={sheetRef} className="g-sheet goal-sheet" role="dialog" aria-modal="true" aria-label="Goals" onClick={(e) => e.stopPropagation()}>
@@ -607,7 +640,9 @@ export function GoalsSheet() {
             </div>
             <div className="goal-hero-sub">
               {!score.level.next
-                ? 'Top level reached. What a home!'
+                ? bonusLeft
+                  ? `Top level reached · ${bonusLeft} bonus goal${bonusLeft === 1 ? '' : 's'} left (★${bonusStars}/${bonusMax})`
+                  : 'Top level reached. What a home!'
                 : score.level.toNext > 0
                   ? `${score.level.toNext} more ★ to ${score.level.next}`
                   : `Fix the snag to reach ${score.level.next}`}
