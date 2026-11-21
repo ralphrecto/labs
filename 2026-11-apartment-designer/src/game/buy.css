@@ -13,6 +13,11 @@
 @media (min-width: 700px) {
   .buy-drawer { left: 16px; right: 16px; width: auto; border-radius: var(--g-r-lg); max-height: min(46vh, 380px); padding: 12px 0 10px; }
 }
+/* Phones: the compact drawer (hud.css) is short; expanded it may take more of the screen. */
+@media (max-width: 700px) and (orientation: portrait) {
+  .buy-drawer { max-height: 26vh; }
+  .hud-drawer-slot.expanded .buy-drawer { max-height: 42vh; }
+}
 @keyframes buy-open { from { transform: translateY(70%) scale(0.98); opacity: 0; } 60% { opacity: 1; } }
 
 /* ---------------------------------------------------------------- category tabs */

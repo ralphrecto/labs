@@ -799,13 +799,34 @@ function nearestPlacementOnScreen(e: ThreeEvent<MouseEvent>, placed: { p: Placem
 export interface SceneInset {
   top: number
   bottom: number
+  /** A column of buttons down the right edge (the phone camera buttons): the home is framed beside it. */
+  right?: number
 }
+
+/**
+ * Whether the player has orbited or zoomed the game overview since it was last framed, so the
+ * game's View button can offer to recenter first. Plain module state with listeners, like viewFrame.
+ */
+export const camMoved = {
+  value: false,
+  listeners: new Set<() => void>(),
+  set(v: boolean) {
+    if (camMoved.value === v) return
+    camMoved.value = v
+    camMoved.listeners.forEach((l) => l())
+  },
+}
+
+/** Width of the pane the home is framed in: the whole width less the right-hand button column. */
+const visibleWidth = (w: number, inset?: SceneInset) => Math.max(w * 0.5, w - (inset?.right ?? 0))
 
 /** Height of the part of the pane the HUD leaves visible, never less than a quarter of it. */
 const visibleHeight = (h: number, inset?: SceneInset) => Math.max(h * 0.25, h - (inset?.top ?? 0) - (inset?.bottom ?? 0))
 
 /** How much of the visible stage the home spans across its tighter direction: about a 10% margin each side. */
 const FILL = 0.8
+/** Phones (portrait, narrow): the stage is small, so the home runs closer to its edges. */
+const PHONE_FILL = 0.88
 /** Look mode: nearly edge to edge. */
 const FULL_FILL = 0.94
 /** The overview looks down from the front, a little to the right. */
@@ -850,7 +871,7 @@ function fitView(
 ): { target: THREE.Vector3; dist: number } {
   const t = Math.tan((fovDeg * Math.PI) / 360)
   const ky = t * (visibleHeight(height, inset) / height) * fill
-  const kx = t * (width / height) * fill
+  const kx = t * (visibleWidth(width, inset) / height) * fill
   const box = new THREE.Box3().setFromPoints(pts)
   let target = new THREE.Vector3((box.min.x + box.max.x) / 2, 0, (box.min.z + box.max.z) / 2)
   const axes = (d: THREE.Vector3) => {
@@ -929,8 +950,22 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
       touched.current = true
       goal.current = null
     }
+    // A drag (not just a tap) moves the view off its framing: the View button then recenters.
+    let dragging = false
+    const down = () => (dragging = true)
+    const up = () => (dragging = false)
+    const change = () => dragging && camMoved.set(true)
+    camMoved.set(false)
     controls.addEventListener('start', stop)
-    return () => controls.removeEventListener('start', stop)
+    controls.addEventListener('start', down)
+    controls.addEventListener('end', up)
+    controls.addEventListener('change', change)
+    return () => {
+      controls.removeEventListener('start', stop)
+      controls.removeEventListener('start', down)
+      controls.removeEventListener('end', up)
+      controls.removeEventListener('change', change)
+    }
   }, [controls])
   useLayoutEffect(() => {
     if (touched.current || size.width < 10 || !controls) return
@@ -938,7 +973,7 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
     if (!pts.length) return
     const dir = placed.current ? camera.position.clone().sub(controls.target).normalize() : OVERVIEW_DIR.clone()
     // Look mode has no drawer: the home fills the whole screen, under the floating buttons.
-    const fit = fitView(pts, dir, camera.fov, size.width, size.height, full ? undefined : inset, spin, full ? FULL_FILL : FILL)
+    const fit = fitView(pts, dir, camera.fov, size.width, size.height, full ? undefined : inset, spin, full ? FULL_FILL : inset && size.width <= 700 && size.height > size.width ? PHONE_FILL : FILL)
     if (!placed.current) {
       placed.current = true
       controls.target.copy(fit.target)
@@ -948,7 +983,7 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
       goal.current = null
     } else goal.current = fit
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [camera, controls, size.width, size.height, inset?.top, inset?.bottom, rooms, scans, spin, focus, full])
+  }, [camera, controls, size.width, size.height, inset?.top, inset?.bottom, inset?.right, rooms, scans, spin, focus, full])
   // The game's arrow keys follow this view (see viewFrame); the classic editor (no inset) keeps plan axes.
   useEffect(() => () => void (viewFrame.azimuth = null), [])
   useFrame((_, dt) => {
@@ -981,14 +1016,19 @@ function ViewOffset({ inset }: { inset?: SceneInset }) {
     const vis = visibleHeight(size.height, inset)
     // Centre of the visible band, measured from the pane's centre.
     const goal = inset ? top + vis / 2 - size.height / 2 : 0
+    const goalX = (inset?.right ?? 0) / 2
     let next = cur.current + (goal - cur.current) * (1 - Math.exp(-dt * 14))
     if (Math.abs(goal - next) < 0.5) next = goal
     const view = camera.view
-    const same = view?.enabled ? view.fullWidth === size.width && view.fullHeight === size.height && view.offsetY === -next : next === 0
+    // The right-hand button column shifts the picture left by half its width (no easing: it only
+    // changes with the screen).
+    const same = view?.enabled
+      ? view.fullWidth === size.width && view.fullHeight === size.height && view.offsetY === -next && view.offsetX === goalX
+      : next === 0 && goalX === 0
     if (same) return
     cur.current = next
-    if (next === 0) camera.clearViewOffset()
-    else camera.setViewOffset(size.width, size.height, 0, -next, size.width, size.height)
+    if (next === 0 && goalX === 0) camera.clearViewOffset()
+    else camera.setViewOffset(size.width, size.height, goalX, -next, size.width, size.height)
   })
   useEffect(() => () => camera.clearViewOffset(), [camera])
   return null

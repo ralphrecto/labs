@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react'
 import App, { useScanFiles, useShortcuts } from '../App'
 import { useAnalysis } from '../analysis'
 import { Inspector } from '../components/Panels'
@@ -14,7 +14,7 @@ import { useScanUI } from '../scan/scanUi'
 import { activeLayout, loadSample, openDocAsHome, useStore } from '../store'
 import { DesignsSheetBody } from './Designs'
 import { downloadJSON, parseDoc } from '../storage'
-import { Scene3D, type SceneInset, type WallMode } from '../three/Scene3D'
+import { camMoved, Scene3D, type SceneInset, type WallMode } from '../three/Scene3D'
 import { BuyDrawer, CATEGORY_GROUPS, ShopSheet } from './BuyDrawer'
 import { flushEditRun, rotatePlacementSmart } from './editActions'
 import { ItemThumb } from './ItemThumb'
@@ -67,6 +67,9 @@ function GameApp() {
   }, [])
 
   const pickingStyle = useStylePicker((s) => s.open)
+  // Phones show a compact drawer (one row of small thumbnails); tapping the open tab again
+  // expands it to the full cards and back (hud.css). The camera isn't refitted for it.
+  const [drawerExpanded, setDrawerExpanded] = useState(false)
   const tool = storeMode !== 'select'
   // In Furnish the drawer stays open while a piece is selected (its actions ride in a slim strip
   // above it), so placing piece after piece needs no "Done" in between.
@@ -96,7 +99,12 @@ function GameApp() {
           {showDrawer && (
             // The drawer steps aside while the style picker is open, so on a phone the style tiles
             // and their names are never under it. Hidden rather than unmounted, so it comes back as it was.
-            <div className={`hud-drawer-slot${pickingStyle ? ' tucked' : ''}`}>
+            <div
+              className={`hud-drawer-slot${pickingStyle ? ' tucked' : ''}${drawerExpanded ? ' expanded' : ''}`}
+              onClickCapture={(e) => {
+                if (e.target instanceof Element && e.target.closest('.buy-tab.on')) setDrawerExpanded((x) => !x)
+              }}
+            >
               <BuyDrawer top={selection ? <ContextBar slim /> : null} />
             </div>
           )}
@@ -226,7 +234,7 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
         else useStore.getState().addItemFromCatalog(catalogEntry(cat))
       }}
     >
-      {phase === 'onboarding' ? null : view === '3d' ? <Scene3D control={control} /> : <PlanView />}
+      {phase === 'onboarding' ? null : view === '3d' ? <Scene3D control={control} /> : <PlanView inset={inset} />}
     </div>
   )
 }
@@ -235,7 +243,7 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
 const BOTTOM_HUD = ['.buy-drawer', '.hud-ctx-wrap', '.hud-tray', '.hud-dock', '.hud-review']
 /** After a framing change, how long the HUD may settle (pieces mounting) before the inset is held. */
 const INSET_SETTLE_MS = 700
-const TOP_HUD = ['.hud-top', '.hud-look-bar']
+const TOP_HUD = ['.hud-top', '.goal-next', '.hud-look-bar']
 
 /**
  * How much of the stage the HUD covers at the top and bottom (CSS px), so the 3D view can centre
@@ -275,8 +283,14 @@ function useHudInset(root: RefObject<HTMLDivElement | null>, frameKey: string): 
         const el = game.querySelector<HTMLElement>(sel)
         if (el) top = Math.max(top, offsetTopIn(el, game) + el.offsetHeight)
       }
+      // On a phone the camera buttons run down the right edge of the stage: frame the home beside them.
+      let right = 0
+      const camEl = game.querySelector<HTMLElement>('.hud-cam')
+      if (camEl && W <= 700 && H > W) right = Math.max(0, W - (camEl.getBoundingClientRect().left - game.getBoundingClientRect().left) + 4)
       if (performance.now() > openUntil.current) return
-      setInset((was) => (Math.abs(was.top - top) < 4 && Math.abs(was.bottom - bottom) < 4 ? was : { top, bottom }))
+      setInset((was) =>
+        Math.abs(was.top - top) < 4 && Math.abs(was.bottom - bottom) < 4 && Math.abs((was.right ?? 0) - right) < 4 ? was : { top, bottom, right },
+      )
     }
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(measure)
@@ -446,12 +460,11 @@ function Dock() {
 const CAM_LABELS_KEY = 'apartment-designer:cam-labels-seen'
 
 /**
- * Names next to the camera buttons on a first visit, until one is used or a few seconds pass. Not
- * on phones: there they would run under the Next chip, and the first seconds belong to the goal.
+ * Names next to the camera buttons on a first visit, until one is used or a few seconds pass. On
+ * phones they are small captions under the buttons instead (hud.css), clear of the Next chip.
  */
 function useFirstRunLabels() {
   const [show, setShow] = useState(() => {
-    if (typeof matchMedia === 'function' && matchMedia('(max-width: 700px)').matches) return false
     try {
       return localStorage.getItem(CAM_LABELS_KEY) !== '1'
     } catch {
@@ -474,30 +487,37 @@ function useFirstRunLabels() {
   return [show, done] as const
 }
 
+function subscribeCamMoved(l: () => void) {
+  camMoved.listeners.add(l)
+  return () => {
+    camMoved.listeners.delete(l)
+  }
+}
+
 function CameraControls() {
   const view = useStageView()
   const mode = useGame((s) => s.mode)
   const tool = useStore((s) => s.mode !== 'select')
   const [labels, seen] = useFirstRunLabels()
+  const moved = useSyncExternalStore(subscribeCamMoved, () => camMoved.value)
   if (mode === 'look' || tool) return null
-  const planLabel = view === '3d' ? 'Top-down plan' : '3D view'
-  const recenter = 'Recenter the view'
+  // One View button: it swaps 3D and the plan, but once the player has dragged the 3D view away
+  // from its framing, the first tap brings it back (a crosshair), and the next one goes to the plan.
+  const recenterFirst = view === '3d' && moved
+  const viewLabel = recenterFirst ? 'Recenter the view' : view === '3d' ? 'Top-down plan' : '3D view'
   return (
     <div className={`hud-cam${labels ? ' labelled' : ''}`} onPointerDown={labels ? seen : undefined}>
       <div className="hud-cam-row">
-        {labels && <span className="hud-cam-label">{view === '3d' ? 'Plan' : '3D'}</span>}
-        <button className="g-icon sm" onClick={() => useGame.getState().setCamera(view === '3d' ? 'plan' : '3d')} aria-label={planLabel} title={`${planLabel} (P)`}>
-          {view === '3d' ? <I.IconMap /> : <I.IconCube />}
+        {labels && <span className="hud-cam-label">{recenterFirst ? 'Recenter' : view === '3d' ? 'Plan' : '3D'}</span>}
+        <button
+          className="g-icon sm hud-view"
+          onClick={() => (recenterFirst ? setCam({ resetKey: camState.resetKey + 1 }) : useGame.getState().setCamera(view === '3d' ? 'plan' : '3d'))}
+          aria-label={viewLabel}
+          title={`${viewLabel} (${recenterFirst ? 'Home' : 'P'})`}
+        >
+          {recenterFirst ? <I.IconCrosshair /> : view === '3d' ? <I.IconMap /> : <I.IconCube />}
         </button>
       </div>
-      {view === '3d' && (
-        <div className="hud-cam-row">
-          {labels && <span className="hud-cam-label">Recenter</span>}
-          <button className="g-icon sm" onClick={() => setCam({ resetKey: camState.resetKey + 1 })} aria-label={recenter} title={`${recenter} (Home)`}>
-            <I.IconHome />
-          </button>
-        </div>
-      )}
       {view === '3d' && (
         <div className="hud-cam-row">
           {labels && <span className="hud-cam-label">Style</span>}
