@@ -261,7 +261,7 @@ Reviewers: art director on evening mode and the compact layout, lamp-hosting des
   - The style picker closes after each pick, so later style taps miss.
   - Backdate the last visit with addInitScript before load, because pagehide overwrites it.
 
-## Round 8 (2026-11-21, 13:00 to 14:00 UTC)
+## Round 8 (2026-11-21, 13:00 to 13:30 UTC)
 
 Reviewers: cozy first-timer (14 Next taps to Dream home, no dead ends), lighting designer, remix player (who also wrote the specs).
 
