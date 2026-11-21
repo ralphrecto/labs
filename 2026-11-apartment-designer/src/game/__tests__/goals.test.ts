@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { analyze } from '../../analysis'
 import { catalogEntry, itemFromCatalog } from '../../model/catalog'
 import { emptyDoc, rectRoom, sampleDoc } from '../../model/sample'
-import type { Doc, Item, Placement } from '../../model/types'
+import type { Doc, Item, Placement, TwistId } from '../../model/types'
+import { ANCHORS, applicableTwists, remixedLayout, sameArrangement } from '../goals'
 import { findDrop } from '../../model/placement'
 import { bankableLevel, bestLevelKey, DREAM_BONUS_STARS, inferEntrance, LEVEL_FRACTIONS, LEVELS, levelThresholds, nextGoal, scoreHome, SNAG_LEVEL_CAP, WARNING_LEVEL_CAP, withBestLevel, type Goal } from '../goals'
 
@@ -675,5 +676,166 @@ describe('round 6 (play-test review)', () => {
     }
     expect(dream, `Dream home after ${dream} placements`).toBeGreaterThanOrEqual(12)
     expect(dream).toBeLessThanOrEqual(25)
+  }, 60000)
+})
+
+describe('remix this home (round 8)', () => {
+  let k = 0
+  const ids = () => `rx${++k}`
+  /** Remix the active design of d with a twist, and play the remix. */
+  function remix(d: Doc, twist: TwistId) {
+    const l = remixedLayout(d, d.activeLayoutId, twist, ids)!
+    d.layouts.push(l)
+    d.activeLayoutId = l.id
+    return l
+  }
+  const twistOf = (d: Doc) => score(d).goals.find((g) => g.id.startsWith('twist:'))!
+  const cat = (d: Doc, p: Placement) => d.items.find((i) => i.id === p.itemId)!.category
+
+  it('keeps only the big pieces, names the remix after its twist and starts well below Dream home', () => {
+    const d = sampleDoc()
+    const src = layoutOf(d)
+    const l = remix(d, 'window-seat')
+    expect(l.name).toBe('Window seat')
+    expect(l.remix).toMatchObject({ from: src.id, twist: 'window-seat', anchors: l.placements.length })
+    expect(l.placements.length).toBeGreaterThan(0)
+    expect(l.placements.every((p) => ANCHORS.has(cat(d, p)) && !p.on)).toBe(true)
+    expect(l.placements.every((p) => !src.placements.some((q) => q.id === p.id))).toBe(true)
+    expect(l.placements.length).toBeLessThan(src.placements.length)
+    expect(score(d).level.index).toBeLessThanOrEqual(LEVELS.indexOf('Lived-in'))
+    expect(remixedLayout(d, src.id, 'window-seat', ids)!.name).toBe('Window seat 2')
+    // Pieces left out stay in the home's library, ready to place again.
+    expect(d.items.length).toBe(sampleDoc().items.length)
+  })
+
+  it('offers only twists the plan can take', () => {
+    expect(applicableTwists(sampleDoc())).toEqual(expect.arrayContaining(['window-seat', 'bed-swap', 'talk-corner', 'open-floor', 'less-is-more']))
+    const bare = emptyDoc()
+    bare.rooms.push(rectRoom('Office', 0, 0, 3, 3))
+    const t = applicableTwists(bare, () => false)
+    expect(t).not.toContain('window-seat')
+    expect(t).not.toContain('bed-swap')
+    expect(t).not.toContain('talk-corner')
+  })
+
+  it('window seat: the sofa looks at a window in its room', () => {
+    const d = sampleDoc()
+    remix(d, 'window-seat')
+    expect(twistOf(d)).toMatchObject({ id: 'twist:window-seat', done: true, category: 'style', stars: 3 })
+    const sofa = layoutOf(d).placements.find((p) => cat(d, p) === 'sofa')!
+    sofa.rotation = 0
+    expect(twistOf(d).done).toBe(false)
+  })
+
+  it('fresh spots: every big piece at least 80 cm from where it stood', () => {
+    const d = bedroomDoc()
+    place(d, 'bed', 2, 1.2)
+    place(d, 'wardrobe', 3.5, 3.6, Math.PI)
+    remix(d, 'fresh-spots')
+    expect(twistOf(d)).toMatchObject({ done: false, progress: 0 })
+    const [bed, wardrobe] = layoutOf(d).placements
+    bed.y = 2.2
+    expect(twistOf(d).progress).toBeCloseTo(0.5)
+    wardrobe.x = 1.0
+    expect(twistOf(d).done).toBe(true)
+  })
+
+  it('bed swap: the bed turned or on another wall', () => {
+    const d = bedroomDoc()
+    place(d, 'bed', 2, 2)
+    remix(d, 'bed-swap')
+    expect(twistOf(d).done).toBe(false)
+    layoutOf(d).placements[0].rotation = Math.PI / 2
+    expect(twistOf(d).done).toBe(true)
+  })
+
+  it('talk corner: two seats facing each other, close enough to talk', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 6, 5))
+    remix(d, 'talk-corner')
+    place(d, 'sofa', 3, 0.6, 0)
+    const chair = place(d, 'armchair', 3, 2.6, Math.PI)
+    expect(twistOf(d).done).toBe(true)
+    chair.rotation = 0
+    expect(twistOf(d).done).toBe(false)
+    chair.rotation = Math.PI
+    chair.y = 4.4
+    expect(twistOf(d).done).toBe(false)
+  })
+
+  it('open floor: the middle of the living room stays clear, with 4 pieces in the room', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 5, 4))
+    remix(d, 'open-floor')
+    place(d, 'sofa', 2.5, 3.5, Math.PI)
+    place(d, 'armchair', 0.6, 0.6)
+    place(d, 'plant', 4.6, 0.4)
+    expect(twistOf(d).done).toBe(false)
+    place(d, 'floor-lamp', 4.6, 3.6)
+    expect(twistOf(d).done).toBe(true)
+    place(d, 'coffee-table', 2.5, 2.2)
+    expect(twistOf(d).done).toBe(false)
+  })
+
+  it('less is more: reads as a budget of 10 pieces', () => {
+    const d = sampleDoc()
+    remix(d, 'less-is-more')
+    expect(twistOf(d).done).toBe(true)
+    for (let i = 0; i < 9; i++) place(d, 'plant', 0.3 + i * 0.4, 0.3)
+    const g = twistOf(d)
+    expect(g.done).toBe(false)
+    expect(g.hint).toMatch(/^1\d of 10 pieces/)
+    expect(g.progress).toBeLessThan(1)
+  })
+
+  it('tells an untouched copy from its source', () => {
+    const d = sampleDoc()
+    const a = layoutOf(d)
+    const b = { ...a, id: 'copy', placements: a.placements.map((p) => ({ ...p, id: `${p.id}c` })) }
+    expect(sameArrangement(a, b)).toBe(true)
+    b.placements[0] = { ...b.placements[0], x: b.placements[0].x + 0.3 }
+    expect(sameArrangement(a, b)).toBe(false)
+  })
+
+  /** Furnishes d by the Next chip until Dream home: the number of placements it took, or -1. */
+  function playToDream(d: Doc, tag: string) {
+    const fits = (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
+    let last = ''
+    let repeats = 0
+    let best = -1
+    for (let i = 0; i < 30; i++) {
+      const s = score(d)
+      if (s.level.index === LEVELS.length - 1) return i
+      const next = nextGoal(s, fits)
+      if (!next?.item || !next.tab) return -1
+      const key = `${next.id}:${next.item}`
+      repeats = key === last && s.stars <= best ? repeats + 1 : 1
+      expect(repeats, `${key} offered ${repeats} times without progress`).toBeLessThanOrEqual(3)
+      last = key
+      best = Math.max(best, s.stars)
+      const item = itemFromCatalog(catalogEntry(next.item), `${tag}n${i}`)
+      const r = findDrop(d, layoutOf(d), item, { nextTo: next.near })
+      if (!r.ok) return -1
+      d.items.push(item)
+      layoutOf(d).placements.push({ id: `${tag}p${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation, on: r.spot.on })
+    }
+    return -1
+  }
+
+  it('a remix of the sample reaches Dream home by the Next chip, only with its twist done', () => {
+    const d = sampleDoc()
+    expect(playToDream(d, 'orig')).toBeGreaterThan(0)
+    const l = remix(d, 'window-seat')
+    expect(score(d).level.index).toBeLessThanOrEqual(LEVELS.indexOf('Lived-in'))
+    const dream = playToDream(d, 'rx')
+    console.log(`remix (window-seat) of the furnished sample: ${l.remix!.anchors} anchors, Dream home after ${dream} Next-chip placements`)
+    expect(dream, `Dream home after ${dream} placements`).toBeGreaterThanOrEqual(6)
+    expect(dream).toBeLessThanOrEqual(25)
+    expect(twistOf(d).done).toBe(true)
+    // Turn the sofa away from the window: the twist opens and Dream home is out of reach.
+    const sofa = layoutOf(d).placements.find((p) => cat(d, p) === 'sofa')!
+    sofa.rotation = 0
+    expect(twistOf(d).done).toBe(false)
+    expect(score(d).level.index).toBeLessThanOrEqual(WARNING_LEVEL_CAP)
   }, 60000)
 })

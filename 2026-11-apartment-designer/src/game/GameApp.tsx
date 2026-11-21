@@ -12,7 +12,7 @@ import { toScanData } from '../scan/align'
 import { scanEntry } from '../scan/runtime'
 import { useScanUI } from '../scan/scanUi'
 import { activeLayout, loadSample, openDocAsHome, useStore } from '../store'
-import { DesignsSheetBody } from './Designs'
+import { DesignsSheetBody, RemixPicker } from './Designs'
 import { downloadJSON, parseDoc } from '../storage'
 import { camMoved, Scene3D, type SceneInset, type WallMode } from '../three/Scene3D'
 import { BuyDrawer, CATEGORY_GROUPS, ShopSheet } from './BuyDrawer'
@@ -900,9 +900,7 @@ function DesignsSheet() {
     <Sheet title={name} sub="Try different designs for the same home and flip between them.">
       <DesignsSheetBody />
       <div className="dz-actions">
-        <button className="g-btn primary" onClick={() => s.duplicateLayout(useStore.getState().doc.activeLayoutId)}>
-          <I.IconCopy width={18} height={18} /> Try a variation
-        </button>
+        <RemixPicker />
         <button className="g-btn ghost" onClick={() => s.addLayout()}>
           <I.IconPlus width={18} height={18} /> New empty design
         </button>

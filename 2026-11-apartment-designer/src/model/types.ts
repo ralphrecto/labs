@@ -102,6 +102,21 @@ export interface Layout {
   id: string
   name: string
   placements: Placement[]
+  /** A remix: started from another design's big pieces, with a twist to meet (see TWISTS in game/goals). */
+  remix?: Remix
+}
+
+/** The twist challenges a remix can take on. */
+export type TwistId = 'window-seat' | 'fresh-spots' | 'bed-swap' | 'talk-corner' | 'open-floor' | 'less-is-more'
+
+export interface Remix {
+  /** The design it was remixed from. */
+  from: string
+  twist: TwistId
+  /** How many anchor pieces it started with. */
+  anchors: number
+  /** When it first reached Dream home. */
+  dreamAt?: number
 }
 
 export interface Apartment {

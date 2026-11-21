@@ -10,6 +10,8 @@ import { lastAwayMs, useGame } from './gameStore'
 import { bankableLevel, bestLevelKey, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, scoreHome, type Goal, type HomeScore } from './goals'
 import { IconCheck, IconClose, IconSparkle, IconStar } from './icons'
 import { useModal } from './useModal'
+import { openRemixPicker } from './Designs'
+import { TWISTS } from './goals'
 import { reduceMotion } from '../motion'
 import type { Issue } from '../model/checks'
 import './feel.css'
@@ -33,6 +35,11 @@ export function useHomeScore(): HomeScore & { best: number } {
   useEffect(() => {
     if (bank > best) useGame.getState().noteLevel(key, bank)
   }, [key, bank, best])
+  // A remix's first Dream home is noted on the design (the Designs sheet's ribbon, the card's count).
+  const remixDreamDue = bank === LEVELS.length - 1 && !!layout.remix && !layout.remix.dreamAt
+  useEffect(() => {
+    if (remixDreamDue) useStore.getState().markRemixDream(layout.id)
+  }, [remixDreamDue, layout.id])
   return useMemo(() => ({ ...raw, best: Math.max(best, bank) }), [raw, best, bank])
 }
 
@@ -124,11 +131,9 @@ type Banner =
   /** `line`: "Sample apartment · Move-in day · Cozy, 14★". `top`: at the top level, lead with a variation. */
   | { key: number; kind: 'welcome'; goal?: Goal; home: string; away?: string; line: string; top: boolean }
 
-/** At the top level there's nothing left to climb in this design: a variation is the next game. */
+/** At the top level there's nothing left to climb in this design: a remix (with a twist) is the next game. */
 function tryVariation() {
-  const st = useStore.getState()
-  st.duplicateLayout(st.doc.activeLayoutId)
-  st.notify(`Made ${activeLayout(useStore.getState().doc).name}. Rearrange away!`)
+  openRemixPicker()
 }
 
 export function VibeMeter() {
@@ -280,8 +285,8 @@ export function VibeMeter() {
       home: homeName,
       away: lastAwayMs ? ago(lastAwayMs) : undefined,
       line: `${homeName} · ${designName} · ${sc.level.name}, ${sc.stars}★`,
-      // Open bonus goals come before a variation, even at the top level.
-      top: sc.level.index >= LEVELS.length - 1 && !nextRef.current,
+      // At the top level a remix comes before any bonus goal (only core goals beat it).
+      top: sc.level.index >= LEVELS.length - 1 && (!nextRef.current || !!nextRef.current.bonus),
     })
     // Only when the flag is raised; the score at that moment is the one to suggest from.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -314,7 +319,7 @@ export function VibeMeter() {
   const levelName = lagging ? LEVELS[Math.min(shownLevel, LEVELS.length - 1)] : score.level.name
   const fill = lagging ? 0 : levelProgress(score)
   // One quiet chip with the next goal. Tapping it steps it aside until the home changes.
-  const chip = next && !banner && !levelUp && !sheet && !loss && shown !== next.id ? next : null
+  const chip = next && !(top && next.bonus) && !banner && !levelUp && !sheet && !loss && shown !== next.id ? next : null
   const bestName = score.best > score.level.index ? LEVELS[score.best] : null
   return (
     <div className="goal-meter-wrap">
@@ -364,10 +369,10 @@ export function VibeMeter() {
           </button>
         </div>
       )}
-      {top && !next && !banner && !levelUp && !sheet && !loss && (
-        <button type="button" className="goal-next" onClick={tryVariation} aria-label="Top level reached. Try a variation of this design">
+      {top && (!next || next.bonus) && !banner && !levelUp && !sheet && !loss && (
+        <button type="button" className="goal-next" onClick={tryVariation} aria-label="Top level reached. Remix this home with a twist">
           <span className="goal-next-text">
-            <b>Try a variation</b>
+            <b>Remix this home</b>
           </span>
           <span className="goal-next-stars">★</span>
         </button>
@@ -422,7 +427,7 @@ export function VibeMeter() {
               {banner.away ? ` ${banner.away}` : ''}
             </small>
             <span className="dz-welcome-line">{banner.line}</span>
-            {banner.top ? 'Try a variation of this design' : banner.goal ? `Next: ${banner.goal.title} (+${banner.goal.stars} ★)` : 'Your home missed you.'}
+            {banner.top ? 'Remix this home' : banner.goal ? `Next: ${banner.goal.title} (+${banner.goal.stars} ★)` : 'Your home missed you.'}
           </span>
         </button>
       )}
@@ -476,6 +481,7 @@ export function LevelUpCard() {
   const levelUp = useGame((s) => s.levelUp)
   const phone = usePhone()
   const dream = !!levelUp && levelUp.index >= LEVELS.length - 1
+  const remixDone = useRemixDone(dream)
   useEffect(() => {
     if (!levelUp) return
     // The Dream home card stays a while: it has a button to press.
@@ -529,12 +535,23 @@ export function LevelUpCard() {
             <IconClose />
           </button>
         )}
-        <small>{dream ? 'You did it!' : 'Level up!'}</small>
-        <strong>{levelUp.name}</strong>
-        <span>
-          {dream ? `Every level reached: ${LEVELS.length} of ${LEVELS.length}` : `Level ${levelUp.index + 1} of ${LEVELS.length}`}
-        </span>
-        {levelGoalLine && <em className="goal-levelup-goal">{levelGoalLine}</em>}
+        {remixDone ? (
+          <>
+            <small>Remix complete!</small>
+            <strong>{remixDone.name}</strong>
+            <em className="goal-levelup-goal">Twist ✓ {remixDone.twist}</em>
+            <span>Your {ordinal(remixDone.count)} Dream home here</span>
+          </>
+        ) : (
+          <>
+            <small>{dream ? 'You did it!' : 'Level up!'}</small>
+            <strong>{levelUp.name}</strong>
+            <span>
+              {dream ? `Every level reached: ${LEVELS.length} of ${LEVELS.length}` : `Level ${levelUp.index + 1} of ${LEVELS.length}`}
+            </span>
+            {levelGoalLine && <em className="goal-levelup-goal">{levelGoalLine}</em>}
+          </>
+        )}
         {dream && (
           <button
             type="button"
@@ -549,10 +566,42 @@ export function LevelUpCard() {
             Take its photo
           </button>
         )}
+        {remixDone && (
+          <button
+            type="button"
+            className="g-btn ghost"
+            onClick={(e) => {
+              e.stopPropagation()
+              useGame.getState().clearLevelUp()
+              useGame.getState().openSheet('layouts')
+            }}
+          >
+            Compare
+          </button>
+        )}
       </div>
     </div>
   )
 }
+
+/**
+ * The Dream home card for a remix: its name, its twist and how many Dream homes this home has now
+ * (remixes that reached it, plus other designs whose best is Dream home).
+ */
+function useRemixDone(dream: boolean) {
+  const doc = useStore((s) => s.doc)
+  const bestLevel = useGame((s) => s.bestLevel)
+  const layout = activeLayout(doc)
+  if (!dream || !layout.remix) return null
+  const top = LEVELS.length - 1
+  const count = Math.max(
+    1,
+    doc.layouts.filter((l) => (l.remix ? !!l.remix.dreamAt || l.id === layout.id : (bestLevel[`${doc.apartment.id}:${l.id}`] ?? 0) >= top)).length,
+  )
+  return { name: layout.name, twist: TWISTS[layout.remix.twist]?.title ?? '', count }
+}
+
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th')}`
 
 function GoalRow({ g, focus }: { g: Goal; focus?: boolean }) {
   const ref = useRef<HTMLLIElement>(null)
