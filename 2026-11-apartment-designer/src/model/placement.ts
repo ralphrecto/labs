@@ -55,9 +55,9 @@ export const LAMPS = new Set(['floor-lamp', 'table-lamp', 'pendant'])
 /** Pieces that stand on another piece of furniture (Placement.on) instead of the floor. */
 export const HOSTED = new Set(['table-lamp', 'pendant'])
 /** Furniture with a top a table lamp can stand on. */
-export const SURFACES = new Set(['nightstand', 'side-table', 'desk', 'dresser', 'console-table', 'sideboard'])
+export const SURFACES = new Set(['nightstand', 'side-table', 'desk', 'dresser', 'console-table', 'sideboard', 'coffee-table'])
 /** How many table lamps each surface holds. */
-export const SURFACE_SLOTS: Record<string, number> = { nightstand: 1, 'side-table': 1, desk: 1, dresser: 2, 'console-table': 2, sideboard: 2, 'dining-table': 1 }
+export const SURFACE_SLOTS: Record<string, number> = { nightstand: 1, 'side-table': 1, desk: 1, dresser: 2, 'console-table': 2, sideboard: 2, 'dining-table': 1, 'coffee-table': 1 }
 /** What each hosted piece goes on: a table lamp stands on a surface, a pendant hangs over a dining table. */
 export const HOST_FOR: Record<string, Set<string>> = { 'table-lamp': SURFACES, pendant: new Set(['dining-table']) }
 const hostCats = (category: string | undefined) => HOST_FOR[category ?? 'table-lamp'] ?? SURFACES
@@ -562,7 +562,11 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
         const n = wallInwardNormal(room, wi)
         const rotation = facing(n)
         const step = 0.1
-        for (let t = hw; t <= L - hw + 1e-6; t += step) {
+        const along: number[] = []
+        for (let t = hw; t <= L - hw + 1e-6; t += step) along.push(t)
+        // r13-b sofa/coffee pairing: also try the spot square behind each lone coffee table.
+        if (cat === 'sofa') for (const t of loneTables) along.push(...pairedAlong(a, dir, L, hw, v(t.p.x, t.p.y)))
+        for (const t of along) {
           const c = add(add(a, scale(dir, t)), scale(n, hd + 0.005))
           let bonus = wallBacked ? 6 : 1
           bonus -= Math.abs(t - L / 2) * 0.3
@@ -588,7 +592,7 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
               // Backed onto this wall with the coffee table just in front: the pair, kept together.
               const g = polygonGap(orientedRect(c, hw, hd, rotation), t.body)
               const across = Math.abs(dot(sub(v(t.p.x, t.p.y), c), dir))
-              if (g > 0.3 && g < 0.8 && across < hw * 0.5 && dot(sub(v(t.p.x, t.p.y), c), n) > 0) bonus += 18 - Math.abs(g - SOFA_TABLE_GAP) * 10
+              if (dot(sub(v(t.p.x, t.p.y), c), n) > 0) bonus += pairBonus(g, across)
             }
           if (cat === 'sofa')
             for (const tv of tvs) {
@@ -809,6 +813,23 @@ const COFFEE_ZONE = 1.1
 const COFFEE_GAP = [0.45, 0.5] as const
 /** Where a sofa placed after its coffee table goes: this far (m, edge to edge) behind the table. */
 const SOFA_TABLE_GAP = 0.47
+// ---- r13-b: sofa <-> coffee table pairing (centred within PAIR_ACROSS, PAIR_GAP edge to edge) ----
+/** How far (m) a coffee table may sit off the sofa's centre line and still count as its pair. */
+const PAIR_ACROSS = 0.15
+/** The edge-to-edge gap (m) between a paired sofa and coffee table. */
+const PAIR_GAP = [0.4, 0.55] as const
+/** Bonus for a wall-backed sofa spot with a lone coffee table in front: only when truly paired. */
+function pairBonus(gap: number, across: number): number {
+  if (gap < PAIR_GAP[0] || gap > PAIR_GAP[1] || across > PAIR_ACROSS) return 0
+  return 18 - Math.abs(gap - SOFA_TABLE_GAP) * 10 - across * 20
+}
+/** Positions along a wall (from `a`, direction `dir`, length `L`) square behind `pt`, when a piece `hw` wide fits there. */
+function pairedAlong(a: Vec2, dir: Vec2, L: number, hw: number, pt: Vec2): number[] {
+  const t = dot(sub(pt, a), dir)
+  return t >= hw - 1e-6 && t <= L - hw + 1e-6 ? [t] : []
+}
+// ---- end r13-b pairing ----
+
 /** Score cost of standing on floor kept for a bed or a coffee table: only when nothing else fits. */
 const RESERVED_COST = 40
 
@@ -862,6 +883,8 @@ export function spotOn(host: HostLike, lamp: LampLike, slot: 0 | 1 = 0): Vec2 {
   let local: Vec2
   if (cat === 'dining-table') local = v(0, 0)
   else if (cat === 'nightstand' || cat === 'side-table') local = v(0, -hd + ld + 0.03)
+  // r13-b: a coffee table's lamp stands toward one end, centred front to back.
+  else if (cat === 'coffee-table') local = v(-Math.max(0, hw - lw - 0.1), 0)
   else if (cat === 'desk') local = v((slot === 0 ? -1 : 1) * Math.max(0, hw - lw - 0.05), -hd + ld + 0.05)
   else local = v((slot === 0 ? -1 : 1) * Math.max(0, hw - lw - 0.08), -hd + ld + 0.05)
   return add(v(host.p.x, host.p.y), rot(local, host.p.rotation))
@@ -929,7 +952,8 @@ export function findHostDrop(doc: Doc, layout: Layout, item: DropItem, opts: { n
     else if (cat === 'side-table') {
       const bySeat = placed.some((x) => ['sofa', 'armchair'].includes(x.it.category) && polygonGap(h.body, x.body) <= NEXT_TO_REACH)
       score += bySeat && unlit ? 22 : 10
-    } else score += 10
+    } else if (cat === 'coffee-table') score += 6 // r13-b: a lamp's last-choice top, after side tables
+    else score += 10
     if (room) {
       const a = roomAffinity(room, pendant ? 'dining-table' : 'table-lamp', doc.rooms)
       if (a !== -Infinity) score += a

@@ -73,6 +73,24 @@ describe('companions (round 12)', () => {
     }
   })
 
+  it('a sofa and its coffee table pair up centred, 40-55 cm apart, either order, any room size (r13)', () => {
+    const rooms = () => [studio(), studio(4, 3.4), studio(6, 5), studio(5, 6), emptySample()]
+    for (const order of [['sofa', 'coffee-table'], ['coffee-table', 'sofa']] as const)
+      rooms().forEach((d, i) => {
+        const a = drop(d, order[0])!
+        const b = drop(d, order[1])!
+        const [s, t] = order[0] === 'sofa' ? [a, b] : [b, a]
+        expect(s, `${order.join('>')} room ${i}`).not.toBeNull()
+        expect(t, `${order.join('>')} room ${i}`).not.toBeNull()
+        const gap = polygonGap(footprint(s.item, s.p), footprint(t.item, t.p))
+        const at = local(t.p, s.p)
+        expect(Math.abs(at.x), `${order.join('>')} room ${i} sideways`).toBeLessThanOrEqual(0.15)
+        expect(gap, `${order.join('>')} room ${i} gap`).toBeGreaterThanOrEqual(0.4)
+        expect(gap, `${order.join('>')} room ${i} gap`).toBeLessThanOrEqual(0.55)
+        expect(at.y).toBeGreaterThan(s.item.depth / 2)
+      })
+  })
+
   it("never puts a dining chair where its pull-out room runs through a wall", () => {
     for (const [w, dd] of [[3, 2.6], [2.6, 2.4], [2.4, 2.2], [4, 3]] as const) {
       const d = studio(w, dd)

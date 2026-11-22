@@ -6,7 +6,7 @@ import { catalogEntry, itemFromCatalog } from '../model/catalog'
 import { findDrop } from '../model/placement'
 import type { Doc } from '../model/types'
 import { activeLayout, useStore } from '../store'
-import { lastAwayMs, useGame, VISIT_KEY } from './gameStore'
+import { heldScore, lastAwayMs, settleStars, useGame, VISIT_KEY } from './gameStore'
 import { bankableLevel, bestLevelKey, levelBlocker, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, packedBoxIds, scoreHome, type Goal, type HomeScore } from './goals'
 import { unpackAndCelebrate } from './unpack'
 import { IconCheck, IconClose, IconSparkle, IconStar } from './icons'
@@ -182,7 +182,13 @@ function tryVariation() {
 }
 
 export function VibeMeter() {
-  const score = useHomeScore()
+  const live = useHomeScore()
+  // Mid-gesture (a drag, a run of nudges) the meter holds still on the score from before it began;
+  // when the gesture ends it settles once, with one net gain or loss for the whole move.
+  const gesturing = useStore((s) => s.gesture)
+  const held = useRef<typeof live | null>(null)
+  if (!gesturing) held.current = live
+  const score = heldScore(live, held.current, gesturing)
   const designKey = useStore((s) => bestLevelKey(s.doc))
   const homeName = useStore((s) => s.doc.apartment.name)
   const designName = useStore((s) => activeLayout(s.doc).name)
@@ -296,10 +302,11 @@ export function VibeMeter() {
     if (fresh.length > 4) return
     // A new visitor (a new day) changes the stars on offer, not the player's work: no cheer, no loss.
     if (before.visit !== visitGoal?.id) return
-    if (score.stars < before.stars) {
+    const net = settleStars(before.stars, score.stars)
+    if (net.kind === 'loss') {
       // A loss: say what broke, offer Undo, and clear any cheer (banner, pop, pending level-up).
       const broke = score.goals.filter((g) => !g.done && before.done.has(g.id)).sort((a, b) => b.stars - a.stars)[0]
-      setLoss({ key: Date.now(), delta: before.stars - score.stars, title: broke?.title ?? '' })
+      setLoss({ key: Date.now(), delta: net.delta, title: broke?.title ?? '' })
       setPop(null)
       setBanner((b) => (b?.kind === 'goal' ? null : b))
       clearTimeout(levelTimer.current)
@@ -307,8 +314,10 @@ export function VibeMeter() {
       if (useGame.getState().levelUp) useGame.getState().clearLevelUp()
       return
     }
-    if (score.stars > before.stars) setLoss(null)
-    if (score.stars > before.stars) setPop({ key: Date.now(), delta: score.stars - before.stars })
+    if (net.kind === 'gain') {
+      setLoss(null)
+      setPop({ key: Date.now(), delta: net.delta })
+    }
     const toast = useStore.getState().toast
     const placedToast = !!toast && PLACED_TOAST.test(toast)
     // First half of a two-step goal (a desk without its chair, a table without a chair).

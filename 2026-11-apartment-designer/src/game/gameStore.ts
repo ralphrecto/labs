@@ -310,3 +310,21 @@ export const useGame = create<GameState>((set) => ({
       return { visit }
     }),
 }))
+
+// ---- Steady stars while a gesture is open (r13-b) ----
+
+/**
+ * The score the vibe meter shows: while a drag or an edit run is open it keeps the score from the
+ * moment the gesture began, so stars, level and pills never flicker mid-move; once the gesture
+ * ends the live score shows again and the meter settles once, on the net change.
+ */
+export function heldScore<T>(live: T, held: T | null, gesturing: boolean): T {
+  return gesturing && held !== null ? held : live
+}
+
+/** The one net change a settled gesture (or a single edit) shows: a cheer, a soft loss, or nothing. */
+export function settleStars(before: number, after: number): { kind: 'gain' | 'loss' | 'none'; delta: number } {
+  if (after > before) return { kind: 'gain', delta: after - before }
+  if (after < before) return { kind: 'loss', delta: before - after }
+  return { kind: 'none', delta: 0 }
+}
