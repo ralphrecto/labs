@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import type { RenderStyle } from '../three/style'
 import type { Family } from './swatches'
+import type { Doc } from '../model/types'
+import { localDay, todayVisit, VISIT_BY_ID } from './visits'
 
 // Game-level UI state: which phase the player is in and which mode the HUD shows.
 // Document edits still go through `useStore` (src/store.ts); this store never touches the doc.
@@ -74,6 +76,20 @@ interface GameState {
   setUnpacked: (u: GameState['unpacked']) => void
   /** Remember the colour of a placed pick for its family. */
   setTaste: (family: Family, color: string) => void
+  /** Today's visitor and the stickers collected so far (one per visit ever finished). */
+  visit: VisitState
+  /** On a new local day (or the first time), pick today's visitor for this home. */
+  rollVisit: (doc: Doc, day?: string, met?: (visitId: string) => boolean) => void
+  /** Today's visitor (this one: a stale id from before a new day is ignored) is happy: mark the day done and collect the sticker. */
+  completeVisit: (visitId: string) => void
+}
+
+export interface VisitState {
+  /** The local day this visit is for ("2026-11-22"); empty before the first roll. */
+  date: string
+  visitId: string
+  done: boolean
+  stickers: string[]
 }
 
 const ONBOARDED_KEY = 'apartment-designer:onboarded'
@@ -82,6 +98,29 @@ const STYLE_KEY = 'apartment-designer:render-style'
 const BEST_LEVEL_KEY = 'apartment-designer:best-level'
 const LAST_VISIT_KEY = 'apartment-designer:last-visit'
 const TASTE_KEY = 'apartment-designer:taste'
+export const VISIT_KEY = 'apartment-designer:visit'
+
+export function readVisit(): VisitState {
+  const empty: VisitState = { date: '', visitId: '', done: false, stickers: [] }
+  try {
+    const v = JSON.parse(localStorage.getItem(VISIT_KEY) ?? 'null')
+    if (!v || typeof v !== 'object') return empty
+    const stickers: string[] = Array.isArray(v.stickers) ? v.stickers.filter((x: unknown): x is string => typeof x === 'string' && !!VISIT_BY_ID[x]) : []
+    // Yesterday's visitor has gone home: only the stickers carry over (so no stars come and go on load).
+    if (v.date !== localDay() || typeof v.visitId !== 'string' || !VISIT_BY_ID[v.visitId]) return { ...empty, stickers }
+    return { date: v.date, visitId: v.visitId, done: !!v.done, stickers }
+  } catch {
+    return empty
+  }
+}
+
+function saveVisit(v: VisitState) {
+  try {
+    localStorage.setItem(VISIT_KEY, JSON.stringify(v))
+  } catch {
+    // Private mode: today's visitor lasts for this visit.
+  }
+}
 
 function readTaste(): Partial<Record<Family, string>> {
   try {
@@ -185,6 +224,7 @@ export const useGame = create<GameState>((set) => ({
   photoRequest: 0,
   unpacked: null,
   taste: readTaste(),
+  visit: readVisit(),
   classic: (() => {
     try {
       return localStorage.getItem(CLASSIC_KEY) === '1'
@@ -253,5 +293,20 @@ export const useGame = create<GameState>((set) => ({
         // Private mode: remembered for this visit.
       }
       return { taste }
+    }),
+  rollVisit: (doc, day = localDay(), met) =>
+    set((s) => {
+      if (s.visit.date === day && s.visit.visitId) return s
+      const visit = { date: day, visitId: todayVisit(doc, day, s.visit.stickers, met).id, done: false, stickers: s.visit.stickers }
+      saveVisit(visit)
+      return { visit }
+    }),
+  completeVisit: (visitId) =>
+    set((s) => {
+      if (!s.visit.visitId || s.visit.visitId !== visitId || s.visit.done) return s
+      const stickers = s.visit.stickers.includes(s.visit.visitId) ? s.visit.stickers : [...s.visit.stickers, s.visit.visitId]
+      const visit = { ...s.visit, done: true, stickers }
+      saveVisit(visit)
+      return { visit }
     }),
 }))
