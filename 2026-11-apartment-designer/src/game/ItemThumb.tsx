@@ -2,6 +2,7 @@
 // illustration per catalog category, drawn in the same oblique projection (depth runs up and to
 // the right), with light from the top left: tops are lighter, right sides darker.
 import { memo, type ReactNode } from 'react'
+import type { ThumbLook } from './swatches'
 
 // ---------------------------------------------------------------- color helpers
 
@@ -547,6 +548,43 @@ const SHOTS: Record<string, Shot> = {
   },
 }
 
+/** Variant shots ("category:look"): a round dining or coffee table on a pedestal, a tall chest of drawers. */
+const roundTable = (topY: number, rx: number, plates: boolean): Draw => (p) => {
+  const cx = 50
+  return (
+    <>
+      <ellipse cx={cx} cy={GROUND - 1} rx={rx * 0.42} ry={4} fill={p.base.s} stroke={p.line} />
+      <Box x={cx - 4} b={GROUND - 2} w={8} h={GROUND - 2 - topY} d={4} z={-2} c={p.base} line={p.line} />
+      <ellipse cx={cx} cy={topY + 2.5} rx={rx} ry={rx * 0.34} fill={p.base.s} stroke={p.line} />
+      <ellipse cx={cx} cy={topY} rx={rx} ry={rx * 0.34} fill={p.base.t} stroke={p.line} />
+      {plates &&
+        [-1, 1].map((k) => <ellipse key={k} cx={cx + k * rx * 0.48} cy={topY} rx={6} ry={2.2} fill={p.white.f} stroke={p.line} />)}
+      {plates && <rect x={cx - 2.5} y={topY - 9} width={5} height={9} rx={2} fill={tone(BOOKS[1]).f} stroke={p.line} />}
+    </>
+  )
+}
+const VARIANTS: Record<string, Shot> = {
+  'dining-table:round': { draw: roundTable(GROUND - 44, 34, true), sx: 50, sw: 32 },
+  'coffee-table:round': { draw: roundTable(GROUND - 26, 30, false), sx: 50, sw: 30 },
+  'dresser:tall': {
+    draw: (p) => (
+      <>
+        <Box x={30} b={GROUND} w={3} h={6} d={2} z={16} c={p.base} line={p.line} />
+        <Box x={59} b={GROUND} w={3} h={6} d={2} z={16} c={p.base} line={p.line} />
+        <Box x={30} b={GROUND} w={3} h={6} d={2} z={1} c={p.base} line={p.line} />
+        <Box x={59} b={GROUND} w={3} h={6} d={2} z={1} c={p.base} line={p.line} />
+        <Box x={28} b={GROUND - 5} w={36} h={66} d={20} c={p.base} line={p.line} />
+        <path d={`M28 ${GROUND - 21.5}h36M28 ${GROUND - 38}h36M28 ${GROUND - 54.5}h36`} stroke={p.line} strokeWidth={1.6} />
+        {[0, 1, 2, 3].map((r) => (
+          <rect key={r} x={42} y={GROUND - 14.5 - r * 16.5} width={8} height={2.6} rx={1.3} fill={p.line} stroke="none" />
+        ))}
+      </>
+    ),
+    sx: 54,
+    sw: 26,
+  },
+}
+
 function boxShot(p: Pal) {
   return (
     <>
@@ -573,15 +611,24 @@ function palette(color: string): Pal {
   }
 }
 
-export const ItemThumb = memo(function ItemThumb({ category, color, size = 64 }: { category: string; color: string; size?: number }) {
-  const shot = SHOTS[category]
+export const ItemThumb = memo(function ItemThumb({ category, color, size = 64, look }: { category: string; color: string; size?: number; look?: ThumbLook }) {
+  const variant = look?.round ? VARIANTS[`${category}:round`] : look?.tall ? VARIANTS[`${category}:tall`] : undefined
+  const shot = variant ?? SHOTS[category]
+  const k = look?.scale && look.scale !== 1 ? look.scale : 1
   const p = palette(color || '#9aa4ad')
   const sx = shot?.sx ?? 52
   const sw = shot?.sw ?? 40
   return (
     <svg className="item-thumb" viewBox="0 0 100 100" width={size} height={size} aria-hidden strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round">
-      <ellipse cx={sx} cy={GROUND + 2} rx={sw} ry={5.5} fill="rgba(70, 45, 20, 0.16)" />
-      {shot ? shot.draw(p) : boxShot(p)}
+      <ellipse cx={sx} cy={GROUND + 2} rx={sw * k} ry={5.5} fill="rgba(70, 45, 20, 0.16)" />
+      {k === 1 ? (
+        shot ? shot.draw(p) : boxShot(p)
+      ) : (
+        // Smaller variants shrink toward the middle of their footprint, feet on the ground.
+        <g transform={`translate(${sx} ${GROUND}) scale(${k}) translate(${-sx} ${-GROUND})`} strokeWidth={2.2 / k}>
+          {shot ? shot.draw(p) : boxShot(p)}
+        </g>
+      )}
     </svg>
   )
 })

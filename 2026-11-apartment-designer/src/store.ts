@@ -205,11 +205,24 @@ export function unpackDoc(d0: Doc, placementId: string): UnpackResult | null {
   return { doc: d, ids, placed, waiting }
 }
 
-/** "Unpacked a plant and a table lamp", or "Unpacked a plant · rug waiting in Mine" (short: two lines). */
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/**
+ * The toast after unpacking, short enough for two lines on a phone. Up to two things read in full
+ * ("Unpacked a plant! A table lamp is waiting in Mine."); more are counted ("Unpacked 4 things! 3
+ * are waiting in Mine.").
+ */
 export function unpackMessage(r: Pick<UnpackResult, 'placed' | 'waiting'>): string {
-  const head = r.placed.length ? `Unpacked ${listOf(r.placed.map(withArticle))}` : 'Unpacked the box'
+  const n = r.placed.length + r.waiting.length
+  if (n > 2) {
+    const head = `Unpacked ${n} things!`
+    if (!r.waiting.length) return head
+    return `${head} ${r.waiting.length === 1 ? '1 is' : `${r.waiting.length} are`} waiting in Mine.`
+  }
+  if (!r.placed.length) return r.waiting.length ? `Unpacked ${listOf(r.waiting.map(withArticle))}! ${r.waiting.length > 1 ? 'They are' : 'It is'} waiting in Mine.` : 'Unpacked the box!'
+  const head = `Unpacked ${listOf(r.placed.map(withArticle))}!`
   if (!r.waiting.length) return head
-  return `${head} · ${listOf(r.waiting)} waiting in Mine`
+  return `${head} ${cap(withArticle(r.waiting[0]))} is waiting in Mine.`
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -405,9 +418,18 @@ export const useStore = create<State>((set, get) => ({
   },
   updatePlacement: (id, patch) => get().update((d) => mapLayout(d, (l) => ({ ...l, placements: l.placements.map((p) => (p.id === id ? { ...p, ...patch } : p)) }))),
   deletePlacement: (id) => {
-    const watch = hostedOn(get().doc, (p) => p.id === id)
-    get().update((d) => mapLayout(d, (l) => ({ ...l, placements: l.placements.filter((p) => p.id !== id) })))
+    const d0 = get().doc
+    const watch = hostedOn(d0, (p) => p.id === id)
+    const item = d0.items.find((i) => i.id === activeLayout(d0).placements.find((p) => p.id === id)?.itemId)
+    // The last copy of a piece you bought goes to Mine (marked owned) rather than vanishing, so it
+    // can be placed again. Moving boxes and pieces already yours just come off the floor.
+    const keep = !!item && !item.owned && !item.unpack?.length && !d0.layouts.some((l) => l.placements.some((p) => p.id !== id && p.itemId === item.id))
+    get().update((d) => {
+      const off = mapLayout(d, (l) => ({ ...l, placements: l.placements.filter((p) => p.id !== id) }))
+      return keep ? { ...off, items: off.items.map((i) => (i.id === item!.id ? { ...i, owned: true } : i)) } : off
+    })
     tellHosted(get().doc, watch, get().notify)
+    if (keep) get().notify(`Moved the ${item!.name.toLowerCase()} to Mine. Place it again any time.`)
     set({ selection: null })
   },
   unpackBox: (placementId) => {

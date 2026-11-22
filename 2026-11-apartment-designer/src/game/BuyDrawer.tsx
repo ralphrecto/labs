@@ -13,7 +13,7 @@ import { ImportDialog, Photo } from '../components/AddDialogs'
 import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
 import { ItemThumb } from './ItemThumb'
-import { familyOf, picksFor, type Pick } from './swatches'
+import { familyOf, picksFor, type Pick, type ThumbLook } from './swatches'
 import './buy.css'
 import './feel.css'
 
@@ -46,6 +46,8 @@ interface SizeChip {
   height?: number
   /** The colour it's placed in (a "Pick one" card); otherwise the category's own. */
   color?: string
+  /** How a "Pick one" card's thumbnail tells it apart (round, tall, smaller). */
+  look?: ThumbLook
 }
 
 /** Size chips per category, from the retail sizes in starterCatalog.ts: [chip label, starter id]. */
@@ -69,7 +71,7 @@ function sizeChips(entry: CatalogEntry): SizeChip[] {
 /** A "Pick one" card as a preset: the starter piece's name and size, in the pick's colour. */
 export function pickChip(pick: Pick): SizeChip | null {
   const p = STARTER.get(pick.id)
-  return p ? { label: pick.label, name: p.name, width: p.width, depth: p.depth, height: p.height, color: pick.color } : null
+  return p ? { label: pick.label, name: p.name, width: p.width, depth: p.depth, height: p.height, color: pick.color, look: pick.look } : null
 }
 
 /** The item a preset places: its name, size and colour over the category's defaults. */
@@ -97,9 +99,39 @@ export function footprint(width: number, depth: number, units: Units): string {
   return `${n(width)} × ${n(depth)} in`
 }
 
-/** Items that are yours rather than generic catalog pieces: imported from a link or photo, scanned, or marked owned. */
+/**
+ * Items that are yours rather than generic catalog pieces: imported from a link or photo, scanned, or
+ * marked owned. An emptied moving box isn't (its item stays only so the unpack goal can count it).
+ */
 export function isMine(i: Item): boolean {
+  if (i.unpacked) return false
   return !!(i.owned || i.link || i.imageUrl || i.scanId || i.source === 'link' || i.source === 'photo' || i.source === 'scan')
+}
+
+/** The "Mine" tab's badge: your pieces still waiting to be placed (owned, in no placement; no moving boxes). */
+export function waitingCount(items: Item[], placed: (id: string) => boolean): number {
+  return items.filter((i) => isMine(i) && i.owned && !i.unpack?.length && !placed(i.id)).length
+}
+
+/**
+ * Pieces that finish the same goal as the hinted category (the seating goal takes a sofa or an
+ * armchair), so "From your boxes" offers any of them. Mirrors the goal checks in goals.ts.
+ */
+const STORAGE = ['dresser', 'wardrobe', 'bookshelf', 'sideboard', 'console-table']
+export const ACCEPTS: Record<string, string[]> = {
+  sofa: ['sofa', 'armchair'],
+  dresser: STORAGE,
+  wardrobe: STORAGE,
+  bookshelf: STORAGE,
+  nightstand: ['nightstand', 'side-table'],
+  'dining-chair': ['dining-chair', 'bench'],
+}
+
+/** A boxed piece of yours (owned, not placed) that would finish a goal asking for `category`: its own kind first. */
+export function boxedFor(category: string, items: Item[], placed: (id: string) => boolean): Item | undefined {
+  const ok = ACCEPTS[category] ?? [category]
+  const waiting = items.filter((i) => isMine(i) && i.owned && !i.unpack?.length && !placed(i.id) && ok.includes(i.category))
+  return waiting.find((i) => i.category === category) ?? waiting[0]
 }
 
 /**
@@ -128,6 +160,8 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   const tab = useGame((s) => s.buyTab)
   const setTab = useGame((s) => s.setBuyTab)
   const hint = useGame((s) => s.buyHint)
+  // The selected piece's action bar rides where the "Pick one" row floats, so the row steps aside.
+  const selected = useStore((s) => !!s.selection)
   const units = useStore((s) => s.doc.apartment.units)
   const hintRoom = useStore((s) => (hint?.roomId ? s.doc.rooms.find((r) => r.id === hint.roomId)?.name : undefined))
   const hintEntry = hint?.category ? ENTRIES.get(hint.category) : undefined
@@ -139,6 +173,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     for (const p of placements) m.set(p.itemId, (m.get(p.itemId) ?? 0) + 1)
     return m
   }, [placements])
+  const waiting = useMemo(() => waitingCount(items, (id) => !!counts.get(id)), [items, counts])
 
   const group = CATEGORY_GROUPS.find((g) => g.key === tab) ?? CATEGORY_GROUPS[0]
   const gridRef = useRef<HTMLDivElement>(null)
@@ -164,7 +199,8 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     popTimer.current = setTimeout(() => setPopped(null), 900)
   }
 
-  const place = (entry: CatalogEntry, preset?: SizeChip) => {
+  /** `chose`: the player picked this colour on a "Pick one" card (not a plain tap on the hinted card), so it's remembered as their taste. */
+  const place = (entry: CatalogEntry, preset?: SizeChip, chose = false) => {
     const st = useStore.getState()
     const item = presetItem(entry, uid(), preset)
     // A goal about one room ("Nothing in the Bathroom yet") puts the piece it pointed at in that room, if it fits there.
@@ -188,7 +224,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     if (!res.ok) return
     if (hint) useGame.getState().setBuyHint(null)
     // Taste memory: the colour picked for a family (wood, fabric, light) is offered first next time.
-    const fam = preset?.color ? familyOf(entry.category) : undefined
+    const fam = chose && preset?.color ? familyOf(entry.category) : undefined
     if (fam) useGame.getState().setTaste(fam, preset!.color!)
     const name = (preset ? preset.name : displayName(entry)).replace(/^(\w)(?=[a-z])/, (c) => c.toLowerCase())
     st.notify(`Placed ${article(name)} ${name}${res.roomName ? ` in the ${res.roomName}` : ''}.`)
@@ -219,8 +255,9 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   const taste = useGame((s) => s.taste)
   const pickCards: PickCard[] = []
   let pickCount = 0
+  let firstPick: (() => void) | undefined
   if (hintEntry) {
-    const boxed = mine.find((i) => i.category === hintEntry.category && i.owned && !counts.get(i.id))
+    const boxed = boxedFor(hintEntry.category, items, (id) => !!counts.get(id))
     if (boxed) pickCards.push({ key: boxed.id, label: 'From your boxes', name: boxed.name, category: boxed.category, color: boxed.color, mine: true, onClick: () => placeMine(boxed) })
     const chips = picksFor(hintEntry.category, taste).flatMap((pk) => {
       const chip = pickChip(pk)
@@ -228,10 +265,13 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     })
     pickCount = chips.length
     for (const { chip, taste: liked } of chips.slice(0, 3 - pickCards.length))
-      pickCards.push({ key: `${hintEntry.category}:${chip.label}`, label: chip.label, name: chip.name, category: hintEntry.category, color: chip.color, taste: liked, onClick: () => place(hintEntry, chip) })
+      pickCards.push({ key: `${hintEntry.category}:${chip.label}`, label: chip.label, name: chip.name, category: hintEntry.category, color: chip.color, look: chip.look, taste: liked, onClick: () => place(hintEntry, chip, true) })
+    // A plain tap on the hinted card places the first card without counting it as a chosen colour.
+    const first = pickCards[0]
+    const firstChip = chips[0]?.chip
+    if (chips.length >= 2 && first) firstPick = first.mine ? first.onClick : firstChip ? () => place(hintEntry, firstChip) : undefined
   }
   const showPicker = pickCount >= 2
-  const firstPick = showPicker ? pickCards[0]?.onClick : undefined
 
   return (
     <div className="buy-drawer" role="region" aria-label="Buy furniture">
@@ -244,15 +284,19 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
             }}>
             <span className="buy-tab-icon">
               {g.key === 'mine' ? <IconStar /> : <ItemThumb category={TAB_ICON[g.key] ?? g.categories[0]} color={ENTRIES.get(TAB_ICON[g.key] ?? g.categories[0])?.color ?? '#9aa4ad'} size={34} />}
-              {g.key === 'mine' && mine.length > 0 && <span className="buy-badge">{mine.length}</span>}
+              {g.key === 'mine' && waiting > 0 && (
+                <span className="buy-badge" aria-label={`${waiting} waiting to be placed`}>
+                  {waiting}
+                </span>
+              )}
             </span>
             <span className="buy-tab-label">{g.label}</span>
           </button>
         ))}
       </div>
 
-      {hintEntry && showPicker && <HintPicker title={displayName(hintEntry)} room={hintRoom} cards={pickCards} popped={popped?.key} />}
-      {hintEntry && !showPicker && (
+      {hintEntry && showPicker && !selected && <HintPicker title={displayName(hintEntry)} goal={hint?.title} room={hintRoom} cards={pickCards} popped={popped?.key} />}
+      {hintEntry && !showPicker && !selected && (
         <div className="feel-hint-pill" role="status">
           Tap <b>{displayName(hintEntry)}</b>
           {hintRoom ? (
@@ -346,6 +390,7 @@ interface PickCard {
   name: string
   category: string
   color?: string
+  look?: ThumbLook
   /** In the colour the player picked last for this family. */
   taste?: boolean
   /** A piece of yours from a moving box, placed rather than bought. */
@@ -354,11 +399,18 @@ interface PickCard {
 }
 
 /** The "Pick one" row floating above the drawer while the Next chip's hint is up. */
-function HintPicker({ title, room, cards, popped }: { title: string; room?: string; cards: PickCard[]; popped?: string }) {
+function HintPicker({ title, goal, room, cards, popped }: { title: string; goal?: string; room?: string; cards: PickCard[]; popped?: string }) {
   return (
-    <div className="feel-pick" role="group" aria-label={`Pick one ${title.toLowerCase()}${room ? ` for the ${room}` : ''}`}>
+    <div className="feel-pick" role="group" aria-label={`${goal ? `${goal}: p` : 'P'}ick one ${title.toLowerCase()}${room ? ` for the ${room}` : ''}`}>
       <div className="feel-pick-head">
-        Pick one{room ? (
+        {goal ? (
+          <>
+            <b>{goal}</b> · pick one
+          </>
+        ) : (
+          'Pick one'
+        )}
+        {room ? (
           <>
             {' '}
             <span aria-hidden>→</span> <b>{room}</b>
@@ -376,7 +428,7 @@ function HintPicker({ title, room, cards, popped }: { title: string; room?: stri
             title={c.mine ? c.name : `${c.name}, ${c.label}`}
           >
             <span className="feel-pick-thumb">
-              <ItemThumb category={c.category} color={c.color ?? '#a3907d'} size={40} />
+              <ItemThumb category={c.category} color={c.color ?? '#a3907d'} size={40} look={c.look} />
               {c.taste && <span className="feel-pick-dot" title="Your style" aria-hidden />}
             </span>
             <span className="feel-pick-label">{c.label}</span>

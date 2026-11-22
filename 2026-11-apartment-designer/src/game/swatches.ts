@@ -19,12 +19,22 @@ export const WARM = {
 /** A material family the player's taste is remembered for. */
 export type Family = 'wood' | 'fabric' | 'light'
 
+/** How a thumbnail tells one variant from another: a round top, a taller body, or drawn smaller. */
+export interface ThumbLook {
+  round?: boolean
+  tall?: boolean
+  /** Drawn at this size (1 = the category's usual thumbnail), from the ground up. */
+  scale?: number
+}
+
 /** One card on the picker: a starter catalog piece, a short label and the colour it's placed in. */
 export interface Pick {
   /** A StarterProduct id (src/model/starterCatalog.ts). */
   id: string
   label: string
   color: string
+  /** Its thumbnail's look, when the shape or size is the difference (Round, Tall, Medium). */
+  look?: ThumbLook
 }
 
 const { walnut, oak, charcoal, linen, sage, terracotta, honey, taupe } = WARM
@@ -33,8 +43,8 @@ const { walnut, oak, charcoal, linen, sage, terracotta, honey, taupe } = WARM
 export const PICKS: Record<string, Pick[]> = {
   'coffee-table': [
     { id: 'coffee-rect', label: 'Long', color: walnut },
-    { id: 'coffee-round', label: 'Round', color: oak },
-    { id: 'coffee-small', label: 'Small', color: charcoal },
+    { id: 'coffee-round', label: 'Round', color: oak, look: { round: true } },
+    { id: 'coffee-small', label: 'Small', color: charcoal, look: { scale: 0.78 } },
   ],
   armchair: [
     { id: 'armchair', label: 'Classic', color: taupe },
@@ -42,23 +52,23 @@ export const PICKS: Record<string, Pick[]> = {
     { id: 'swivel', label: 'Swivel', color: sage },
   ],
   'dining-table': [
-    { id: 'dining-round', label: 'Round', color: walnut },
+    { id: 'dining-round', label: 'Round', color: walnut, look: { round: true } },
     { id: 'dining-4', label: 'Seats 4', color: oak },
     { id: 'bistro', label: 'Bistro', color: charcoal },
   ],
   // "Bench" (dining-bench) is a bench, not a dining chair, so it wouldn't finish a chair goal.
   'dining-chair': [
     { id: 'dining-chair', label: 'Chair', color: walnut },
-    { id: 'dining-armchair', label: 'Armchair', color: linen },
+    { id: 'dining-armchair', label: 'Carver', color: linen },
   ],
   nightstand: [
     { id: 'nightstand', label: 'Standard', color: walnut },
-    { id: 'nightstand-sm', label: 'Slim', color: linen },
+    { id: 'nightstand-sm', label: 'Slim', color: linen, look: { scale: 0.85 } },
   ],
   dresser: [
     { id: 'dresser-3', label: '3-drawer', color: oak },
     { id: 'dresser-6', label: 'Wide', color: walnut },
-    { id: 'chest-tall', label: 'Tall', color: linen },
+    { id: 'chest-tall', label: 'Tall', color: linen, look: { tall: true } },
   ],
   desk: [
     { id: 'desk-sm', label: 'Writing', color: oak },
@@ -84,7 +94,7 @@ export const PICKS: Record<string, Pick[]> = {
     { id: 'pendant', label: 'Black', color: charcoal },
   ],
   plant: [
-    { id: 'plant-md', label: 'Medium', color: sage },
+    { id: 'plant-md', label: 'Medium', color: sage, look: { scale: 0.7 } },
     { id: 'plant-lg', label: 'Tall', color: sage },
   ],
   sofa: [
