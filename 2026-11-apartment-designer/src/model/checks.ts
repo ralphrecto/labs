@@ -188,10 +188,12 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
 
 /**
  * Pieces that belong in another's clearance and don't block it: a nightstand or side table beside
- * a bed or seat, the chair at a desk.
+ * a bed or seat, the chair at a desk, a coffee table in front of a seat.
  */
 export function sideCompanion(ownerCategory: string, side: string, blockerCategory: string) {
   if (side === 'front' && ownerCategory === 'desk' && blockerCategory === 'office-chair') return true
+  // A coffee table or ottoman belongs in front of a seat; how close is judged by the coffee-table goal (35-60 cm).
+  if (side === 'front' && ['sofa', 'armchair'].includes(ownerCategory) && ['coffee-table', 'ottoman'].includes(blockerCategory)) return true
   return (side === 'left' || side === 'right') && ['bed', 'sofa', 'armchair'].includes(ownerCategory) && ['nightstand', 'side-table', 'floor-lamp', 'table-lamp'].includes(blockerCategory)
 }
 
