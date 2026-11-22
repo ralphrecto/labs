@@ -109,7 +109,39 @@ function bed(item: Item): Part[] {
   return out
 }
 
+/** A round table: a "Round …" piece with a square footprint (the round dining and coffee tables). */
+export function isRoundTable(item: Item): boolean {
+  return (item.category === 'dining-table' || item.category === 'coffee-table' || item.category === 'side-table') && /\bround\b/i.test(item.name) && Math.abs(item.width - item.depth) < 0.03
+}
+
+/** A round top on a pedestal and a round foot, as in the drawer's Round thumbnail. */
+function roundTable(item: Item): Part[] {
+  const { width: w, depth: d, height: h, category } = item
+  const topT = category === 'dining-table' ? 0.035 : 0.03
+  const legH = h - topT
+  const post = clamp(Math.min(w, d) * 0.12, 0.06, 0.12)
+  const out: Part[] = [
+    { kind: 'cyl', size: [w, topT, d], pos: [0, h - topT / 2, 0], seg: 40, shade: 1.06 },
+    // the darker edge band, so it reads as a thick top
+    { kind: 'cyl', size: [w + 0.006, topT * 0.55, d + 0.006], pos: [0, h - topT + (topT * 0.55) / 2, 0], seg: 40, shade: 0.62, noShadow: true },
+    { kind: 'cyl', size: [post, legH - 0.03, post], pos: [0, 0.03 + (legH - 0.03) / 2, 0], seg: 16, shade: 0.8 },
+    { kind: 'cyl', size: [w * 0.5, 0.03, d * 0.5], pos: [0, 0.015, 0], top: 0.8, seg: 28, shade: 0.75 },
+  ]
+  if (category === 'dining-table' && w > 0.7) {
+    for (const a of [Math.PI * 0.25, Math.PI * 1.25]) {
+      const px = Math.cos(a) * w * 0.28
+      const pz = Math.sin(a) * d * 0.28
+      out.push({ kind: 'cyl', size: [0.24, 0.014, 0.24], pos: [px, h + 0.007, pz], color: PAL.white, noShadow: true })
+      out.push({ kind: 'cyl', size: [0.15, 0.016, 0.15], pos: [px, h + 0.01, pz], color: '#efe4d2', noShadow: true })
+    }
+    out.push({ kind: 'cyl', top: 0.7, bottom: 0.85, size: [0.09, 0.15, 0.09], pos: [0, h + 0.075, 0], color: '#7fa3b8', noShadow: true })
+    out.push({ kind: 'ball', size: [0.13, 0.11, 0.13], pos: [0, h + 0.2, 0], color: '#6fae7c', noShadow: true })
+  }
+  return out
+}
+
 function table(item: Item): Part[] {
+  if (isRoundTable(item)) return roundTable(item)
   const { width: w, depth: d, height: h, category } = item
   const dining = category === 'dining-table' || category === 'desk'
   const topT = category === 'bench' ? 0.05 : dining ? 0.035 : 0.03
@@ -527,8 +559,60 @@ function pendantCeiling(doc: Doc, itemId: string): number | undefined {
   return room?.ceilingHeight ?? Math.min(...doc.rooms.map((r) => r.ceilingHeight))
 }
 
+/** Wood pieces whose big flat fronts the Cartoon look would otherwise lift to a bright orange. */
+const TOON_WOOD = new Set(['nightstand', 'dresser', 'sideboard', 'tv-stand', 'wardrobe', 'coffee-table', 'side-table', 'console-table', 'dining-table', 'desk', 'bench'])
+
+function hsl(hex: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return null
+  const n = parseInt(m[1], 16)
+  const r = ((n >> 16) & 255) / 255
+  const g = ((n >> 8) & 255) / 255
+  const b = (n & 255) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  if (max === min) return [0, 0, l]
+  const dd = max - min
+  const s = l > 0.5 ? dd / (2 - max - min) : dd / (max + min)
+  let h = max === r ? (g - b) / dd + (g < b ? 6 : 0) : max === g ? (b - r) / dd + 2 : (r - g) / dd + 4
+  h /= 6
+  return [h, s, l]
+}
+function hslHex(h: number, s: number, l: number): string {
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+  const p = 2 * l - q
+  const f = (t: number) => {
+    if (t < 0) t += 1
+    if (t > 1) t -= 1
+    if (t < 1 / 6) return p + (q - p) * 6 * t
+    if (t < 1 / 2) return q
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
+    return p
+  }
+  const c = (v: number) => Math.round(clamp(v, 0, 1) * 255).toString(16).padStart(2, '0')
+  return '#' + (s === 0 ? c(l) + c(l) + c(l) : c(f(h + 1 / 3)) + c(f(h)) + c(f(h - 1 / 3)))
+}
+
+/**
+ * The colour to hand the Cartoon look for a wood piece so it comes out like its drawer card: the
+ * Cartoon look (toonHex: saturation x1.35, lightness lifted and snapped to sixths) would turn a
+ * walnut dresser a flat orange, so this undoes the saturation boost and picks the lightness that
+ * lands on the band at or just below the colour's own.
+ */
+export function toonWoodBase(hex: string): string {
+  const c = hsl(hex)
+  if (!c) return hex
+  const [h, s, l] = c
+  const band = Math.max(1 / 6, Math.floor(l * 6 + 0.25) / 6)
+  const preL = clamp((band - 0.12) / 0.82, 0, 1)
+  const preS = clamp((s - 0.04) / 1.35, 0, 1)
+  return hslHex(h, preS, preL)
+}
+
 export function ProceduralItem({ item, highlight }: { item: Item; highlight?: string }) {
   const { style } = useStyle()
+  const base = style === 'toon' && TOON_WOOD.has(item.category) ? toonWoodBase(item.color) : item.color
   // A pendant's cord runs up to the real ceiling over its real table.
   const hostH = useStore((st) => (item.category === 'pendant' ? pendantHostHeight(st.doc, item.id) : undefined))
   const ceiling = useStore((st) => (item.category === 'pendant' ? pendantCeiling(st.doc, item.id) : undefined))
@@ -538,7 +622,7 @@ export function ProceduralItem({ item, highlight }: { item: Item; highlight?: st
   return (
     <group>
       {specs.map((s, i) => (
-        <PartMesh key={i} part={s} base={item.color} highlight={hl} />
+        <PartMesh key={i} part={s} base={base} highlight={hl} />
       ))}
     </group>
   )
