@@ -1,5 +1,6 @@
 // Goals HUD: the vibe meter pill (stars, level, progress, celebrations), the next-goal chip, the
 // level-up card and the goals sheet.
+import { announce } from './announce'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { useAnalysis } from '../analysis'
 import { catalogEntry, itemFromCatalog } from '../model/catalog'
@@ -397,6 +398,41 @@ export function VibeMeter() {
     const t = setTimeout(() => setBanner(null), 2600)
     return () => clearTimeout(t)
   }, [banner])
+  // Screen readers hear these through the page's one live region (announce.tsx); the visual
+  // banners, pops and cards come and go without roles of their own.
+  useEffect(() => {
+    if (!banner) return
+    if (banner.kind === 'goal') {
+      const who = banner.goal.visit ? `${VISIT_BY_ID[banner.goal.visit]?.who ?? 'Your visitor'} loved it! ` : banner.more ? `${banner.more + 1} goals complete. ` : 'Goal complete. '
+      announce(`${who}${banner.goal.title}${banner.goal.visit ? '. Sticker collected.' : `, +${banner.goal.stars}★.`}`)
+    } else if (banner.kind === 'welcome') {
+      const next = banner.top ? 'Remix this home.' : banner.goal ? `Next: ${banner.goal.title}, +${banner.goal.stars}★.` : ''
+      announce(`Welcome back!${banner.away ? ` ${banner.away}` : ''} ${banner.line}. ${banner.stars}★. ${next} ${banner.gone ?? ''} ${banner.visit?.text ?? ''}`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [banner?.key])
+  useEffect(() => {
+    if (loss) announce(`Lost ${loss.delta}★${loss.title ? `: ${loss.title}` : ''}. Undo is available.`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loss?.key])
+  useEffect(() => {
+    if (!levelUp) return
+    const dream = levelUp.index >= LEVELS.length - 1
+    announce(
+      `${dream ? 'You did it! Dream home reached.' : `Level up! ${levelUp.name}, level ${levelUp.index + 1} of ${LEVELS.length}.`} ${levelGoalLine}${levelUp.name === 'Cozy' ? ' Evening light unlocked. Try it in Look.' : ''}`,
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [levelUp?.key])
+  // Every settled change in stars: "+2 stars, 16 stars, Cozy". Switching homes or designs isn't one.
+  const spoken = useRef({ key: designKey, stars: score.stars })
+  useEffect(() => {
+    if (gesturing) return
+    const was = spoken.current
+    spoken.current = { key: designKey, stars: score.stars }
+    const d = score.stars - was.stars
+    if (was.key !== designKey || !d) return
+    announce(`${d > 0 ? '+' : '−'}${Math.abs(d)}★, ${score.stars}★, ${score.level.name}`)
+  }, [score.stars, score.level.name, designKey, gesturing])
   const placedBefore = useRef(placed)
   useEffect(() => {
     if (placed > placedBefore.current) setBanner((b) => (b?.kind === 'welcome' ? null : b))
@@ -441,7 +477,7 @@ export function VibeMeter() {
         </div>
       )}
       {loss && (
-        <div className="feel-loss" key={`loss${loss.key}`} role="status">
+        <div className="feel-loss" key={`loss${loss.key}`}>
           <span className="feel-loss-text">
             <b>−{loss.delta}★</b>
             {loss.title && <span> {loss.title}</span>}
@@ -484,7 +520,7 @@ export function VibeMeter() {
         </button>
       )}
       {banner?.kind === 'goal' && (
-        <div className="goal-banner" key={`banner${banner.key}`} role="status">
+        <div className="goal-banner" key={`banner${banner.key}`} aria-hidden="true">
           <span className="goal-banner-check">
             <IconCheck />
           </span>
@@ -513,7 +549,6 @@ export function VibeMeter() {
           type="button"
           className="goal-banner welcome dz-stay"
           key={`banner${banner.key}`}
-          role="status"
           onClick={() => {
             setBanner(null)
             if (banner.top) tryVariation()
@@ -548,7 +583,7 @@ export function VibeMeter() {
         </button>
       )}
       {phone && levelUp && levelUp.index < LEVELS.length - 1 && (
-        <button type="button" className="goal-banner goal-levelup-mini" key={`lv${levelUp.key}`} role="status" onClick={() => useGame.getState().clearLevelUp()}>
+        <button type="button" className="goal-banner goal-levelup-mini" key={`lv${levelUp.key}`} onClick={() => useGame.getState().clearLevelUp()}>
           <span className="goal-banner-check">
             <IconStar />
           </span>
@@ -630,12 +665,27 @@ export function LevelUpCard() {
   const phone = usePhone()
   const dream = !!levelUp && levelUp.index >= LEVELS.length - 1
   const remixDone = useRemixDone(dream)
+  // While the pointer is over it or focus is in it, the card stays (WCAG 2.2.1): reading it takes time.
+  const [held, setHeld] = useState({ hover: false, focus: false })
+  const holding = held.hover || held.focus
   useEffect(() => {
-    if (!levelUp) return
+    if (!levelUp || holding) return
     // The Dream home card stays a while: it has a button to press.
     const t = setTimeout(() => useGame.getState().clearLevelUp(), dream ? 12000 : 3600)
     return () => clearTimeout(t)
-  }, [levelUp, dream])
+  }, [levelUp, dream, holding])
+  // The Dream home card takes focus (it has buttons to press) and gives it back when it closes.
+  const cardRef = useRef<HTMLDivElement>(null)
+  const showing = !!levelUp && dream
+  useEffect(() => {
+    if (!showing) return
+    const back = document.activeElement as HTMLElement | null
+    cardRef.current?.focus({ preventScroll: true })
+    return () => {
+      if (back?.isConnected && (!document.activeElement || document.activeElement === document.body || cardRef.current?.contains(document.activeElement))) back.focus({ preventScroll: true })
+      setHeld({ hover: false, focus: false })
+    }
+  }, [showing, levelUp?.key])
   // On phones a level-up is a compact banner under the pill (VibeMeter), so the room stays in view.
   // The top level gets the full card everywhere: it's the moment the whole game builds to.
   if (!levelUp || (phone && !dream)) return null
@@ -648,7 +698,31 @@ export function LevelUpCard() {
     if (t === e.currentTarget || t.closest('.goal-confetti')) useGame.getState().clearLevelUp()
   }
   return (
-    <div className={`goal-levelup${dream ? ' feel-dream' : ''}`} key={levelUp.key} role="status" onClick={close}>
+    <div
+      ref={cardRef}
+      className={`goal-levelup${dream ? ' feel-dream' : ''}`}
+      key={levelUp.key}
+      role={dream ? 'dialog' : undefined}
+      aria-label={dream ? (remixDone ? 'Remix complete' : 'Dream home reached') : undefined}
+      // Read out through the live region (VibeMeter); the brief card is decoration for sighted players.
+      aria-hidden={dream ? undefined : true}
+      tabIndex={dream ? -1 : undefined}
+      onClick={close}
+      onMouseEnter={() => setHeld((h) => ({ ...h, hover: true }))}
+      onMouseLeave={() => setHeld((h) => ({ ...h, hover: false }))}
+      onFocus={() => setHeld((h) => ({ ...h, focus: true }))}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHeld((h) => ({ ...h, focus: false }))
+      }}
+      onKeyDown={(e) => {
+        // Esc closes; Enter closes too unless it's pressing one of the card's buttons.
+        if (e.key === 'Escape' || (e.key === 'Enter' && e.target === e.currentTarget)) {
+          e.preventDefault()
+          e.stopPropagation()
+          useGame.getState().clearLevelUp()
+        }
+      }}
+    >
       <div className="goal-confetti" aria-hidden>
         {Array.from({ length: reduceMotion ? 0 : dream ? 48 : 24 }, (_, i) => (
           <i

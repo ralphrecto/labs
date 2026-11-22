@@ -765,9 +765,11 @@ function Arrival({ id, children }: { id: string; children: ReactNode }) {
     // With "reduce motion" on, new items simply appear in place.
     if (performance.now() > 2500 && !reduceMotion) born.current = PENDING
   }, [id])
-  useFrame(() => {
+  useFrame(({ invalidate }) => {
     const g = ref.current
     if (!g || !born.current) return
+    // Draw the next frame too while dropping in (the canvas draws on demand).
+    invalidate()
     // The clock starts on the first frame, so a slow first render doesn't eat the animation.
     if (born.current === PENDING) born.current = performance.now()
     const t = (performance.now() - born.current) / DROP_MS

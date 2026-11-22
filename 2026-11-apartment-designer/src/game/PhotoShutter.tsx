@@ -1,5 +1,6 @@
 // Look mode's photo moment: one shutter button that snaps the 3D view, frames it as a polaroid
 // with the home's name, level and stars, and offers to share or save it.
+import { renderForCapture } from '../three/capture'
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { activeLayout, useStore } from '../store'
@@ -99,13 +100,14 @@ export function PhotoShutter() {
   const take = () => {
     const canvas = document.querySelector<HTMLCanvasElement>('.hud-stage canvas')
     if (!canvas) return
-    // The renderer keeps its drawing buffer (preserveDrawingBuffer), so the last frame is still there.
     const level = `Level ${score.level.index + 1} · ${score.level.name}`
     // Flash first, on the frame of the tap: composing the polaroid (reading the WebGL canvas back)
     // is slow on phones, so it waits until the flash has painted. The DOM flash never touches the
-    // 3D canvas, and the renderer keeps its drawing buffer, so the shot is the room as it was.
+    // 3D canvas. The renderer keeps no drawing buffer, so compose draws the view itself
+    // (renderForCapture) and reads it back in the same task, before the browser clears it.
     if (!reduceMotion) flushSync(() => setFlash((f) => f + 1))
     const compose = () => {
+      renderForCapture()
       const card = composePolaroid(canvas, design ? `${design} · ${name}` : name, level, score.stars)
       // A small copy goes into the album; the card works the same if storage fails.
       const kept = keepPhoto(shotDataURL(canvas), { level, stars: score.stars, evening })

@@ -115,7 +115,7 @@
 .buy-presets::-webkit-scrollbar { display: none; }
 .buy-preset { flex: none; scroll-snap-align: start; white-space: nowrap; }
 .buy-preset {
-  border: none; border-radius: 99px; padding: 3px 5px; background: var(--g-paper-2); color: var(--g-ink);
+  border: none; border-radius: 99px; padding: 3px 7px; min-height: 32px; background: var(--g-paper-2); color: var(--g-ink);
   font: 800 10.5px/1 var(--g-font); cursor: pointer; transition: transform 0.15s var(--g-ease), background 0.15s;
 }
 .buy-preset:hover { background: var(--g-sky); color: #fff; transform: translateY(-1px); }
@@ -289,7 +289,7 @@
   /* Cards are narrow in the side drawer: the size chips stay one row that scrolls sideways (whole
      labels, never "Larg"), so a card with four sizes is no taller than its neighbours. */
   .hud-drawer-slot .buy-presets { flex-wrap: nowrap; overflow-x: auto; }
-  .hud-drawer-slot .buy-preset { min-height: 26px; padding: 3px 6px; }
+  .hud-drawer-slot .buy-preset { min-height: 32px; padding: 3px 6px; }
   /* "Pick one" floats just left of the drawer, at its foot (above the dock), close to where the eye is. */
   .hud-drawer-slot .buy-drawer > .feel-pick {
     top: auto; bottom: 0; left: auto; right: calc(100% + 12px); align-items: flex-end;
