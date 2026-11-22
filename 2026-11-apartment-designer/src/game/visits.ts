@@ -190,7 +190,7 @@ export const VISITS: Visit[] = [
     check: (c) => {
       const n = cats(c, 'plant').length
       if (n >= 3) return { done: true, progress: 1, hint: 'A little jungle.' }
-      return step(`${n} of 3 plants. Add one more.`, n / 3, 'plant', 'decor')
+      return step(`${n} of 3 plants. Add ${3 - n === 1 ? 'one more' : `${3 - n} more`}.`, n / 3, 'plant', 'decor')
     },
   },
   {

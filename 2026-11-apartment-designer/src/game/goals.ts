@@ -84,6 +84,11 @@ export interface HomeScore {
    * the sofa, coffee table, rug, lamp and plant rather than a desk.
    */
   livingFirst?: boolean
+  /**
+   * The highest level the goals allow right now (snags hold it at Cozy, open core goals or warnings
+   * at Designer home): when it is no higher than the level, more stars alone won't reach the next.
+   */
+  cap?: number
 }
 
 export const LEVELS = ['Empty shell', 'Moving in', 'Lived-in', 'Cozy', 'Designer home', 'Dream home'] as const
@@ -95,12 +100,12 @@ export const RULES = {
   nightstandGap: 0.6,
   /** A bedside lamp within this (m, edge to edge) of the bed's side lights it. */
   bedsideLamp: 0.6,
-  /** The sofa keeps 45 cm of knee room in front; the coffee table sits just beyond it. */
-  coffeeMin: 0.45,
-  coffeeMax: 0.5,
+  /** Knee room in front of the sofa: designers quote 35–45 cm, and anything up to 60 cm still reaches. */
+  coffeeMin: 0.35,
+  coffeeMax: 0.6,
   densityMin: 0.15,
-  /** Designers aim for about a third of the floor; a bedroom can take a little more (about 40%). */
-  densityMax: 0.35,
+  /** Designers aim for about a third of the floor; up to 40% still feels lived-in, not crowded. */
+  densityMax: 0.4,
   densityMaxBedroom: 0.42,
   /** Free floor along the side of a bed to get in (both sides for a double or bigger). */
   bedSide: 0.6,
@@ -304,14 +309,31 @@ export function nextGoal(score: HomeScore, fits?: (category: string) => boolean)
   // Today's visitor waits until the home is Cozy (or nothing core is left), then leads: a piece it
   // needs is suggested when it fits, a piece to move is selected, otherwise it joins the pool.
   const visit = open.find((g) => g.visit)
-  const visitReady = !!visit && (score.level.index >= VISIT_LEVEL || !open.some((g) => !g.bonus))
+  const visitReady = visitLeads(score)
   if (visit && visitReady && !open.some((g) => g.snag)) {
     if (visit.item && visit.tab ? !fits || fits(visit.item) : !!visit.near && !visit.tab) return visit
   }
   const live = visit && !visitReady ? open.filter((g) => g !== visit) : open
-  const pool = score.livingFirst ? [...live.filter((g) => LIVING_GOAL.test(g.id)), ...live.filter((g) => !LIVING_GOAL.test(g.id))] : live
-  // score.goals is already ranked (closest to done, basics first). A goal a piece of furniture
-  // finishes is the easiest next step, so the first of those wins; then the first core goal.
+  const lived = score.livingFirst ? [...live.filter((g) => LIVING_GOAL.test(g.id)), ...live.filter((g) => !LIVING_GOAL.test(g.id))] : live
+  // The stars for the next level are in but a core goal holds it (levelBlocker names it): core goals
+  // come first, so Next never wanders off to bonus goals that can't lift the level.
+  const blocked = !!score.level.next && score.level.toNext === 0
+  const pool = blocked ? [...lived.filter((g) => !g.bonus), ...lived.filter((g) => g.bonus)] : lived
+  if (blocked) {
+    const core = pickFrom(pool.filter((g) => !g.bonus), fits)
+    if (core) return core
+    const held = pool.find((g) => !g.bonus && (!g.tab || !g.item))
+    if (held) return held
+  }
+  return pickFrom(pool, fits)
+}
+
+/**
+ * The goal to suggest from a ranked pool: score.goals is already ranked (closest to done, basics
+ * first). A goal a piece of furniture finishes is the easiest next step, so the first of those
+ * wins; then the first core goal.
+ */
+function pickFrom(pool: Goal[], fits?: (category: string) => boolean): Goal | undefined {
   for (const g of pool) {
     if (!g.tab || !g.item) continue
     if (!fits || fits(g.item)) return g
@@ -329,6 +351,18 @@ export function nextGoal(score: HomeScore, fits?: (category: string) => boolean)
   // Nothing on offer fits anywhere: point at the goals sheet (its hints) rather than a refusal.
   const g = pool.find((x) => !x.bonus) ?? pool[0]
   return g && { ...g, tab: undefined, item: undefined }
+}
+
+/**
+ * Whether Next may lead with today's visitor: from Cozy on (or once no core goal is left), or
+ * sooner when the visitor is one pick or one move away (a lamp beside the armchair Grandma has).
+ */
+export function visitLeads(score: HomeScore): boolean {
+  const open = score.goals.filter((g) => !g.done && !g.locked)
+  const visit = open.find((g) => g.visit)
+  if (!visit) return false
+  const oneAway = (!!(visit.item && visit.tab) || (!!visit.near && !visit.tab)) && (visit.progress ?? 0) >= 0.5
+  return score.level.index >= VISIT_LEVEL || !open.some((g) => !g.bonus) || oneAway
 }
 
 /** "Make room for a bed": the goal turned into moving the piece in the way (selected by the chip). */
@@ -354,10 +388,15 @@ function makeRoomGoal(g: Goal): Goal {
 export function levelBlocker(score: HomeScore): string {
   const next = score.level.next ?? ''
   const open = score.goals.filter((g) => !g.done && !g.visit)
-  if (score.errors > 0 || open.some((g) => g.snag)) return `Fix the snag to reach ${next}`
   const core = open.find((g) => !g.bonus)
-  if (core) return `Finish “${core.title}” to reach ${next}`
-  return `Finish a bonus goal to reach ${next}`
+  const gate = score.errors > 0 || open.some((g) => g.snag) ? 'Fix the snag' : core ? `Finish “${core.title}”` : 'Finish a bonus goal'
+  if (score.level.toNext > 0) {
+    const more = `${score.level.toNext} more ★`
+    // Stars alone won't do it when a gate (a snag, an open core goal) holds the level: say both.
+    const held = score.cap !== undefined && score.cap <= score.level.index
+    return held ? `${more} and ${gate.charAt(0).toLowerCase()}${gate.slice(1)} to reach ${next}` : `${more} to ${next}`
+  }
+  return `${gate} to reach ${next}`
 }
 
 /** Where the best level is remembered: per design, so designs of one home can be compared. */
@@ -394,7 +433,16 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
   // the way counts there; beds, wardrobes, dressers and desks need their space whatever blocks it.)
   const catOf = new Map(placed.map((x) => [x.id, x.category]))
   // (A dresser or wardrobe is only flagged short of MIN_DRAWER_FRONT, so 75–90 cm is no snag.)
-  const issues = analysis.issues
+  // A coffee table 35–45 cm from the sofa is within designers' range, though the clearance check
+  // asks 45 cm: here it neither blocks the coffee goal nor counts as a warning holding the level.
+  const byPid = new Map(placed.map((x) => [x.id, x]))
+  const kneeRoomOk = (id: string) => {
+    const m = /^clear:([^:]+):front:([^:]+)$/.exec(id)
+    const seat = m && byPid.get(m[1])
+    const table = m && byPid.get(m[2])
+    return !!seat && !!table && SEATING.has(seat.category) && (table.category === 'coffee-table' || table.category === 'ottoman') && polygonGap(seat.body, table.body) >= RULES.coffeeMin - 0.005
+  }
+  const issues = analysis.issues.filter((i) => i.severity === 'error' || !kneeRoomOk(i.id))
   const clearanceSnag = (id: string) => issues.some((i) => i.kind === 'clearance' && i.severity !== 'info' && i.placementIds[0] === id)
   const cramped = new Set(
     issues
@@ -1061,6 +1109,38 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
     })
   }
 
+  // Your palette: three or more pieces painted away from their catalog colour, in a few colour
+  // families (or neighbours plus one accent). A bonus that names the palette it finds.
+  const itemOf = new Map(doc.items.map((i) => [i.id, i]))
+  const itemAt = new Map(layout.placements.map((p) => [p.id, itemOf.get(p.itemId)]))
+  const paintable = placed.filter((x) => x.inside && !packedIds.has(x.id) && x.category !== 'box')
+  const painted = paintable.flatMap((x) => {
+    const it = itemAt.get(x.id)
+    const def = catalogEntry(x.category)
+    return it && def.category === x.category && sameColor(it.color, def.color) === false ? [{ x, color: it.color }] : []
+  })
+  if (furnished || painted.length) {
+    const pal = paletteOf(painted.map((q) => q.color))
+    const odd = pal.odd ? painted.find((q) => hueFamily(q.color) === pal.odd)?.x : undefined
+    const plain = paintable.filter((x) => !painted.some((q) => q.x === x)).sort((a, b) => polygonArea(b.body) - polygonArea(a.body))[0]
+    const ok = painted.length >= PALETTE_PIECES && pal.ok
+    add({
+      id: 'palette',
+      title: painted.length >= 2 ? `Your palette: ${pal.name}` : 'Your palette',
+      hint: ok
+        ? `A palette all your own: ${pal.name}.`
+        : painted.length < PALETTE_PIECES
+          ? `${painted.length} of ${PALETTE_PIECES} pieces painted. Tap a piece and pick a swatch.`
+          : `Too many colours at once. Keep to ${PALETTE_FAMILIES} colour families (or neighbours plus one accent): repaint the ${odd?.name.toLowerCase() ?? 'odd one out'}.`,
+      near: ok ? undefined : painted.length < PALETTE_PIECES ? plain?.id : odd?.id,
+      done: ok,
+      progress: ok ? 1 : (Math.min(painted.length, PALETTE_PIECES) / PALETTE_PIECES) * (pal.ok ? 1 : 0.8),
+      stars: 1,
+      category: 'style',
+      bonus: true,
+    })
+  }
+
   // Unpack your boxes: a bonus, and the cheapest first win on move-in day (ranked first by Next
   // while the home has fewer than UNPACK_URGENT_PIECES pieces besides the boxes).
   const boxes = doc.items.filter((i) => i.unpack?.length)
@@ -1175,7 +1255,7 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
   goals.sort((a, b) => Number(a.done) - Number(b.done) || (b.progress ?? 0) - (a.progress ?? 0) || rank(a) - rank(b) || a.stars - b.stars)
 
   const livingFirst = !!rooms.length && !canSleep && livable.some((r) => LIVING.test(r.name) && !named(r))
-  return { stars, maxStars, coreMax, thresholds, level, goals, vibe, errors, headline, livingFirst }
+  return { stars, maxStars, coreMax, thresholds, level, goals, vibe, errors, headline, livingFirst, cap }
 }
 
 // ---- Remix: twists -------------------------------------------------------
@@ -1451,4 +1531,87 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
     progress: done ? 1 : clamp01(progress),
     ...(done ? {} : { near, ...(item ? { item, tab: TAB_OF[item] } : {}) }),
   }
+}
+
+// ---- Palette ---------------------------------------------------------------
+
+/** Painted pieces the palette goal wants, and the colour families it may use. */
+export const PALETTE_PIECES = 3
+export const PALETTE_FAMILIES = 3
+
+/** Names for the paint swatches (and the warm pick colours), for naming a palette. */
+const COLOR_NAMES: [string, string][] = [
+  ['#7d8fa3', 'Slate'], ['#a3907d', 'Taupe'], ['#c9c3b6', 'Stone'], ['#8a6b4f', 'Walnut'], ['#3d3d3d', 'Charcoal'], ['#5f8f5a', 'Sage'],
+  ['#c7a98a', 'Oak'], ['#e2d6b8', 'Sand'], ['#b5534a', 'Terracotta'], ['#e0b04f', 'Honey'], ['#5b7bb5', 'Cornflower'], ['#f2efe8', 'Linen'],
+  ['#ffffff', 'White'], ['#111111', 'Black'], ['#d98a9a', 'Rose'], ['#6f5a8f', 'Plum'], ['#3f7f7a', 'Teal'], ['#2f4a6b', 'Navy'],
+]
+
+function rgb(hex: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return null
+  const h = m[1].length === 3 ? m[1].replace(/./g, (c) => c + c) : m[1]
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number]
+}
+
+/** Whether two colours are the same paint (undefined when either can't be read). */
+export function sameColor(a: string, b: string): boolean | undefined {
+  const x = rgb(a)
+  const y = rgb(b)
+  if (!x || !y) return undefined
+  return x.every((c, i) => Math.abs(c - y[i]) <= 2)
+}
+
+/** The nearest swatch name for a colour ("Sage"). */
+export function colorName(hex: string): string {
+  const c = rgb(hex)
+  if (!c) return 'Custom'
+  let best = COLOR_NAMES[0][1]
+  let d = Infinity
+  for (const [h, name] of COLOR_NAMES) {
+    const q = rgb(h)!
+    const e = (c[0] - q[0]) ** 2 * 0.3 + (c[1] - q[1]) ** 2 * 0.59 + (c[2] - q[2]) ** 2 * 0.11
+    if (e < d) [d, best] = [e, name]
+  }
+  return best
+}
+
+/**
+ * A colour's hue family: "neutral" for greys, beiges and muted tones (they go with anything), else
+ * one of twelve 30° slices of the colour wheel ("h0" red, "h1" orange... "h7" blue).
+ */
+export function hueFamily(hex: string): string {
+  const c = rgb(hex)
+  if (!c) return 'neutral'
+  const [r, g, b] = c.map((x) => x / 255)
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  if (d < 0.18) return 'neutral'
+  const h = max === r ? 60 * (((g - b) / d + 6) % 6) : max === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4)
+  return `h${Math.round(h / 30) % 12}`
+}
+
+/**
+ * Whether a set of paint colours makes a palette: at most PALETTE_FAMILIES hue families (neutrals
+ * are free), or neighbouring hues plus one accent. Named from its most-used colours ("Sage &
+ * Terracotta"); `odd` is the family to repaint when it doesn't hold together.
+ */
+export function paletteOf(colors: string[]): { ok: boolean; name: string; odd?: string } {
+  const count = new Map<string, number>()
+  for (const c of colors) count.set(colorName(c), (count.get(colorName(c)) ?? 0) + 1)
+  const names = [...count.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n).slice(0, 3)
+  const name = names.length > 1 ? `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}` : (names[0] ?? '')
+  const fams = new Map<string, number>()
+  for (const c of colors) {
+    const f = hueFamily(c)
+    if (f !== 'neutral') fams.set(f, (fams.get(f) ?? 0) + 1)
+  }
+  if (fams.size <= PALETTE_FAMILIES) return { ok: true, name }
+  // Neighbours (within 60° of each other) plus one accent.
+  const slots = [...fams.keys()].map((f) => Number(f.slice(1)))
+  const span = (xs: number[]) => Math.min(...xs.map((s) => Math.max(...xs.map((t) => (t - s + 12) % 12))))
+  const accent = slots.find((a) => span(slots.filter((s) => s !== a)) <= 2)
+  if (accent !== undefined) return { ok: true, name }
+  const odd = [...fams.entries()].sort((a, b) => a[1] - b[1])[0][0]
+  return { ok: false, name, odd }
 }

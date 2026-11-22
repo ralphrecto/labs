@@ -6,13 +6,13 @@ import { catalogEntry, itemFromCatalog } from '../model/catalog'
 import { findDrop } from '../model/placement'
 import type { Doc } from '../model/types'
 import { activeLayout, useStore } from '../store'
-import { lastAwayMs, useGame } from './gameStore'
+import { lastAwayMs, useGame, VISIT_KEY } from './gameStore'
 import { bankableLevel, bestLevelKey, levelBlocker, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, packedBoxIds, scoreHome, type Goal, type HomeScore } from './goals'
 import { unpackAndCelebrate } from './unpack'
 import { IconCheck, IconClose, IconSparkle, IconStar } from './icons'
 import { useModal } from './useModal'
 import { openRemixPicker } from './Designs'
-import { TWISTS, VISIT_BY_ID, VISITS, type Visit } from './goals'
+import { localDay, TWISTS, VISIT_BY_ID, VISIT_LEVEL, VISIT_STARS, VISITS, visitLeads, type Visit } from './goals'
 import { reduceMotion } from '../motion'
 import { listHomes } from '../storage'
 import type { Issue } from '../model/checks'
@@ -32,9 +32,13 @@ export function useHomeScore(): HomeScore & { best: number } {
   const raw = useMemo(() => scoreHome(doc, layout, analysis, visitIn), [doc, layout, analysis, visitIn])
   lastIssues = analysis.issues
   // A new local day brings a new visitor (one the home doesn't already please, when there is one).
+  // While move-in day's boxes are still the first thing to do, the visitor waits: unpacking would
+  // otherwise please a visitor the player never got to meet.
+  const unpacking = raw.goals.some((g) => g.id === 'unpack' && !g.done && g.urgent)
   useEffect(() => {
+    if (unpacking) return
     useGame.getState().rollVisit(doc, undefined, (id) => !!scoreHome(doc, layout, analysis, { id }).goals.find((g) => g.visit === id)?.done)
-  }, [doc, layout, analysis])
+  }, [doc, layout, analysis, unpacking])
   // Today's visitor is happy: the sticker is theirs to keep, even if the room changes later.
   const metId = raw.goals.find((g) => g.visit && g.done)?.visit
   useEffect(() => {
@@ -139,6 +143,19 @@ function Stars({ n, filled = true }: { n: number; filled?: boolean }) {
   )
 }
 
+/**
+ * Yesterday's visitor, if they were pleased (their stars went home with them): read before today's
+ * visitor is rolled, so the welcome back can say why the stars dropped overnight.
+ */
+let goneVisit: Visit | undefined = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem(VISIT_KEY) ?? 'null')
+    return v && v.date && v.date !== localDay() && v.done ? VISIT_BY_ID[v.visitId] : undefined
+  } catch {
+    return undefined
+  }
+})()
+
 /** Today's visitor, for the welcome card and the goals sheet. */
 function useVisit(): { visit?: Visit; done: boolean; stickers: string[] } {
   const v = useGame((s) => s.visit)
@@ -148,7 +165,7 @@ function useVisit(): { visit?: Visit; done: boolean; stickers: string[] } {
 type Banner =
   | { key: number; kind: 'goal'; goal: Goal; more: number }
   /** `line`: "Sample apartment · Move-in day · Cozy" (the home's name only with more than one home; the stars sit in the badge). `top`: at the top level, lead with a variation. */
-  | { key: number; kind: 'welcome'; goal?: Goal; home: string; away?: string; line: string; stars: number; top: boolean; visit?: { id: string; text: string } }
+  | { key: number; kind: 'welcome'; goal?: Goal; home: string; away?: string; line: string; stars: number; top: boolean; visit?: { id: string; text: string }; gone?: string }
 
 /** Homes saved on this device (the welcome card names the home only when there's more than one). */
 function homeCount() {
@@ -328,6 +345,13 @@ export function VibeMeter() {
     const sc = scoreRef.current
     const vs = useGame.getState().visit
     const vd = VISIT_BY_ID[vs.visitId]
+    // A visitor pleased yesterday took their stars home: say so, so the drop isn't a mystery.
+    const gone = goneVisit ?? (vs.date && vs.date !== localDay() && vs.done ? VISIT_BY_ID[vs.visitId] : undefined)
+    goneVisit = undefined
+    const today = gone && vd && vd.id !== gone.id ? vd : undefined
+    // Next only leads with the visitor from Cozy on (or when it's one pick away): say when.
+    const hasVisitGoal = sc.goals.some((g) => g.visit)
+    const later = !vs.done && (hasVisitGoal ? !visitLeads(sc) : sc.level.index < VISIT_LEVEL)
     setBanner({
       key: Date.now(),
       kind: 'welcome',
@@ -338,7 +362,11 @@ export function VibeMeter() {
       stars: sc.stars,
       // At the top level a remix comes before any bonus goal (only core goals beat it).
       top: sc.level.index >= LEVELS.length - 1 && (!nextRef.current || (!!nextRef.current.bonus && !nextRef.current.visit)),
-      visit: vd ? { id: vd.id, text: vs.done ? `${vd.emoji} ${vd.who} loved it! Sticker collected` : `${vd.emoji} ${vd.line}` } : undefined,
+      visit:
+        vd && (!gone || today)
+          ? { id: vd.id, text: vs.done ? `${vd.emoji} ${vd.who} loved it! Sticker collected` : `${vd.emoji} ${vd.line}${later ? ' (once this design is Cozy)' : ''}` }
+          : undefined,
+      gone: gone ? `${gone.emoji} ${gone.who} went home${today ? ` · today: ${today.emoji} +${VISIT_STARS}★` : ''}` : undefined,
     })
     // Only when the flag is raised; the score at that moment is the one to suggest from.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -494,7 +522,18 @@ export function VibeMeter() {
               {banner.away ? ` ${banner.away}` : ''}
             </small>
             <span className="dz-welcome-line">{banner.line}</span>
-            {banner.top ? 'Remix this home' : banner.goal ? `Next: ${banner.goal.title} (+${banner.goal.stars} ★)` : 'Your home missed you.'}
+            <span className="goal-welcome-next">
+              {banner.top ? (
+                'Remix this home'
+              ) : banner.goal ? (
+                <>
+                  Next: {banner.goal.title} <span className="goal-nowrap">(+{banner.goal.stars} ★)</span>
+                </>
+              ) : (
+                'Your home missed you.'
+              )}
+            </span>
+            {banner.gone && <span className="goal-visit-line">{banner.gone}</span>}
             {banner.visit && <span className="goal-visit-line">{banner.visit.text}</span>}
           </span>
         </button>
@@ -507,7 +546,8 @@ export function VibeMeter() {
           <span className="goal-banner-text">
             <small>Level up! {levelUp.index + 1} of {LEVELS.length}</small>
             {levelUp.name}
-            {levelUp.name === 'Cozy' ? <em>Evening light unlocked. Try it in Look.</em> : levelGoalLine && <em>{levelGoalLine}</em>}
+            {levelGoalLine && <em>{levelGoalLine}</em>}
+            {levelUp.name === 'Cozy' && <em>Evening light unlocked. Try it in Look.</em>}
           </span>
         </button>
       )}
@@ -712,22 +752,38 @@ function GoalRow({ g, focus }: { g: Goal; focus?: boolean }) {
   useEffect(() => {
     if (focus) ref.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [focus])
-  return (
-    <li ref={ref} className={`goal-row${g.done ? ' done' : ''}${focus ? ' focus' : ''}`}>
+  const cls = `goal-row${g.done ? ' done' : ''}${focus ? ' focus' : ''}`
+  const body = (
+    <>
       <span className="goal-check">{g.done && <IconCheck />}</span>
-      <div className="goal-main">
-        <div className="goal-title">
+      <span className="goal-main">
+        <span className="goal-title">
           {g.title}
           {g.visit ? <span className="goal-bonus visit">Visitor</span> : g.bonus && <span className="goal-bonus">Bonus</span>}
-        </div>
-        {!g.done && g.hint && <div className="goal-hint">{g.hint}</div>}
+        </span>
+        {!g.done && g.hint && <span className="goal-hint">{g.hint}</span>}
         {!g.done && (g.progress ?? 0) > 0 && (
-          <div className="goal-progress">
+          <span className="goal-progress">
             <i style={{ width: `${Math.round((g.progress ?? 0) * 100)}%` }} />
-          </div>
+          </span>
         )}
-      </div>
+      </span>
       <Stars n={g.stars} filled={g.done} />
+    </>
+  )
+  // Done goals (and the folded "unlocks after" line) are just a record; an open goal is a button
+  // that does what Next would: opens the drawer on its piece, or selects the piece to move.
+  if (g.done || g.id === 'locked')
+    return (
+      <li ref={ref} className={cls}>
+        {body}
+      </li>
+    )
+  return (
+    <li ref={ref} className="goal-row-item">
+      <button type="button" className={`${cls} open`} onClick={() => showGoal(g)} aria-label={`${g.title}, ${g.stars} star${g.stars === 1 ? '' : 's'}. Show me`}>
+        {body}
+      </button>
     </li>
   )
 }
@@ -812,9 +868,7 @@ export function GoalsSheet() {
                 ? bonusLeft
                   ? `Top level reached · ${bonusLeft} bonus goal${bonusLeft === 1 ? '' : 's'} left (★${bonusStars}/${bonusMax})`
                   : 'Top level reached. What a home!'
-                : score.level.toNext > 0
-                  ? `${score.level.toNext} more ★ to ${score.level.next}`
-                  : levelBlocker(score)}
+                : levelBlocker(score)}
             </div>
             {!score.level.next && (
               // At Dream home the chip may be today's visitor: the remix stays one tap away here.

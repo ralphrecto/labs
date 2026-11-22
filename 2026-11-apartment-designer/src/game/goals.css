@@ -66,6 +66,14 @@
 .goal-hint { font-size: 13px; color: var(--g-ink-2); line-height: 1.35; margin-top: 2px; user-select: text; }
 .goal-progress { height: 6px; border-radius: 99px; background: var(--g-paper-2); margin-top: 7px; overflow: hidden; }
 .goal-progress i { display: block; height: 100%; border-radius: inherit; background: var(--goal-cat, var(--g-sky)); }
+/* An open goal is a button: tap (or Enter) to be shown it, like the Next chip. */
+.goal-row-item { display: block; }
+button.goal-row { width: 100%; font: inherit; color: inherit; text-align: left; cursor: pointer; transition: transform 0.15s var(--g-ease), box-shadow 0.15s var(--g-ease), border-color 0.15s; }
+button.goal-row:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(80, 60, 30, 0.12); border-color: #e3d6c1; }
+button.goal-row:active { transform: translateY(0) scale(0.99); }
+button.goal-row:focus-visible { outline: 3px solid var(--g-sky); outline-offset: 2px; }
+.goal-main, .goal-title, .goal-hint, .goal-progress { display: block; }
+@media (prefers-reduced-motion: reduce) { button.goal-row:hover { transform: none; } }
 
 @keyframes goal-wiggle { 0%, 100% { transform: scale(1); } 30% { transform: scale(1.12) rotate(-3deg); } 60% { transform: scale(0.98) rotate(2deg); } }
 @keyframes goal-spark { 0% { transform: rotate(var(--a)) translateY(0) scale(0.4); opacity: 1; } 70% { opacity: 1; } 100% { transform: rotate(var(--a)) translateY(calc(-1 * var(--d))) scale(1.1); opacity: 0; } }
@@ -91,6 +99,19 @@
 .goal-banner.welcome .goal-banner-check { background: var(--g-sun); color: #6b4300; }
 .goal-banner.welcome .goal-banner-check svg { fill: #fff6dc; stroke: #b07a12; stroke-width: 1.6; }
 .goal-banner.welcome .goal-banner-text small { color: #c98700; }
+/* Wide enough to read at a glance (it was a 184px column, nine lines tall): as wide as its text, up to 440px. */
+.goal-banner.welcome { width: max-content; max-width: min(440px, calc(100vw - 32px)); white-space: normal; align-items: flex-start; }
+.goal-banner.welcome .goal-banner-check { width: auto; min-width: 30px; height: 30px; padding: 0 9px; gap: 3px; border-radius: 99px; font-weight: 900; font-size: 13px; }
+.goal-banner.welcome .goal-banner-check svg { width: 15px; height: 15px; }
+.goal-banner.welcome .goal-banner-text { min-width: 0; }
+.goal-welcome-next { display: block; }
+.goal-nowrap { white-space: nowrap; }
+@media (max-width: 700px) {
+  /* Phones: the star count stacks under a small star, so the text keeps the width. */
+  .goal-banner.welcome { gap: 8px; padding: 8px 12px 8px 8px; }
+  .goal-banner.welcome .goal-banner-check { flex-direction: column; height: auto; min-width: 28px; padding: 4px 4px 3px; gap: 0; border-radius: 12px; font-size: 11px; line-height: 1; }
+  .goal-banner.welcome .goal-banner-check svg { width: 12px; height: 12px; }
+}
 
 /* Goals sheet: the goal "Show me" pointed at. */
 .goal-row.focus { border-color: var(--g-sun); box-shadow: 0 0 0 3px color-mix(in srgb, var(--g-sun) 35%, transparent); }
