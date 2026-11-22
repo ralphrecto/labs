@@ -330,3 +330,24 @@ Shipped:
 Rolled over: a daily "visitor" request and a photo album (the long-session player's hooks); bathroom fixtures in the sample; the welcome-back card and the level-up toast still sit near the right-hand buttons on phones; the iPhone plan's leftmost wall dimension is clipped; the "Seats for two" goal is not yet tied to the pendant and table goals.
 
 220 tests pass.
+
+## Round 11 (2026-11-22 08:46-10:00 UTC)
+
+This round built the two "reason to come back" hooks from round 10, alongside one fresh-eyes regression review (iPhone 14 and iPad landscape, sample home to Dream home plus a remix).
+
+Shipped:
+- **Visitor of the day** (`src/game/visits.ts`): 10 visitors (Grandma, book club, the little cousins, a friend with a dog...), one per local day, each with a wish checked against the real layout. It is a +2★ bonus goal that never caps the level. The welcome-back card names today's visitor, the goals sheet shows a visitor pill, a "Today's visitor" section and a sticker row ("4 of 10"), and finishing it says "<who> loved it!".
+- **Photo album** (`src/game/album.ts`, `listAlbum`/`addAlbumPhoto` in `storage.ts`): every Look photo is kept (360px JPEG, 12 per home, the oldest unpinned photo goes first), with a corkboard row in the Designs sheet, a larger view, and delete with Undo. A remix's first Dream home pins a twist polaroid.
+- **Dead end fixed:** "Make room for a desk" no longer tells you to move the bed out of the bedroom. It names a spare or movable living piece first.
+- **Safe picks:** pick cards test-place each variant and drop any that would undo a goal or add a warning.
+- **Dream card:** the level-up celebration is tracked separately from the banked level, so Dream home always gets its card.
+- **Clearer blockers:** the goals sheet says `Finish "<goal>" to reach X` instead of a snag that isn't there.
+- **Polish:** pick cards sit bottom-left on landscape tablets, no mid-word label breaks, "Talk corner" used everywhere, "From Mine" for pieces that didn't come from a box, office chair pick cards, and a "Remix this home" button in the goals sheet at Dream home.
+
+Rolled over:
+- Removing the dining table doesn't make Next ask for a table again.
+- The welcome-back card is tall on iPhone with the visitor line.
+- The album's larger view is soft on retina (360px source).
+- The make-room goal doesn't suggest a smaller variant.
+
+243 tests pass.
