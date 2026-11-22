@@ -548,6 +548,97 @@ const SHOTS: Record<string, Shot> = {
   },
 }
 
+// Wall decor: drawn face-on (it hangs flat on a wall), with a soft wall-shadow behind and no floor shadow.
+const wallShadow = (x: number, y: number, w: number, h: number, r = 3) => <rect x={x + 2.5} y={y + 3} width={w} height={h} rx={r} fill="rgba(70, 45, 20, 0.14)" stroke="none" />
+Object.assign(SHOTS, {
+  'wall-art': {
+    draw: (p: Pal) => (
+      <>
+        {wallShadow(26, 14, 48, 64)}
+        <rect x={26} y={14} width={48} height={64} rx={2} fill={p.wood.t} stroke={p.line} />
+        <rect x={32} y={20} width={36} height={52} fill={mix(p.base.f, '#ffffff', 0.55)} stroke={p.line} strokeWidth={1.6} />
+        <circle cx={58} cy={33} r={6} fill="#ffc24b" stroke="none" />
+        <path d="M32 72V58Q41 46 50 56T68 50V72Z" fill={p.base.f} stroke="none" />
+        <path d="M32 72V64Q44 58 54 65T68 62V72Z" fill={p.base.s} stroke="none" />
+        <rect x={32} y={20} width={36} height={52} fill="none" stroke={p.line} strokeWidth={1.6} />
+      </>
+    ),
+    sx: 50,
+    sw: 0,
+  },
+  mirror: {
+    draw: (p: Pal) => (
+      <>
+        <circle cx={52.5} cy={49} r={30} fill="rgba(70, 45, 20, 0.14)" stroke="none" />
+        <circle cx={50} cy={46} r={30} fill={p.base.t} stroke={p.line} />
+        <circle cx={50} cy={46} r={24} fill="#dceef4" stroke={p.line} strokeWidth={1.6} />
+        <path d="M36 40Q40 28 52 25" stroke="#ffffff" strokeWidth={4} fill="none" />
+        <path d="M58 60L64 54" stroke="#ffffff" strokeWidth={2.4} fill="none" />
+      </>
+    ),
+    sx: 50,
+    sw: 0,
+  },
+  'wall-shelf': {
+    draw: (p: Pal) => (
+      <>
+        {[0, 1, 2, 3].map((i) => {
+          const h = [26, 22, 28, 18][i]
+          const x = 24 + i * 9
+          return i === 3 ? (
+            <rect key={i} x={x + 2} y={60 - h} width={7} height={h} rx={1} transform={`rotate(14 ${x + 9} 60)`} fill={tone(BOOKS[i]).f} stroke={p.line} />
+          ) : (
+            <rect key={i} x={x} y={60 - h} width={8} height={h} rx={1} fill={tone(BOOKS[i]).f} stroke={p.line} />
+          )
+        })}
+        <ellipse cx={68} cy={55} rx={6} ry={5} fill="#5f8f5a" stroke={p.line} />
+        <rect x={64} y={54} width={8} height={6} rx={1} fill="#d98a5f" stroke={p.line} />
+        <Box x={18} b={66} w={64} h={6} d={10} c={p.base} line={p.line} />
+        <rect x={22} y={67} width={60} height={3} fill="rgba(70, 45, 20, 0.14)" stroke="none" />
+      </>
+    ),
+    sx: 50,
+    sw: 0,
+  },
+  'wall-clock': {
+    draw: (p: Pal) => (
+      <>
+        <circle cx={52.5} cy={49} r={26} fill="rgba(70, 45, 20, 0.14)" stroke="none" />
+        <circle cx={50} cy={46} r={26} fill={p.wood.f} stroke={p.line} />
+        <circle cx={50} cy={46} r={21} fill={p.base.t} stroke={p.line} strokeWidth={1.6} />
+        {[0, 1, 2, 3].map((i) => (
+          <circle key={i} cx={50 + 16 * Math.sin((i * Math.PI) / 2)} cy={46 - 16 * Math.cos((i * Math.PI) / 2)} r={1.8} fill={p.ink} stroke="none" />
+        ))}
+        <path d="M50 46V32M50 46l9 5" stroke={p.ink} strokeWidth={2.4} />
+        <circle cx={50} cy={46} r={2.2} fill="#ff7a59" stroke="none" />
+      </>
+    ),
+    sx: 50,
+    sw: 0,
+  },
+  curtains: {
+    draw: (p: Pal) => (
+      <>
+        <rect x={34} y={18} width={32} height={42} fill="#dceef4" stroke={p.line} strokeWidth={1.6} />
+        <path d="M50 18V60M34 39H66" stroke={p.line} strokeWidth={1.4} />
+        <path d="M16 12H84" stroke={p.metal.s} strokeWidth={3} />
+        {[-1, 1].map((k) => {
+          const x0 = k < 0 ? 18 : 82
+          const x1 = k < 0 ? 40 : 60
+          return (
+            <g key={k}>
+              <path d={`M${x0} 13H${x1}Q${x1 - k * 2} 40 ${x1 + k * 4} 46Q${x1 - k * 6} 64 ${x1 - k * 2} ${GROUND}H${x0}Z`} fill={p.base.f} stroke={p.line} />
+              <path d={`M${(x0 + x1) / 2} 15V${GROUND - 2}M${x0 + (x1 - x0) * 0.75} 16Q${x0 + (x1 - x0) * 0.7} 60 ${x0 + (x1 - x0) * 0.8} ${GROUND - 2}`} stroke={p.base.s} strokeWidth={1.8} fill="none" />
+            </g>
+          )
+        })}
+      </>
+    ),
+    sx: 50,
+    sw: 0,
+  },
+} satisfies Record<string, Shot>)
+
 /** Variant shots ("category:look"): a round dining or coffee table on a pedestal, a tall chest of drawers. */
 const roundTable = (topY: number, rx: number, plates: boolean): Draw => (p) => {
   const cx = 50

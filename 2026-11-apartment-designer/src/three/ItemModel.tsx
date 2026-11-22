@@ -4,6 +4,7 @@ import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useSt
 import { useGame } from '../game/gameStore'
 import * as THREE from 'three'
 import { LAMPS } from '../model/placement'
+import { mountBottom } from '../model/wallDecor'
 import type { Doc, Item } from '../model/types'
 import { pointInPolygon } from '../model/geometry'
 import { activeLayout, useStore } from '../store'
@@ -518,10 +519,107 @@ export function parts(item: Item, hang?: { hostH?: number; ceiling?: number }): 
       return pendant(item, hang?.hostH, hang?.ceiling)
     case 'plant':
       return plant(item)
+    case 'wall-art':
+    case 'mirror':
+    case 'wall-shelf':
+    case 'wall-clock':
+    case 'curtains':
+      return wallDecor(item)
     default: {
       if (item.category === 'box' && /box|carton/i.test(item.name)) return movingBox(item)
       const { width: w, depth: d, height: h } = item
       return [{ kind: 'soft', size: [w, h, d], pos: [0, h / 2, 0], r: Math.min(0.02, w / 4, d / 4, h / 4) } satisfies Part]
+    }
+  }
+}
+
+// ------------------------------------------------------------------ wall decor
+// Hung on the wall: the back of the box (z = -d/2) is the wall face, and the height above the floor
+// comes from the category (mountBottom), so these parts are lifted to it here.
+
+/** Abstract canvas patterns, picked by the item's id so two prints differ. */
+const CANVAS_INKS = ['#ffc24b', '#5fa67f', '#4f8be8', '#ff7a59', '#8a5cc7', '#fbf6ee']
+
+function wallDecor(item: Item): Part[] {
+  const { width: w, depth: d, height: h } = item
+  const y0 = mountBottom(item)
+  const cy = y0 + h / 2
+  const back = -d / 2
+  const face = [Math.PI / 2, 0, 0] as [number, number, number]
+  switch (item.category) {
+    case 'wall-art': {
+      const r = rng(item.id)
+      const f = Math.min(0.045, w * 0.08)
+      const pick = () => CANVAS_INKS[Math.floor(r() * CANVAS_INKS.length)]
+      const cw = w - 2 * f
+      const ch = h - 2 * f
+      const z = back + d * 0.75
+      return [
+        // Frame and a pale mat, then a canvas in the item's colour with a few soft blocks of colour.
+        { kind: 'box', size: [w, h, d * 0.7], pos: [0, cy, back + d * 0.35], color: PAL.wood, shade: 1.15 },
+        { kind: 'box', size: [cw, ch, 0.006], pos: [0, cy, back + d * 0.7 + 0.003], color: shade(item.color, 1.25) },
+        { kind: 'ball', size: [cw * 0.34, cw * 0.34, 0.01], pos: [cw * (r() * 0.4 - 0.2), cy + ch * 0.2, z], color: pick(), noShadow: true },
+        { kind: 'box', size: [cw * 0.9, ch * 0.32, 0.008], pos: [0, cy - ch * 0.28, z], color: item.color, noShadow: true },
+        { kind: 'box', size: [cw * 0.45, ch * 0.16, 0.009], pos: [cw * (r() * 0.3 - 0.15), cy - ch * 0.08, z + 0.001], color: pick(), noShadow: true },
+        { kind: 'ball', size: [cw * 0.2, cw * 0.2, 0.01], pos: [-cw * 0.28, cy + ch * 0.05, z + 0.001], color: pick(), noShadow: true },
+      ]
+    }
+    case 'mirror': {
+      const s = Math.min(w, h)
+      return [
+        { kind: 'cyl', size: [s, d * 0.7, s], pos: [0, cy, back + d * 0.35], rot: face, seg: 40, color: item.color },
+        { kind: 'cyl', size: [s * 0.84, 0.006, s * 0.84], pos: [0, cy, back + d * 0.7 + 0.003], rot: face, seg: 40, color: '#e4f2f6' },
+        // A light streak across the glass.
+        { kind: 'box', size: [s * 0.08, s * 0.4, 0.004], pos: [-s * 0.12, cy + s * 0.06, back + d * 0.7 + 0.008], rot: [0, 0, -0.6], color: '#ffffff', noShadow: true },
+      ]
+    }
+    case 'wall-shelf': {
+      const t = 0.035
+      const shelfY = y0 + t / 2
+      const out: Part[] = [
+        { kind: 'box', size: [w, t, d], pos: [0, shelfY, 0], color: item.color },
+        { kind: 'box', size: [0.02, 0.06, d * 0.5], pos: [-w * 0.35, shelfY - 0.04, back + d * 0.25], color: PAL.dark },
+        { kind: 'box', size: [0.02, 0.06, d * 0.5], pos: [w * 0.35, shelfY - 0.04, back + d * 0.25], color: PAL.dark },
+      ]
+      // Three or four books standing, the last one leaning; a little plant at the other end.
+      const bh = Math.max(0.1, h - t - 0.03)
+      const n = w >= 0.7 ? 4 : 3
+      let x = -w / 2 + 0.06
+      for (let i = 0; i < n; i++) {
+        const hh = bh * [0.92, 0.78, 1, 0.7][i]
+        const bw = [0.05, 0.04, 0.055, 0.045][i]
+        const lean = i === n - 1 ? -0.3 : 0
+        out.push({ kind: 'box', size: [bw, hh, d * 0.75], pos: [x + bw / 2 + (lean ? 0.03 : 0), y0 + t + hh / 2 - (lean ? 0.008 : 0), 0], rot: [0, 0, lean], color: PAL.books[i], noShadow: true })
+        x += bw + 0.005
+      }
+      out.push({ kind: 'cyl', size: [0.09, 0.08, 0.09], pos: [w / 2 - 0.1, y0 + t + 0.04, 0], bottom: 0.8, seg: 12, color: PAL.pot, noShadow: true })
+      out.push({ kind: 'ball', size: [0.14, 0.12, 0.12], pos: [w / 2 - 0.1, y0 + t + 0.13, 0], color: '#5f8f5a', fabric: true, noShadow: true })
+      return out
+    }
+    case 'wall-clock': {
+      const s = Math.min(w, h)
+      const z = back + d * 0.8
+      return [
+        { kind: 'cyl', size: [s, d * 0.8, s], pos: [0, cy, back + d * 0.4], rot: face, seg: 32, color: PAL.wood },
+        { kind: 'cyl', size: [s * 0.86, 0.006, s * 0.86], pos: [0, cy, z + 0.003], rot: face, seg: 32, color: item.color },
+        { kind: 'box', size: [0.014, s * 0.28, 0.005], pos: [0, cy + s * 0.12, z + 0.008], color: PAL.ink, noShadow: true },
+        { kind: 'box', size: [0.012, s * 0.2, 0.005], pos: [s * 0.07, cy - s * 0.04, z + 0.01], rot: [0, 0, -2.1], color: PAL.ink, noShadow: true },
+        { kind: 'cyl', size: [0.025, 0.006, 0.025], pos: [0, cy, z + 0.013], rot: face, seg: 12, color: '#ff7a59', noShadow: true },
+      ]
+    }
+    default: {
+      // Curtains: a rod with two soft panels, each a few rounded folds, gathered toward the sides.
+      const rodY = y0 + h - 0.02
+      const out: Part[] = [{ kind: 'cyl', size: [0.025, w + 0.12, 0.025], pos: [0, rodY, 0], rot: [0, 0, Math.PI / 2], seg: 10, color: PAL.metal }]
+      const panel = w * 0.26
+      const folds = 4
+      const fw = panel / folds
+      for (const side of [-1, 1])
+        for (let i = 0; i < folds; i++) {
+          const x = side * (w / 2 - fw * (i + 0.5))
+          out.push({ kind: 'soft', size: [fw * 1.08, h - 0.05, d * (i % 2 ? 0.55 : 0.8)], pos: [x, y0 + (h - 0.05) / 2, (i % 2 ? -0.1 : 0.1) * d], r: Math.min(fw * 0.5, 0.03), fabric: true, shade: i % 2 ? 0.92 : 1.04 })
+        }
+      return out
     }
   }
 }

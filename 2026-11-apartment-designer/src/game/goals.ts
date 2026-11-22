@@ -9,6 +9,7 @@ import { centroid, normalizeAngle } from '../model/geometry'
 import type { Placement, TwistId } from '../model/types'
 import { catalogEntry, itemFromCatalog } from '../model/catalog'
 import { findDrop } from '../model/placement'
+import { isWallDecor } from '../model/wallDecor'
 import { VISIT_BY_ID, VISIT_STARS } from './visits'
 
 export { VISITS, VISIT_BY_ID, VISIT_STARS, applicableVisits, localDay, todayVisit, type Visit } from './visits'
@@ -420,7 +421,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
       hw: item.width / 2,
       hd: item.depth / 2,
       body,
-      floor: !!item.floorLevel,
+      // Wall decor takes no floor: like a rug, it isn't a solid piece and adds nothing to density.
+      floor: !!item.floorLevel || isWallDecor(item.category),
       host: p.on,
       room,
       inside: !!room && polygonInsideRoom(body, room.polygon),
@@ -1137,6 +1139,47 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
       progress: ok ? 1 : (Math.min(painted.length, PALETTE_PIECES) / PALETTE_PIECES) * (pal.ok ? 1 : 0.8),
       stars: 1,
       category: 'style',
+      bonus: true,
+    })
+  }
+
+  // ---- Wall decor (bonus only: nothing on a wall is ever needed for a level) ----
+  // Art or a mirror on a wall of the living room or a bedroom, once there's a sofa or bed to hang it over.
+  const decorRooms = rooms.filter((r) => !UTILITY_ROOM.test(r.name) && (LIVING.test(r.name) || BEDROOM.test(r.name)))
+  const anchored = decorRooms.filter((r) => of('sofa', 'bed').some((x) => x.room?.id === r.id))
+  if (anchored.length) {
+    const hung = ofAny('wall-art', 'mirror')
+    const ok = of('wall-art', 'mirror').some((x) => decorRooms.some((r) => r.id === x.room?.id))
+    add({
+      id: 'wall-art',
+      title: 'Something on the walls',
+      hint: ok ? 'Your walls have some personality.' : hung.length ? 'Hang your art in the living room or a bedroom.' : 'Hang some art or a mirror. Over the sofa or bed is a classic.',
+      tab: ok || hung.length ? undefined : 'wall',
+      item: ok || hung.length ? undefined : 'wall-art',
+      placeIn: ok || hung.length ? undefined : anchored[0].id,
+      near: ok ? undefined : hung[0]?.id,
+      done: ok,
+      stars: 1,
+      category: 'style',
+      bonus: true,
+    })
+  }
+  // Curtains on a bedroom window soften the light: a cozy little extra.
+  const curtainRooms = bedrooms.filter((r) => r.openings.some((o) => o.kind === 'window') && of('bed').some((x) => x.room?.id === r.id))
+  if (curtainRooms.length) {
+    const hung = ofAny('curtains')
+    const ok = of('curtains').some((x) => curtainRooms.some((r) => r.id === x.room?.id))
+    add({
+      id: 'curtains',
+      title: 'Curtains in the bedroom',
+      hint: ok ? 'Soft light for slow mornings.' : hung.length ? 'Hang the curtains on a bedroom window.' : 'Hang curtains on the bedroom window for softer light.',
+      tab: ok || hung.length ? undefined : 'wall',
+      item: ok || hung.length ? undefined : 'curtains',
+      placeIn: ok || hung.length ? undefined : curtainRooms[0].id,
+      near: ok ? undefined : hung[0]?.id,
+      done: ok,
+      stars: 1,
+      category: 'comfort',
       bonus: true,
     })
   }
