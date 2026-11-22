@@ -1,5 +1,6 @@
 import { ContactShadows, Edges, Html, OrbitControls } from '@react-three/drei'
-import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
+import { Canvas, invalidate, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
+import { setCaptureRenderer } from './capture'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -347,8 +348,10 @@ function SelectRing({ w, d }: { w: number; d: number }) {
   }, [glow, rim])
   const a = useRef<THREE.MeshBasicMaterial>(null)
   const b = useRef<THREE.MeshBasicMaterial>(null)
-  useFrame(({ clock }) => {
+  // The pulse keeps the canvas drawing while a piece is selected (frameloop is on demand).
+  useFrame(({ clock, invalidate: more }) => {
     if (!a.current || !b.current || reduceMotion) return
+    more()
     const k = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 3.2)
     a.current.opacity = 0.45 + 0.3 * k
     b.current.opacity = 0.65 + 0.3 * k
@@ -373,11 +376,15 @@ function Hop({ on, children }: { on: boolean; children: ReactNode }) {
   const ref = useRef<THREE.Group>(null)
   const start = useRef(0)
   useEffect(() => {
-    if (on && !reduceMotion) start.current = -1
+    if (on && !reduceMotion) {
+      start.current = -1
+      invalidate()
+    }
   }, [on])
-  useFrame(() => {
+  useFrame(({ invalidate: more }) => {
     const g = ref.current
     if (!g || !start.current) return
+    more()
     if (start.current < 0) start.current = performance.now()
     const t = (performance.now() - start.current) / HOP_MS
     if (t >= 1) {
@@ -403,10 +410,12 @@ function Pop({ id, children }: { id: string; children: ReactNode }) {
     if (!unpacked || order < 0 || reduceMotion || Date.now() - unpacked.key > 2000) return
     start.current = performance.now() + order * POP_STAGGER_MS
     ref.current?.scale.setScalar(0.001)
+    invalidate()
   }, [unpacked, order])
-  useFrame(() => {
+  useFrame(({ invalidate: more }) => {
     const g = ref.current
     if (!g || !start.current) return
+    more()
     const t = (performance.now() - start.current) / POP_MS
     if (t < 0) return g.scale.setScalar(0.001)
     if (t >= 1) {
@@ -456,11 +465,15 @@ function Wobble({ kick, children }: { kick: number; children: ReactNode }) {
   const ref = useRef<THREE.Group>(null)
   const start = useRef(0)
   useEffect(() => {
-    if (kick && !reduceMotion) start.current = -1
+    if (kick && !reduceMotion) {
+      start.current = -1
+      invalidate()
+    }
   }, [kick])
-  useFrame(() => {
+  useFrame(({ invalidate: more }) => {
     const g = ref.current
     if (!g || !start.current) return
+    more()
     if (start.current < 0) start.current = performance.now()
     const t = (performance.now() - start.current) / WOBBLE_MS
     if (t >= 1) {
@@ -582,6 +595,8 @@ function PlacedItem({
 }
 
 function Scene({
+  resetKey = 0,
+  eyeFov = 60,
   wallMode,
   eye,
   autoRotate,
@@ -591,6 +606,9 @@ function Scene({
   focusRoom,
   fullFrame,
 }: {
+  /** Bumped by the HUD's Home / recenter: the overview is framed afresh. */
+  resetKey?: number
+  eyeFov?: number
   wallMode: WallMode
   eye: EyeSpot | null
   autoRotate?: boolean
@@ -889,6 +907,7 @@ function Scene({
             // ...and never inside a piece of furniture: stop about 0.3 m short of it.
             route[route.length - 1] = walkTarget(route[route.length - 1], last, boxes, walls)
             glide.current = route
+            invalidate()
           }}
         >
           <planeGeometry args={[200, 200]} />
@@ -923,7 +942,10 @@ function Scene({
       </group>
       <UnpackBurst />
       <ScreenFloor />
-      {!eye && <FitCamera key={(doc.scans ?? []).length} inset={inset} spin={autoRotate} focus={focusRoom} full={fullFrame} />}
+      <CameraSpot eye={eye} eyeFov={eyeFov} />
+      <DemandFrames />
+      {!eye && <KeyOrbit />}
+      {!eye && <FitCamera key={`${(doc.scans ?? []).length}:${resetKey}`} inset={inset} spin={autoRotate} focus={focusRoom} full={fullFrame} />}
       <ViewOffset inset={eye ? undefined : inset} full={fullFrame} />
       {eye ? (
         <>
@@ -1149,6 +1171,100 @@ function ScreenFloor() {
   return null
 }
 
+/**
+ * Puts the camera where the view mode wants it when walking in or back out, on the canvas that
+ * stays mounted: eye height with a wide lens inside, the overview lens outside (FitCamera, after
+ * this in the tree, then frames the home).
+ */
+function CameraSpot({ eye, eyeFov }: { eye: EyeSpot | null; eyeFov: number }) {
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
+  const first = useRef(true)
+  useLayoutEffect(() => {
+    // The canvas was created with the right spot and lens.
+    if (first.current) return void (first.current = false)
+    if (eye) camera.position.set(...eye.pos)
+    camera.fov = eye ? eyeFov : 45
+    camera.updateProjectionMatrix()
+    invalidate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eye])
+  return null
+}
+
+/** How long after a change in the stores the scene keeps drawing (effects settle, HUD insets ease). */
+const SETTLE_MS = 450
+
+/**
+ * The canvas draws on demand. Any change to the home or the game state (a drag, a placement, a
+ * mode or style switch, evening light) and any re-render of the scene asks for frames for a short
+ * while, so effects that set three.js state directly are drawn too. Also gives photo capture a
+ * synchronous render (capture.ts).
+ */
+function DemandFrames() {
+  const gl = useThree((s) => s.gl)
+  const scene = useThree((s) => s.scene)
+  const camera = useThree((s) => s.camera)
+  const until = useRef(0)
+  const kick = () => {
+    until.current = performance.now() + SETTLE_MS
+    invalidate()
+  }
+  useEffect(kick)
+  useEffect(() => {
+    const offs = [useStore.subscribe(kick), useGame.subscribe(kick)]
+    window.addEventListener('resize', kick)
+    document.addEventListener('visibilitychange', kick)
+    return () => {
+      offs.forEach((f) => f())
+      window.removeEventListener('resize', kick)
+      document.removeEventListener('visibilitychange', kick)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    setCaptureRenderer(() => gl.render(scene, camera))
+    return () => setCaptureRenderer(null)
+  }, [gl, scene, camera])
+  useFrame(({ invalidate: more }) => {
+    if (performance.now() < until.current) more()
+  })
+  return null
+}
+
+/** Keyboard orbit for the overview: Q / E turn around the home, + / − zoom. */
+const ORBIT_STEP = Math.PI / 12
+const ZOOM_STEP = 0.85
+function KeyOrbit() {
+  const controls = useThree((s) => s.controls) as OrbitControlsImpl | null
+  const camera = useThree((s) => s.camera)
+  useEffect(() => {
+    if (!controls) return
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
+      if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector('[aria-modal="true"]')) return
+      const k = e.key.toLowerCase()
+      const turn = k === 'q' ? -1 : k === 'e' ? 1 : 0
+      const zoom = k === '+' || k === '=' ? ZOOM_STEP : k === '-' || k === '_' ? 1 / ZOOM_STEP : 0
+      if (!turn && !zoom) return
+      e.preventDefault()
+      const off = camera.position.clone().sub(controls.target)
+      if (turn) off.applyAxisAngle(new THREE.Vector3(0, 1, 0), turn * ORBIT_STEP)
+      if (zoom) off.setLength(THREE.MathUtils.clamp(off.length() * zoom, controls.minDistance, controls.maxDistance))
+      // Reads as a user move: the framing lets go and the recenter button lights up (FitCamera).
+      controls.dispatchEvent({ type: 'start' } as never)
+      camera.position.copy(controls.target).add(off)
+      controls.update()
+      controls.dispatchEvent({ type: 'change' } as never)
+      controls.dispatchEvent({ type: 'end' } as never)
+      invalidate()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [controls, camera])
+  return null
+}
+
 function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: boolean; focus?: string | null; full?: boolean }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
@@ -1187,8 +1303,14 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
       controls.removeEventListener('change', change)
     }
   }, [controls])
+  const placedFor = useRef(controls)
   useLayoutEffect(() => {
     if (touched.current || size.width < 10 || !controls) return
+    // New controls (back out of walking): frame afresh from the overview direction.
+    if (placedFor.current !== controls) {
+      placedFor.current = controls
+      placed.current = false
+    }
     const pts = framePoints(useStore.getState().doc, focus)
     if (!pts.length) return
     const dir = placed.current ? camera.position.clone().sub(controls.target).normalize() : OVERVIEW_DIR.clone()
@@ -1205,6 +1327,7 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
       controls.update()
       goal.current = null
     } else goal.current = fit
+    invalidate()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, controls, size.width, size.height, inset?.top, inset?.bottom, inset?.right, rooms, scans, spin, focus, full])
   // The game's arrow keys follow this view (see viewFrame); the classic editor (no inset) keeps plan axes.
@@ -1213,6 +1336,7 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
     if (controls && inset) viewFrame.azimuth = Math.atan2(controls.target.x - camera.position.x, -(controls.target.z - camera.position.z))
     const g = goal.current
     if (!g || !controls) return
+    invalidate()
     const k = 1 - Math.exp(-Math.min(dt, 0.05) * 12)
     const off = camera.position.clone().sub(controls.target)
     const d = off.length()
@@ -1254,6 +1378,7 @@ function ViewOffset({ inset: given, full }: { inset?: SceneInset; full?: boolean
       ? view.fullWidth === size.width && view.fullHeight === size.height && view.offsetY === -next && view.offsetX === nextX
       : next === 0 && nextX === 0
     if (same) return
+    invalidate()
     cur.current = next
     if (next === 0 && nextX === 0) camera.clearViewOffset()
     else camera.setViewOffset(size.width, size.height, nextX, -next, size.width, size.height)
@@ -1346,6 +1471,7 @@ function EyeWalk({
       if (!WALK_KEYS.has(k)) return
       e.preventDefault()
       keys.current.add(k)
+      invalidate()
     }
     const up = (e: KeyboardEvent) => keys.current.delete(e.key.toLowerCase())
     const clear = () => keys.current.clear()
@@ -1363,6 +1489,8 @@ function EyeWalk({
     if (!c) return
     const dt = Math.min(rawDt, 0.05)
     const k = keys.current
+    // Walking (keys held or a glide under way) keeps the canvas drawing.
+    if (k.size || glide.current?.length) invalidate()
     const fwd = new THREE.Vector3()
     camera.getWorldDirection(fwd)
     fwd.y = 0
@@ -1481,19 +1609,26 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
   // A wider lens at eye level, wider still on a portrait phone, so a room fits in view.
   const eyeFov = typeof window !== 'undefined' && window.innerHeight > window.innerWidth ? 72 : 60
 
+  const placedCount = activeLayout(doc).placements.length
+  const label = `${doc.apartment.name}${eye ? ', walking around inside' : ''}: ${doc.rooms.length} room${doc.rooms.length === 1 ? '' : 's'}, ${placedCount} item${placedCount === 1 ? '' : 's'}`
   return (
-    <div className="scene-wrap">
+    <div className="scene-wrap" role="img" aria-label={label}>
       <Canvas
-        key={`${camKey}:${doc.apartment.id}`}
+        // The game keeps one canvas for the home: recentering and walking in move the camera
+        // (CameraSpot, FitCamera) rather than rebuilding the renderer. The classic editor still
+        // starts afresh on Overview / Eye level.
+        key={control ? doc.apartment.id : `${camKey}:${doc.apartment.id}`}
         shadows
-        dpr={[1, 2]}
+        dpr={DPR}
+        // Draws only when something changes: controls, drags, store changes and running
+        // animations ask for frames (invalidate). Photos render and read in one go (capture.ts).
+        frameloop="demand"
         camera={{ position: eye?.pos ?? initial, fov: eye ? eyeFov : 45, near: 0.05, far: 300 }}
         onPointerMissed={() => useStore.getState().select(null)}
-        gl={{ preserveDrawingBuffer: true }}
       >
         <color attach="background" args={[stage.sky ?? control?.sky ?? '#f6f4ef']} />
         <StyleContext.Provider value={styleEnv}>
-          <Scene wallMode={wallMode} eye={eye} autoRotate={control?.autoRotate && !eye} ground={control?.ground} inset={control?.inset} hideFlags={control?.hideFlags} focusRoom={control?.focusRoom} fullFrame={control?.fullFrame} />
+          <Scene resetKey={control?.resetKey} eyeFov={eyeFov} wallMode={wallMode} eye={eye} autoRotate={control?.autoRotate && !eye} ground={control?.ground} inset={control?.inset} hideFlags={control?.hideFlags} focusRoom={control?.focusRoom} fullFrame={control?.fullFrame} />
         </StyleContext.Provider>
       </Canvas>
       {control && eye && <EyeHint />}
@@ -1532,6 +1667,9 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
   )
 }
 
+
+/** Phones and tablets draw at most 1.5× their CSS pixels: sharper than that costs fill rate, not looks. */
+const DPR: [number, number] = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches ? [1, 1.5] : [1, 2]
 
 const EYE_HINT_KEY = 'apartment-designer:eye-hint-seen'
 

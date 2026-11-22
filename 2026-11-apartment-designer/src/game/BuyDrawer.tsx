@@ -1,5 +1,5 @@
 // Buy mode: the furniture drawer above the mode dock, and the "shop from a link or photo" sheet.
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { CATALOG, itemFromCatalog, type CatalogEntry } from '../model/catalog'
 import { checkLayout } from '../model/checks'
 import { centroid } from '../model/geometry'
@@ -389,9 +389,22 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   return (
     <div className="buy-drawer" role="region" aria-label="Buy furniture">
       {top}
-      <div className="buy-tabs" role="tablist" aria-label="Furniture categories">
+      <div className="buy-tabs" role="tablist" aria-label="Furniture categories" onKeyDown={(e) => {
+          // One tab stop for the strip; arrows (Home/End) move between categories and open them.
+          const keys: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }
+          const n = CATEGORY_GROUPS.length
+          const at = CATEGORY_GROUPS.findIndex((g) => g.key === group.key)
+          const to = e.key in keys ? (at + keys[e.key] + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1
+          if (to < 0) return
+          e.preventDefault()
+          // Not a nudge of the selected piece (App's window-level arrow keys).
+          e.stopPropagation()
+          setTab(CATEGORY_GROUPS[to].key)
+          if (hint) useGame.getState().setBuyHint(null)
+          e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[to]?.focus()
+        }}>
         {CATEGORY_GROUPS.map((g, gi) => (
-          <button key={g.key} role="tab" aria-selected={g.key === group.key} aria-label={g.label} title={`${g.label} (${gi + 1})`} className={`buy-tab ${g.key === group.key ? 'on' : ''}`} onClick={() => {
+          <button key={g.key} role="tab" tabIndex={g.key === group.key ? 0 : -1} aria-selected={g.key === group.key} aria-label={g.label} title={`${g.label} (${gi + 1})`} className={`buy-tab ${g.key === group.key ? 'on' : ''}`} onClick={() => {
               setTab(g.key)
               if (hint) useGame.getState().setBuyHint(null)
             }}>
@@ -463,7 +476,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
               const name = displayName(entry)
               const chips = sizeChips(entry)
               return (
-                <div key={cat} className={`buy-card ${isPopped(cat) || popped?.key.startsWith(cat + ':') ? 'pop' : ''}${hint?.category === cat ? ' hinted' : ''}`} style={{ ['--i' as string]: k }} draggable onDragStart={(e) => onDrag(e, cat)}>
+                <div key={cat} onKeyDown={cardArrows} className={`buy-card ${isPopped(cat) || popped?.key.startsWith(cat + ':') ? 'pop' : ''}${hint?.category === cat ? ' hinted' : ''}`} style={{ ['--i' as string]: k }} draggable onDragStart={(e) => onDrag(e, cat)}>
                   <button className="buy-hit" onClick={() => (hint?.category === cat && firstPick ? firstPick() : place(entry))} aria-label={`Place ${article(name)} ${name.toLowerCase()}`}>
                     <span className="buy-thumb">
                       <ItemThumb category={cat} color={entry.color} size={78} />
@@ -474,7 +487,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
                   {chips.length > 0 && (
                     <span className="buy-presets">
                       {chips.map((pr) => (
-                        <button key={pr.label} className="buy-preset" onClick={() => place(entry, pr)} aria-label={`Place ${article(pr.name)} ${pr.name.toLowerCase()}, ${footprint(pr.width, pr.depth, units)}`} title={`${pr.name}, ${footprint(pr.width, pr.depth, units)}`}>
+                        <button key={pr.label} tabIndex={-1} className="buy-preset" onClick={() => place(entry, pr)} aria-label={`Place ${article(pr.name)} ${pr.name.toLowerCase()}, ${footprint(pr.width, pr.depth, units)}`} title={`${pr.name}, ${footprint(pr.width, pr.depth, units)}`}>
                           {pr.label}
                         </button>
                       ))}
@@ -494,6 +507,20 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
       </div>
     </div>
   )
+}
+
+/**
+ * Inside a card, Left / Right move between the card's main button and its size chips (the chips
+ * are not tab stops of their own, so Tab goes card to card).
+ */
+function cardArrows(e: ReactKeyboardEvent<HTMLElement>) {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  const btns = [...e.currentTarget.querySelectorAll<HTMLElement>('.buy-hit, .buy-preset')]
+  const at = btns.indexOf(e.target as HTMLElement)
+  if (at < 0 || btns.length < 2) return
+  e.preventDefault()
+  e.stopPropagation()
+  btns[(at + (e.key === 'ArrowRight' ? 1 : -1) + btns.length) % btns.length].focus()
 }
 
 interface PickCard {

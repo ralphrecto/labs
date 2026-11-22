@@ -10,6 +10,7 @@ import { VISIT_BY_ID } from './visits'
 export type AlbumPhoto = StoredPhoto & { visitor?: string }
 import { useGame } from './gameStore'
 import { LEVELS, scoreHome, TWISTS } from './goals'
+import { renderForCapture } from '../three/capture'
 
 /** A small picture for each twist (the picker, the badge, the album's twist polaroids). */
 export const TWIST_EMOJI: Record<string, string> = {
@@ -131,6 +132,8 @@ function dreamPolaroid(layoutId: string, twist: string) {
       /* the caption just shows no stars */
     }
     const canvas = typeof document === 'undefined' ? null : document.querySelector<HTMLCanvasElement>('.hud-stage canvas')
+    // The canvas keeps no drawing buffer: draw the view now and read it in the same task.
+    if (canvas && layoutId === doc.activeLayoutId) renderForCapture()
     const src = (canvas && layoutId === doc.activeLayoutId ? shotDataURL(canvas) : null) ?? paperCard(TWIST_EMOJI[twist] ?? '↻')
     const kept = keepPhoto(src, {
       level: `Level ${LEVELS.length} · ${LEVELS[LEVELS.length - 1]}`,

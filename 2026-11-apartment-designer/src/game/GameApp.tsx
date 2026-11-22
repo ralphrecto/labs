@@ -30,6 +30,7 @@ import { Onboarding } from './Onboarding'
 import { PhotoShutter } from './PhotoShutter'
 import { StylePicker, useStylePicker } from './StylePicker'
 import { useModal } from './useModal'
+import { announce, LiveRegion } from './announce'
 import { reduceMotion } from '../motion'
 import './theme.css'
 import './hud.css'
@@ -90,14 +91,20 @@ function GameApp() {
   const focusRoom = useFocusRoom(showDrawer && view === '3d', selection?.kind === 'placement' ? selection.id : null)
   const inset = useHudInset(gameRef, `${phase}:${mode}:${view}:${cam.resetKey}:${cam.eye}:${!!review}:${focusRoom}`)
   useGameShortcuts()
+  const homeName = useStore((s) => s.doc.apartment.name)
   return (
     <div ref={gameRef} className={`game mode-${mode}${tool ? ' tool-active' : ''}${gesturing ? ' gesturing' : ''}`}>
+      <LiveRegion />
+      {/* The top bar is the page's banner, so it sits outside main (the order on screen is CSS's). */}
+      {phase !== 'onboarding' && mode !== 'look' && <TopBar />}
+      {/* The scene and the HUD that works on it; display: contents, so the layout is unchanged. */}
+      <main className="game-main">
+      <h1 className="sr-only">{homeName || 'Homebody'}</h1>
       <Stage inset={inset} focusRoom={focusRoom} />
       {phase === 'onboarding' ? (
         <Onboarding />
       ) : (
         <>
-          {mode !== 'look' && <TopBar />}
           {mode === 'look' && <LookControls />}
           {mode === 'look' && <PhotoShutter />}
           {mode === 'look' && <StylePicker className="sty-look" />}
@@ -134,6 +141,7 @@ function GameApp() {
           <LevelUpCard />
         </>
       )}
+      </main>
       {sheet === 'goals' && <GoalsSheet />}
       {sheet === 'shop' && <ShopSheet />}
       {sheet === 'settings' && <SettingsSheet />}
@@ -308,6 +316,7 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
       }}
     >
       {phase === 'onboarding' ? null : view === '3d' ? <Scene3D control={control} /> : <PlanView inset={inset} />}
+      {phase === 'play' && mode !== 'look' && <SceneItems />}
       {ghost && (
         <svg className="hud-drop-ghost" aria-hidden>
           <polygon points={ghost.map((q) => `${q.x},${q.y}`).join(' ')} />
@@ -429,6 +438,8 @@ const DRAG_HINT_TIMES = 3
  */
 function GameToast() {
   const toast = useStore((s) => s.toast)
+  // Read out through the page's one live region (announce.tsx); the toast itself stays quiet.
+  useEffect(() => announce(toast), [toast])
   const [hint, setHint] = useState<{ toast: string; keep: boolean } | null>(null)
   useEffect(() => {
     if (!toast || !DRAG_HINT.test(toast)) return
@@ -445,9 +456,43 @@ function GameToast() {
   if (!toast) return null
   const text = DRAG_HINT.test(toast) && !(hint?.toast === toast && hint.keep) ? toast.replace(DRAG_HINT, '') : toast
   return (
-    <div className="toast" role="status">
+    <div className="toast" aria-hidden="true">
       {text}
     </div>
+  )
+}
+
+/**
+ * The placed pieces as a keyboard list beside the canvas (visually hidden until focused): Tab
+ * walks through them, focusing one selects it, and then the editing keys work on it (arrows nudge,
+ * R turns, Delete removes, Enter or Esc lets go).
+ */
+function SceneItems() {
+  const doc = useStore((s) => s.doc)
+  const selection = useStore((s) => s.selection)
+  const layout = activeLayout(doc)
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const rows = layout.placements.flatMap((p) => {
+    const item = items.get(p.itemId)
+    if (!item) return []
+    const room = doc.rooms.find((r) => pointInPolygon(v(p.x, p.y), r.polygon))?.name
+    return [{ id: p.id, label: `${item.name}${room ? `, ${room}` : ''}` }]
+  })
+  if (!rows.length) return null
+  const select = (id: string) => {
+    const s = useStore.getState()
+    if (!(s.selection?.kind === 'placement' && s.selection.id === id)) s.select({ kind: 'placement', id })
+  }
+  return (
+    <ul className="scene-items" aria-label={`Pieces in the home, ${rows.length}. Focus one to select it; arrows move, R turns, Delete removes`}>
+      {rows.map((r) => (
+        <li key={r.id}>
+          <button type="button" aria-pressed={selection?.kind === 'placement' && selection.id === r.id} onFocus={() => select(r.id)} onClick={() => select(r.id)}>
+            {r.label}
+          </button>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -457,9 +502,12 @@ function GameToast() {
  */
 function SaveFailedToast() {
   const failed = useStore((s) => s.saveFailed)
+  useEffect(() => {
+    if (failed) announce("Couldn't save. Your device storage is full. A backup can be downloaded.", 'assertive')
+  }, [failed])
   if (!failed) return null
   return (
-    <div className="dz-save-failed g-card" role="alert">
+    <div className="dz-save-failed g-card">
       <span>Couldn't save. Your device storage is full.</span>
       <button className="g-btn sm primary" onClick={() => downloadJSON(useStore.getState().doc)}>
         Download a backup
