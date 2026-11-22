@@ -988,7 +988,7 @@ function ScanSheet() {
                 <I.IconRuler width={16} height={16} /> Set size
               </button>
               <button
-                className="g-btn sm primary"
+                className={`g-btn sm ${s.doc.rooms.some((rm) => rm.scan?.scanId === r.id) || s.doc.items.some((it) => it.scanId === r.id) ? 'ghost' : 'primary'}`}
                 disabled={!loaded || !!busy}
                 onClick={() => {
                   if (!loaded) return
@@ -996,7 +996,8 @@ function ScanSheet() {
                   void useScanUI.getState().analyze(toScanData(r, loaded.points))
                 }}
               >
-                <I.IconSparkle width={16} height={16} /> Find furniture
+                <I.IconSparkle width={16} height={16} />{' '}
+                {s.doc.rooms.some((rm) => rm.scan?.scanId === r.id) || s.doc.items.some((it) => it.scanId === r.id) ? 'Find again' : 'Find furniture'}
               </button>
             </div>
           </div>

@@ -667,7 +667,8 @@ export function LevelUpCard() {
   const remixDone = useRemixDone(dream)
   // While the pointer is over it or focus is in it, the card stays (WCAG 2.2.1): reading it takes time.
   const [held, setHeld] = useState({ hover: false, focus: false })
-  const holding = held.hover || held.focus
+  // Only the Dream card holds: the plain level-up covers the whole stage, so a resting mouse would keep it up forever.
+  const holding = dream && (held.hover || held.focus)
   useEffect(() => {
     if (!levelUp || holding) return
     // The Dream home card stays a while: it has a button to press.

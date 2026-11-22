@@ -385,3 +385,46 @@ Rolled over:
 - The sofa can sit off-centre from its coffee table in big rooms.
 
 257 tests pass.
+
+## Round 13 (2026-11-22 22:20-2026-11-23 00:30 UTC)
+
+The round started with two features built straight from the backlog (wall decor; steady stars while dragging). Two reviewers ran alongside them: one on the scan-your-own-home path, one on accessibility and performance. Two more implementers then fixed what those reviewers found, working on the merged code.
+
+Shipped:
+- **Wall decor** (`src/model/wallDecor.ts`):
+  - Framed art (three sizes), a round mirror, a floating shelf with books, a clock, and curtains, in a new Walls tab.
+  - Pieces snap flush to walls at sensible heights, keep off doors (and, except curtains, off windows), take no floor space, can hang over sofas and beds, and hide with cut-away walls.
+  - Curtains snap only to windows.
+  - Two bonus goals: "Something on the walls" and "Curtains in the bedroom".
+- **Steady stars:** the meter holds its score while you drag and settles once at the end, with one net gain or one loss pill with Undo (`heldScore`, `settleStars`).
+- **Coffee tables hold a lamp**, and a sofa centres on its coffee table (within 15 cm, 40-55 cm gap).
+- **Scan-first onboarding:**
+  - Rooms get friendly names (a "Scan 2026-…" file becomes "Living room", or "Bedroom" from a bed) and can be renamed inline.
+  - "Add another room scan" places rooms side by side.
+  - The export tip names PLY/SPZ, and .usdz gets a clear message.
+  - The file button is above the fold on iPhone.
+  - "Not sized yet" and "No door found → add it next" prompts.
+  - The Scans panel becomes "Add a room" once you have a real scan, with "Find again" demoted.
+  - A failed import no longer wipes the open home.
+- **Accessibility:**
+  - One always-present live region announces toasts, star changes, losses and level-ups.
+  - The Dream card takes focus and stays while you read it.
+  - The 3D room is a labelled image with a keyboard-focusable list of pieces (focus selects, so arrows/R/Delete work).
+  - Q/E orbit, +/− zoom, `<main>` and a hidden `<h1>`.
+  - The drawer tabs are one Tab stop with arrow keys.
+- **Performance:**
+  - On-demand rendering: idle draw calls fell from about 2,400/s to 0, and Furnish idles at 60 fps.
+  - The canvas stays mounted across Home, walk-in and modes, cutting the worst Look long task from 503 ms to 190 ms.
+  - No `preserveDrawingBuffer`; photos render and read in one frame.
+  - Pixel density is capped at 1.5 on phones.
+- **Fix found in the re-play:** the plain level-up card no longer stays up while the mouse rests on it (only the Dream card holds).
+
+Rolled over:
+- Font sizes in px (text doesn't scale with browser font settings).
+- The 200% zoom layout on laptops.
+- Every placed piece is a Tab stop.
+- Wall decor doesn't re-snap when a room is reshaped.
+- Curtains are a fixed width.
+- The measure step can snap to a diagonal.
+
+278 tests pass.
