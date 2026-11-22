@@ -12,7 +12,7 @@ import { unpackAndCelebrate } from './unpack'
 import { IconCheck, IconClose, IconSparkle, IconStar } from './icons'
 import { useModal } from './useModal'
 import { openRemixPicker } from './Designs'
-import { TWISTS } from './goals'
+import { TWISTS, VISIT_BY_ID, VISITS, type Visit } from './goals'
 import { reduceMotion } from '../motion'
 import { listHomes } from '../storage'
 import type { Issue } from '../model/checks'
@@ -27,8 +27,19 @@ export function useHomeScore(): HomeScore & { best: number } {
   const doc = useStore((s) => s.doc)
   const layout = activeLayout(doc)
   const analysis = useAnalysis(doc, layout)
-  const raw = useMemo(() => scoreHome(doc, layout, analysis), [doc, layout, analysis])
+  const visitState = useGame((s) => s.visit)
+  const visitIn = useMemo(() => (visitState.visitId ? { id: visitState.visitId, done: visitState.done } : null), [visitState.visitId, visitState.done])
+  const raw = useMemo(() => scoreHome(doc, layout, analysis, visitIn), [doc, layout, analysis, visitIn])
   lastIssues = analysis.issues
+  // A new local day brings a new visitor (one the home doesn't already please, when there is one).
+  useEffect(() => {
+    useGame.getState().rollVisit(doc, undefined, (id) => !!scoreHome(doc, layout, analysis, { id }).goals.find((g) => g.visit === id)?.done)
+  }, [doc, layout, analysis])
+  // Today's visitor is happy: the sticker is theirs to keep, even if the room changes later.
+  const metId = raw.goals.find((g) => g.visit && g.done)?.visit
+  useEffect(() => {
+    if (metId) useGame.getState().completeVisit(metId)
+  }, [metId])
   const key = bestLevelKey(doc)
   // Saves from before per-design levels kept one best per home: it carries over to the first design only.
   const legacy = doc.layouts[0]?.id === layout.id ? doc.apartment.id : null
@@ -128,10 +139,16 @@ function Stars({ n, filled = true }: { n: number; filled?: boolean }) {
   )
 }
 
+/** Today's visitor, for the welcome card and the goals sheet. */
+function useVisit(): { visit?: Visit; done: boolean; stickers: string[] } {
+  const v = useGame((s) => s.visit)
+  return { visit: VISIT_BY_ID[v.visitId], done: v.done, stickers: v.stickers }
+}
+
 type Banner =
   | { key: number; kind: 'goal'; goal: Goal; more: number }
   /** `line`: "Sample apartment · Move-in day · Cozy" (the home's name only with more than one home; the stars sit in the badge). `top`: at the top level, lead with a variation. */
-  | { key: number; kind: 'welcome'; goal?: Goal; home: string; away?: string; line: string; stars: number; top: boolean }
+  | { key: number; kind: 'welcome'; goal?: Goal; home: string; away?: string; line: string; stars: number; top: boolean; visit?: { id: string; text: string } }
 
 /** Homes saved on this device (the welcome card names the home only when there's more than one). */
 function homeCount() {
@@ -160,7 +177,7 @@ export function VibeMeter() {
   const levelUp = useGame((s) => s.levelUp)
   const sheet = useGame((s) => s.sheet)
   const phone = usePhone()
-  const prev = useRef<{ key: string; stars: number; level: number; done: Set<string>; progress: Map<string, number> } | null>(null)
+  const prev = useRef<{ key: string; stars: number; level: number; done: Set<string>; progress: Map<string, number>; visit?: string } | null>(null)
   const [pop, setPop] = useState<{ key: number; delta: number; half?: boolean } | null>(null)
   const [banner, setBanner] = useState<Banner | null>(null)
   const [shown, setShown] = useState<string | null>(null)
@@ -212,7 +229,8 @@ export function VibeMeter() {
     const done = new Set(score.goals.filter((g) => g.done).map((g) => g.id))
     const progress = new Map(score.goals.map((g) => [g.id, g.progress ?? 0]))
     const before = prev.current
-    prev.current = { key: designKey, stars: score.stars, level: score.level.index, done, progress }
+    const visitGoal = score.goals.find((g) => g.visit)
+    prev.current = { key: designKey, stars: score.stars, level: score.level.index, done, progress, visit: visitGoal?.id }
     // First render, or another design or home: no fanfare.
     if (!before || before.key !== designKey) {
       clearTimeout(levelTimer.current)
@@ -222,7 +240,8 @@ export function VibeMeter() {
     // Any change to the home brings the chip back (with whatever is next now).
     setShown(null)
     setRefused(NO_REFUSALS)
-    const fresh = score.goals.filter((g) => g.done && !before.done.has(g.id))
+    // A visitor who arrives already happy (a new day) is no headline: only one the player pleases is.
+    const fresh = score.goals.filter((g) => g.done && !before.done.has(g.id) && !(g.visit && before.visit !== g.id))
     // The drawer's hint pill ("Tap Plant → Bathroom") points at a goal's piece: once that goal is
     // done (it just finished, or every goal asking for that piece there is done), the pill goes.
     const hint = useGame.getState().buyHint
@@ -232,6 +251,8 @@ export function VibeMeter() {
       if (fresh.some(asks) || (behind.length > 0 && behind.every((g) => g.done))) useGame.getState().setBuyHint(null)
     }
     if (fresh.length > 4) return
+    // A new visitor (a new day) changes the stars on offer, not the player's work: no cheer, no loss.
+    if (before.visit !== visitGoal?.id) return
     if (score.stars < before.stars) {
       // A loss: say what broke, offer Undo, and clear any cheer (banner, pop, pending level-up).
       const broke = score.goals.filter((g) => !g.done && before.done.has(g.id)).sort((a, b) => b.stars - a.stars)[0]
@@ -270,7 +291,13 @@ export function VibeMeter() {
     // A room's "feels just right" that tips over as a side effect is no headline when the piece
     // just placed is half of something: the nudge to finish it ("Now add a chair") says more.
     const incidental = fresh.length > 0 && fresh.every((g) => g.id.startsWith('density:'))
-    if (fresh.length && !(half && incidental)) {
+    const pleased = fresh.find((g) => g.visit)
+    if (pleased) {
+      // Today's visitor loved it: always the banner (with its sticker), never just a toast.
+      levelGoalLine = `+${pleased.stars}★ ${VISIT_BY_ID[pleased.visit!]?.who ?? 'Your visitor'} loved it!`
+      if (placedToast) useStore.setState({ toast: null })
+      setBanner({ key: Date.now(), kind: 'goal', goal: pleased, more: fresh.length - 1 })
+    } else if (fresh.length && !(half && incidental)) {
       const best = [...fresh].sort((a, b) => b.stars - a.stars)[0]
       // One short line per action ("+1★ Every room has something"): the room shows in 3D and the
       // pill's pop has the total.
@@ -291,6 +318,8 @@ export function VibeMeter() {
     if (!welcomeBack) return
     useGame.getState().consumeWelcomeBack()
     const sc = scoreRef.current
+    const vs = useGame.getState().visit
+    const vd = VISIT_BY_ID[vs.visitId]
     setBanner({
       key: Date.now(),
       kind: 'welcome',
@@ -300,7 +329,8 @@ export function VibeMeter() {
       line: `${homeCount() > 1 ? `${homeName} · ` : ''}${designName} · ${sc.level.name}`,
       stars: sc.stars,
       // At the top level a remix comes before any bonus goal (only core goals beat it).
-      top: sc.level.index >= LEVELS.length - 1 && (!nextRef.current || !!nextRef.current.bonus),
+      top: sc.level.index >= LEVELS.length - 1 && (!nextRef.current || (!!nextRef.current.bonus && !nextRef.current.visit)),
+      visit: vd ? { id: vd.id, text: vs.done ? `${vd.emoji} ${vd.who} loved it! Sticker collected` : `${vd.emoji} ${vd.line}` } : undefined,
     })
     // Only when the flag is raised; the score at that moment is the one to suggest from.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -333,7 +363,7 @@ export function VibeMeter() {
   const levelName = lagging ? LEVELS[Math.min(shownLevel, LEVELS.length - 1)] : score.level.name
   const fill = lagging ? 0 : levelProgress(score)
   // One quiet chip with the next goal. Tapping it steps it aside until the home changes.
-  const chip = next && !(top && next.bonus) && !banner && !levelUp && !sheet && !loss && shown !== next.id ? next : null
+  const chip = next && !(top && next.bonus && !next.visit) && !banner && !levelUp && !sheet && !loss && shown !== next.id ? next : null
   const bestName = score.best > score.level.index ? LEVELS[score.best] : null
   return (
     <div className="goal-meter-wrap">
@@ -383,7 +413,7 @@ export function VibeMeter() {
           </button>
         </div>
       )}
-      {top && (!next || next.bonus) && !banner && !levelUp && !sheet && !loss && (
+      {top && (!next || (next.bonus && !next.visit)) && !banner && !levelUp && !sheet && !loss && (
         <button type="button" className="goal-next" onClick={tryVariation} aria-label="Top level reached. Remix this home with a twist">
           <span className="goal-next-text">
             <b>Remix this home</b>
@@ -413,11 +443,24 @@ export function VibeMeter() {
           <span className="goal-banner-check">
             <IconCheck />
           </span>
-          <span className="goal-banner-text">
-            <small>{banner.more ? `${banner.more + 1} goals complete` : 'Goal complete'}</small>
-            {banner.goal.title}
-          </span>
-          <Stars n={banner.goal.stars} />
+          {banner.goal.visit ? (
+            <span className="goal-banner-text">
+              <small>{VISIT_BY_ID[banner.goal.visit]?.who ?? 'Your visitor'} loved it!</small>
+              {banner.goal.title}
+            </span>
+          ) : (
+            <span className="goal-banner-text">
+              <small>{banner.more ? `${banner.more + 1} goals complete` : 'Goal complete'}</small>
+              {banner.goal.title}
+            </span>
+          )}
+          {banner.goal.visit ? (
+            <span className="goal-sticker pop" aria-label="Sticker collected">
+              {VISIT_BY_ID[banner.goal.visit]?.emoji}
+            </span>
+          ) : (
+            <Stars n={banner.goal.stars} />
+          )}
         </div>
       )}
       {banner?.kind === 'welcome' && (
@@ -430,6 +473,7 @@ export function VibeMeter() {
             setBanner(null)
             if (banner.top) tryVariation()
             else if (banner.goal) useGame.getState().showGoal({ id: banner.goal.id })
+            else if (banner.visit) useGame.getState().showGoal({ id: `visit:${banner.visit.id}` })
           }}
         >
           <span className="goal-banner-check" aria-label={`${banner.stars} stars`}>
@@ -443,6 +487,7 @@ export function VibeMeter() {
             </small>
             <span className="dz-welcome-line">{banner.line}</span>
             {banner.top ? 'Remix this home' : banner.goal ? `Next: ${banner.goal.title} (+${banner.goal.stars} ★)` : 'Your home missed you.'}
+            {banner.visit && <span className="goal-visit-line">{banner.visit.text}</span>}
           </span>
         </button>
       )}
@@ -665,7 +710,7 @@ function GoalRow({ g, focus }: { g: Goal; focus?: boolean }) {
       <div className="goal-main">
         <div className="goal-title">
           {g.title}
-          {g.bonus && <span className="goal-bonus">Bonus</span>}
+          {g.visit ? <span className="goal-bonus visit">Visitor</span> : g.bonus && <span className="goal-bonus">Bonus</span>}
         </div>
         {!g.done && g.hint && <div className="goal-hint">{g.hint}</div>}
         {!g.done && (g.progress ?? 0) > 0 && (
@@ -716,6 +761,9 @@ export function GoalsSheet() {
   // A remix's twist: named under the level, and pinned above the other goals.
   const twist = score.goals.find((g) => g.id.startsWith('twist:'))
   const twistInfo = twist ? TWISTS[twist.id.slice(6) as keyof typeof TWISTS] : undefined
+  // Today's visitor: a pill under the level, its own section, and the stickers collected so far.
+  const { visit: visitDef, stickers } = useVisit()
+  const visitGoal = score.goals.find((g) => g.visit)
   return (
     <div className="g-scrim" onClick={close}>
       <div ref={sheetRef} className="g-sheet goal-sheet" role="dialog" aria-modal="true" aria-label="Goals" onClick={(e) => e.stopPropagation()}>
@@ -743,6 +791,11 @@ export function GoalsSheet() {
                 ↻ Twist: {twistInfo.title} · {twist.done ? 'done ✓' : `${Math.round((twist.progress ?? 0) * 100)}%`}
               </div>
             )}
+            {visitGoal && visitDef && (
+              <div className={`goal-visit-pill${visitGoal.done ? ' done' : ''}`}>
+                {visitDef.emoji} {visitDef.who} · {visitGoal.done ? 'loved it ✓' : 'visiting today'}
+              </div>
+            )}
             <div className="goal-meter-bar big">
               <i style={{ width: `${Math.round(fill * 100)}%` }} />
             </div>
@@ -765,8 +818,34 @@ export function GoalsSheet() {
             </ul>
           </section>
         )}
+        {visitGoal && visitDef && (
+          <section className="goal-group goal-cat-visit">
+            <h3>Today’s visitor</h3>
+            <p className="goal-visit-ask">
+              {visitDef.emoji} {visitDef.line}
+            </p>
+            <ul>
+              <GoalRow g={visitGoal} focus={visitGoal.id === focusId} />
+            </ul>
+            <div className="goal-stickers" aria-label={`Stickers: ${stickers.length} of ${VISITS.length}`}>
+              <span className="goal-stickers-label">Stickers:</span>
+              {stickers.length ? (
+                stickers.map((id) => (
+                  <span key={id} className="goal-sticker" title={VISIT_BY_ID[id]?.who}>
+                    {VISIT_BY_ID[id]?.emoji}
+                  </span>
+                ))
+              ) : (
+                <span className="goal-stickers-none">none yet</span>
+              )}
+              <span className="goal-stickers-count">
+                · {stickers.length} of {VISITS.length}
+              </span>
+            </div>
+          </section>
+        )}
         {CATEGORY_ORDER.map((cat) => {
-          const goals = score.goals.filter((g) => g.category === cat && g !== twist)
+          const goals = score.goals.filter((g) => g.category === cat && g !== twist && !g.visit)
           if (!goals.length) return null
           const locked = goals.filter((g) => g.locked && !g.done)
           const rows = locked.length > 1 ? [...goals.filter((g) => !locked.includes(g) && !g.done), lockedRow(locked), ...goals.filter((g) => g.done)] : goals

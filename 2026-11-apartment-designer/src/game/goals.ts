@@ -9,6 +9,9 @@ import { centroid, normalizeAngle } from '../model/geometry'
 import type { Placement, TwistId } from '../model/types'
 import { catalogEntry, itemFromCatalog } from '../model/catalog'
 import { findDrop } from '../model/placement'
+import { VISIT_BY_ID, VISIT_STARS } from './visits'
+
+export { VISITS, VISIT_BY_ID, VISIT_STARS, applicableVisits, localDay, todayVisit, type Visit } from './visits'
 
 export type GoalCategory = 'basics' | 'comfort' | 'flow' | 'style'
 
@@ -49,6 +52,17 @@ export interface Goal {
   makeRoom?: { id: string; name: string; room?: string }
   /** Next suggests this before anything else (unpacking the moving boxes on move-in day). */
   urgent?: boolean
+  /**
+   * Today's visitor (Grandma wants a comfy chair by a lamp): a bonus that adds stars but is left
+   * out of every level bar and cap, so it can lift a level but never hold one back.
+   */
+  visit?: string
+}
+
+/** Today's visitor, as scoreHome takes it: which visit, and whether it was already done today. */
+export interface VisitInput {
+  id: string
+  done?: boolean
 }
 
 export interface HomeScore {
@@ -188,6 +202,8 @@ export const WARNING_LEVEL_CAP = 4
 export const SNAG_LEVEL_CAP = 3
 /** Goals about the layout working at all: while one is open the level stays capped, and Next points at it first. */
 export const FIX_FIRST = ['no-overlap', 'in-walls', 'doors-clear', 'walkways', 'sofa-tv']
+/** The level from which Next offers today's visitor (Cozy). */
+export const VISIT_LEVEL = 3
 const CAPPING = new Set(['no-overlap', 'in-walls', 'doors-clear', 'walkways'])
 
 /**
@@ -285,7 +301,15 @@ export function nextGoal(score: HomeScore, fits?: (category: string) => boolean)
   if (twist && !open.some((g) => !g.bonus && (g.id === 'sleep' || g.id === 'sit'))) {
     if (twist.item && twist.tab ? !fits || fits(twist.item) : !!twist.near) return twist
   }
-  const pool = score.livingFirst ? [...open.filter((g) => LIVING_GOAL.test(g.id)), ...open.filter((g) => !LIVING_GOAL.test(g.id))] : open
+  // Today's visitor waits until the home is Cozy (or nothing core is left), then leads: a piece it
+  // needs is suggested when it fits, a piece to move is selected, otherwise it joins the pool.
+  const visit = open.find((g) => g.visit)
+  const visitReady = !!visit && (score.level.index >= VISIT_LEVEL || !open.some((g) => !g.bonus))
+  if (visit && visitReady && !open.some((g) => g.snag)) {
+    if (visit.item && visit.tab ? !fits || fits(visit.item) : !!visit.near && !visit.tab) return visit
+  }
+  const live = visit && !visitReady ? open.filter((g) => g !== visit) : open
+  const pool = score.livingFirst ? [...live.filter((g) => LIVING_GOAL.test(g.id)), ...live.filter((g) => !LIVING_GOAL.test(g.id))] : live
   // score.goals is already ranked (closest to done, basics first). A goal a piece of furniture
   // finishes is the easiest next step, so the first of those wins; then the first core goal.
   for (const g of pool) {
@@ -331,7 +355,7 @@ export function bankableLevel(score: HomeScore): number {
   return score.errors > 0 ? 0 : score.level.index
 }
 
-export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeScore {
+export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: VisitInput | null): HomeScore {
   const placed: P[] = placedItems(doc, layout).map(({ p, item, body }) => {
     const center = v(p.x, p.y)
     const room = doc.rooms.find((r) => pointInPolygon(center, r.polygon))
@@ -1048,6 +1072,29 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const twist = layout.remix ? twistGoal(doc, layout, placed, of, inRoom, rooms, solidPieces) : null
   if (twist) add(twist)
 
+  // ---- Visitor of the day ---------------------------------------------------
+  const vdef = visit ? VISIT_BY_ID[visit.id] : undefined
+  if (vdef) {
+    const counted = placed.filter((x) => x.clean && !cramped.has(x.id) && !packedIds.has(x.id))
+    const byId = new Map(goals.map((g) => [g.id, g.done]))
+    const c = vdef.check({ pieces: counted, all: placed, goal: (id) => byId.get(id) })
+    const done = c.done || !!visit!.done
+    add({
+      id: `visit:${vdef.id}`,
+      title: vdef.title,
+      hint: done ? `${vdef.who} loved it!` : c.hint,
+      tab: done ? undefined : c.tab,
+      item: done ? undefined : c.item,
+      near: done ? undefined : c.near,
+      done,
+      progress: c.progress,
+      stars: VISIT_STARS,
+      category: 'comfort',
+      bonus: true,
+      visit: vdef.id,
+    })
+  }
+
   // What to move when a core goal's piece has nowhere to go: the biggest piece in the room it
   // belongs in (the bedroom for a bed), pieces that could live in another room first.
   for (const g of goals) {
@@ -1068,14 +1115,15 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   // A layout with snags can't be more than Cozy, however many stars it has.
   const capped = errors > 0 || goals.some((g) => g.snag && CAPPING.has(g.id))
   const warnings = issues.filter((i) => i.severity === 'warning').length
-  const bonusMax = goals.reduce((a, g) => a + (g.bonus ? g.stars : 0), 0)
-  const bonusStars = goals.reduce((a, g) => a + (g.bonus && g.done ? g.stars : 0), 0)
+  // The visitor's stars count toward the level, but never toward what a level asks for.
+  const bonusMax = goals.reduce((a, g) => a + (g.bonus && !g.visit ? g.stars : 0), 0)
+  const bonusStars = goals.reduce((a, g) => a + (g.bonus && !g.visit && g.done ? g.stars : 0), 0)
   const uncapped = levelAt(stars, thresholds)
   // Stars alone race to the top (bonus goals add stars too), so the top levels also need goals done:
   // Designer home every core flow goal, Dream home every core goal (basics, comfort and style) as
   // well, plus DREAM_EXTRA_GOALS bonus or style goals.
   const coreOpen = (...cats: GoalCategory[]) => goals.some((g) => !g.bonus && !g.done && cats.includes(g.category))
-  const extras = goals.filter((g) => g.done && (g.bonus || g.category === 'style')).length
+  const extras = goals.filter((g) => g.done && !g.visit && (g.bonus || g.category === 'style')).length
   // Snags hold the level at Cozy (so does an open flow goal, or more than one open basics or comfort goal); warnings on screen, an open snag goal
   // (a blocked view of the TV), an open basics, comfort or style goal or too few extras hold it at Designer home.
   const cap = capped || coreOpen('flow') || goals.filter((g) => !g.bonus && !g.done && (g.category === 'basics' || g.category === 'comfort')).length > 1

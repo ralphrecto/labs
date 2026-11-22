@@ -146,3 +146,16 @@
 .goal-twist-pill { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 999px; background: var(--g-sun); color: #6b4300; font-size: 12px; font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .goal-twist-pill.done { background: #dcefd9; color: #2f6b2a; }
 .goal-cat-twist h3 { color: #c98700; }
+
+/* Visitor of the day: its pill under the level, its section, the sticker row. */
+.goal-visit-pill { display: inline-block; margin-top: 6px; margin-right: 6px; padding: 3px 10px; border-radius: 999px; background: #f6e3f0; color: #7a3a68; font-size: 12px; font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-visit-pill.done { background: #dcefd9; color: #2f6b2a; }
+.goal-cat-visit { --goal-cat: var(--g-plum); }
+.goal-visit-ask { margin: 0 0 8px; font-size: 14px; font-weight: 700; color: var(--g-ink); line-height: 1.35; }
+.goal-bonus.visit { background: #f6e3f0; color: #7a3a68; }
+.goal-stickers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; font-weight: 800; color: var(--g-ink-2); }
+.goal-stickers-none { font-weight: 700; font-style: italic; }
+.goal-sticker { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: #fff; border: 2px solid var(--g-line); font-size: 16px; line-height: 1; transform: rotate(-6deg); flex: none; }
+.goal-sticker:nth-child(odd) { transform: rotate(5deg); }
+.goal-sticker.pop { width: 34px; height: 34px; font-size: 20px; border-color: var(--g-sun); animation: g-pop 0.5s var(--g-ease); }
+.goal-visit-line { display: block; margin-top: 3px; font-size: 12px; font-weight: 700; color: var(--g-ink-2); white-space: normal; }
