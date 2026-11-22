@@ -610,9 +610,30 @@ export function toonWoodBase(hex: string): string {
   return hslHex(h, preS, preL)
 }
 
+/**
+ * Every other painted colour (fabric, upholstery, lacquer) for the Cartoon look: undo its
+ * saturation boost and aim the lightness at the band nearest the colour's own, so a terracotta or
+ * sage sofa comes out like its swatch instead of a louder cousin.
+ */
+export function toonSwatchBase(hex: string): string {
+  const c = hsl(hex)
+  if (!c) return hex
+  const [h, s, l] = c
+  const band = clamp(Math.round(l * 6) / 6, 1 / 6, 5 / 6)
+  const preL = clamp((band - 0.12) / 0.82, 0, 1)
+  const preS = clamp((s - 0.04) / 1.35, 0, 1)
+  return hslHex(h, preS, preL)
+}
+
+/** The colour handed to the parts in the given look, so painted pieces match their swatches. */
+export function styleBase(style: string, category: string, color: string): string {
+  if (style !== 'toon') return color
+  return TOON_WOOD.has(category) ? toonWoodBase(color) : toonSwatchBase(color)
+}
+
 export function ProceduralItem({ item, highlight }: { item: Item; highlight?: string }) {
   const { style } = useStyle()
-  const base = style === 'toon' && TOON_WOOD.has(item.category) ? toonWoodBase(item.color) : item.color
+  const base = styleBase(style, item.category, item.color)
   // A pendant's cord runs up to the real ceiling over its real table.
   const hostH = useStore((st) => (item.category === 'pendant' ? pendantHostHeight(st.doc, item.id) : undefined))
   const ceiling = useStore((st) => (item.category === 'pendant' ? pendantCeiling(st.doc, item.id) : undefined))

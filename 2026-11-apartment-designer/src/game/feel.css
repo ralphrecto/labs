@@ -79,7 +79,11 @@
 .feel-dream .goal-levelup-card { padding-bottom: 22px; animation: g-fade 0.5s var(--g-ease, ease-out) both; }
 .feel-dream .goal-levelup-card strong { font-size: 34px; }
 .feel-dream-photo { margin-top: 14px; }
+/* goals.css's .goal-levelup dims the whole overlay out at 3.6 s; the Dream card outlives that, so the
+   overlay must not turn invisible while it still sits on top catching taps. */
+.goal-levelup.feel-dream { animation: g-fade 0.4s ease both; }
 @media (prefers-reduced-motion: reduce) {
+  .goal-levelup.feel-dream,
   .feel-loss, .feel-hint-pill, .feel-pick, .feel-pick-card.pop, .feel-dream, .feel-dream .goal-levelup-card { animation: none; }
 }
 

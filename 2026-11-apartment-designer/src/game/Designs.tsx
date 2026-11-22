@@ -15,7 +15,7 @@ import { useGame } from './gameStore'
 import { applicableTwists, finishedTwists, levelProgress, pickTwists, sameArrangement, TWIST_IDS, TWISTS, LEVELS } from './goals'
 import * as I from './icons'
 import { albumFor, removePhoto, restorePhoto, TWIST_EMOJI, useAlbum, watchRemixDreams } from './album'
-import type { AlbumPhoto } from '../storage'
+import type { AlbumPhoto } from './album'
 import './designs.css'
 import './album.css'
 
@@ -163,11 +163,15 @@ const ago = (t: number) => {
 
 /** Stars and level for each design of a home, and which one scores best (only with more than one). */
 export function useDesignScores(doc: Doc) {
+  // Today's visitor counts toward the open design's stars, just as on the HUD.
+  const visitId = useGame((s) => s.visit.visitId)
+  const visitDone = useGame((s) => s.visit.done)
   return useMemo(() => {
+    const visit = visitId ? { id: visitId, done: visitDone } : null
     const scores = new Map(
       doc.layouts.map((l) => {
         try {
-          const sc = scoreHome(doc, l, analyze(doc, l))
+          const sc = scoreHome(doc, l, analyze(doc, l), l.id === doc.activeLayoutId ? visit : null)
           const twist = l.remix ? sc.goals.find((g) => g.id === `twist:${l.remix!.twist}`) : undefined
           return [
             l.id,
@@ -197,7 +201,7 @@ export function useDesignScores(doc: Doc) {
         if (st > top) [best, top] = [l.id, st]
       }
     return { scores, best }
-  }, [doc.rooms, doc.items, doc.layouts, doc.apartment.units])
+  }, [doc.rooms, doc.items, doc.layouts, doc.apartment.units, doc.activeLayoutId, visitId, visitDone])
 }
 
 function Crown() {
@@ -336,7 +340,9 @@ export function DesignsSheetBody() {
                   )}
                   <small>
                     {sc?.sameAs ? (
-                      <span className="dz-same">Same as {sc.sameAs} · move something to make it yours</span>
+                      <span className="dz-same">
+                        {l.remix && !l.remix.dreamAt ? 'Just started' : `Same as ${sc.sameAs}`} · move something to make it yours
+                      </span>
                     ) : (
                       sc && (
                         <span className="dz-score">
@@ -468,7 +474,22 @@ export function RemixPicker() {
       </button>
     )
   return (
-    <div className="dz-picker g-card" role="group" aria-label="Pick a twist">
+    <div
+      className="dz-picker g-card"
+      role="group"
+      aria-label="Pick a twist"
+      ref={(el) => {
+        // Opened below the fold: bring the choices into view (once, on mount).
+        if (el && !el.dataset.seen) {
+          el.dataset.seen = '1'
+          try {
+            el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+          } catch {
+            /* old browsers: no scroll */
+          }
+        }
+      }}
+    >
       <p className="dz-picker-h">
         Remix <b>{activeLayout(doc).name}</b>: keep the big pieces, rebuild around them, with a twist.
       </p>
@@ -563,8 +584,12 @@ export function AlbumRow({ homeId }: { homeId: string }) {
             >
               <img src={p.src} alt="" loading="lazy" />
               {p.emoji && <span className="al-emoji" aria-hidden>{p.emoji}</span>}
+              {p.visitor && <span className={`al-emoji al-visitor${p.emoji ? ' second' : ''}`} title="Today's visitor loved it">{p.visitor}</span>}
               <span className="al-cap">
-                <b>{shortDate(p.date)}</b>
+                <b>
+                  {shortDate(p.date)}
+                  {p.evening && <span className="al-moon" aria-label="evening"> 🌙</span>}
+                </b>
                 <small>{p.level.replace(/^Level \d+ · /, '')}</small>
               </span>
             </button>
@@ -598,6 +623,7 @@ function AlbumLightbox({ photo, onClose, onDelete }: { photo: AlbumPhoto; onClos
       <figure className="al-big" onClick={(e) => e.stopPropagation()}>
         <img src={photo.src} alt={`${photo.layoutName || 'Your home'}, ${photo.level}`} />
         {photo.emoji && <span className="al-emoji big" aria-hidden>{photo.emoji}</span>}
+        {photo.visitor && <span className="al-emoji big al-visitor" aria-hidden>{photo.visitor}</span>}
         <figcaption>
           <strong>{photo.layoutName || 'Your home'}</strong>
           <span>{longDate(photo.date)}</span>

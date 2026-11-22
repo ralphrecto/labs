@@ -286,12 +286,13 @@
     top: 0; bottom: auto; left: calc(var(--desk-side-w) + 32px - 100vw); transform: none; align-items: flex-start;
     max-width: calc(100vw - var(--desk-side-w) - 64px);
   }
-  /* Cards are narrow in the side drawer: the size chips wrap onto a second line, never "Larg". */
-  .hud-drawer-slot .buy-presets { flex-wrap: wrap; overflow: visible; mask-image: none; -webkit-mask-image: none; }
+  /* Cards are narrow in the side drawer: the size chips stay one row that scrolls sideways (whole
+     labels, never "Larg"), so a card with four sizes is no taller than its neighbours. */
+  .hud-drawer-slot .buy-presets { flex-wrap: nowrap; overflow-x: auto; }
   .hud-drawer-slot .buy-preset { min-height: 26px; padding: 3px 6px; }
-  /* "Pick one" floats at the bottom left of the stage (above the bar would sit under the top HUD). */
+  /* "Pick one" floats just left of the drawer, at its foot (above the dock), close to where the eye is. */
   .hud-drawer-slot .buy-drawer > .feel-pick {
-    top: auto; bottom: 0; left: calc(var(--desk-side-w) + 32px - 100vw);
+    top: auto; bottom: 0; left: auto; right: calc(100% + 12px); align-items: flex-end;
     max-width: min(420px, calc(100vw - var(--desk-side-w) - 64px));
   }
   .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-cam { right: calc(16px + var(--desk-side-w) + 12px); }

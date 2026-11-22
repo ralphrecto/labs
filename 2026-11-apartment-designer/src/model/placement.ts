@@ -304,6 +304,8 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     if (!room || affinity.get(room.id) === -Infinity) return null
     const body = orientedRect(c, hw, hd, rotation)
     if (!polygonInsideRoom(body, room.polygon)) return null
+    // A dining chair's own pull-out room never runs through a wall (at a table end by the wall).
+    if (cat === 'dining-chair' && chairBackThroughWall(c, rotation, body, room)) return null
     if (solid) {
       for (const o of solids) if (convexOverlap(body, o.body, 0.002)) return null
       for (const k of keepOut) if (convexOverlap(body, k, 0.005)) return null
@@ -321,6 +323,10 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
         }
       }
       for (const z of openFronts) if (convexOverlap(body, z.poly, 0.005) && !sideCompanion(z.owner, z.side, cat)) return null
+      // A floor lamp lights a seat from beside it, not from the knee room in front of it.
+      if (cat === 'floor-lamp')
+        for (const o of others)
+          if ((o.item.category === 'sofa' || o.item.category === 'armchair') && convexOverlap(body, orientedRect(v(o.p.x, o.p.y), o.item.width / 2, 0.3, o.p.rotation, v(0, o.item.depth / 2 + 0.3)), 0.005)) penalty += 15
       // Nothing solid between a sofa and its TV but a coffee table, ottoman, lamp or the like.
       if (!VIEW_OK.has(cat)) for (const z of viewZones) if (z.tv && convexOverlap(body, z.poly, 0.005)) return null
       if (!AT_TABLE.has(cat)) for (const z of pullOuts) if (convexOverlap(body, z, 0.005)) return null
@@ -425,6 +431,12 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     const z = orientedRect(c, hw, need / 2, rotation, v(0, -hd - need / 2))
     return !polygonInsideRoom(z, room.polygon, 0.01) || solids.some((o) => convexOverlap(z, o.body, 0.005))
   }
+  /** A dining chair's own pull-out room runs through a wall: never a spot, even when every side is tight. */
+  function chairBackThroughWall(c: Vec2, rotation: number, body: Vec2[], room: Room): boolean {
+    const need = chairBackNeed({ item: item as Item, body }, diningTables)
+    const z = orientedRect(c, hw, need / 2, rotation, v(0, -hd - need / 2))
+    return !polygonInsideRoom(z, room.polygon, 0.01)
+  }
 
   function consider(c: Vec2, rotation: number, bonus: number, reject?: (c: Vec2, rotation: number, body: Vec2[], room: Room) => boolean) {
     const ok = legal(c, rotation)
@@ -475,7 +487,7 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
           const nw = rot(n, t.p.rotation)
           // The side with the most free floor wins; a chair with no room to pull out is refused
           // outright while another side of the table is open.
-          consider(local(t, l), facing(scale(nw, -1)), 25 + (long ? 2 : 0) - Math.abs(u) + free * 8, cat === 'dining-chair' && anyFree ? chairBackBlocked : undefined)
+          consider(local(t, l), facing(scale(nw, -1)), 25 + (long ? 2 : 0) - Math.abs(u) + free * 8, cat === 'dining-chair' ? (anyFree ? chairBackBlocked : chairBackThroughWall) : undefined)
         }
       }
     }
@@ -490,6 +502,15 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
         }
   if (cat === 'coffee-table' || cat === 'ottoman')
     for (const s of ofCat('sofa')) for (const gap of [0.46, 0.48, 0.5]) consider(local(s, v(0, s.item.depth / 2 + gap + hd)), s.p.rotation, cat === 'coffee-table' ? 25 : 12)
+  // A sofa after its coffee table: behind the table, the same ~46 cm off, along either side.
+  const loneTables = cat === 'sofa' ? ofCat('coffee-table').filter((t) => !ofCat('sofa').some((x) => polygonGap(x.body, t.body) < 0.8)) : []
+  for (const t of loneTables)
+    for (const k of [0, 1, 2, 3]) {
+      const rotation = t.p.rotation + (k * Math.PI) / 2
+      const ext = k % 2 ? t.item.width / 2 : t.item.depth / 2
+      const fwd = rot(v(0, 1), rotation)
+      consider(sub(v(t.p.x, t.p.y), scale(fwd, ext + SOFA_TABLE_GAP + hd)), rotation, (k % 2 ? 16 : 20))
+    }
   if (cat === 'rug')
     for (const s of ofCat('sofa')) consider(local(s, v(0, s.item.depth / 2 - 0.25 + hd)), s.p.rotation, 20)
   if (cat === 'floor-lamp' || cat === 'side-table') {
@@ -561,6 +582,13 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
               const to = sub(c, v(s.p.x, s.p.y))
               const d = Math.hypot(to.x, to.y)
               if (s.room?.id === room.id && d > 1.4 && d < 4.5 && dot(sf, norm(to)) > Math.cos((25 * Math.PI) / 180)) bonus += 15
+            }
+          if (cat === 'sofa')
+            for (const t of loneTables) {
+              // Backed onto this wall with the coffee table just in front: the pair, kept together.
+              const g = polygonGap(orientedRect(c, hw, hd, rotation), t.body)
+              const across = Math.abs(dot(sub(v(t.p.x, t.p.y), c), dir))
+              if (g > 0.3 && g < 0.8 && across < hw * 0.5 && dot(sub(v(t.p.x, t.p.y), c), n) > 0) bonus += 18 - Math.abs(g - SOFA_TABLE_GAP) * 10
             }
           if (cat === 'sofa')
             for (const tv of tvs) {
@@ -779,6 +807,8 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
 const COFFEE_ZONE = 1.1
 /** A coffee table placed for a sofa sits this far (m, edge to edge) in front of it. */
 const COFFEE_GAP = [0.45, 0.5] as const
+/** Where a sofa placed after its coffee table goes: this far (m, edge to edge) behind the table. */
+const SOFA_TABLE_GAP = 0.47
 /** Score cost of standing on floor kept for a bed or a coffee table: only when nothing else fits. */
 const RESERVED_COST = 40
 

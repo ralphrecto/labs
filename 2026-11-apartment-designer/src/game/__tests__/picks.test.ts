@@ -6,7 +6,7 @@ import { useStore } from '../../store'
 import { pickChip, presetItem } from '../BuyDrawer'
 import { useGame } from '../gameStore'
 import { familyOf, PICKS, picksFor } from '../swatches'
-import { isRoundTable, toonWoodBase } from '../../three/ItemModel'
+import { isRoundTable, styleBase, toonWoodBase } from '../../three/ItemModel'
 import { toonHex } from '../../scan/palette'
 
 const STARTER = new Map(STARTER_CATALOG.map((p) => [p.id, p]))
@@ -85,5 +85,19 @@ describe('variants look different', () => {
     // Plain toonHex lifts it to a mid tan-orange; the compensated base lands on the darker band.
     expect(lightness(out)).toBeLessThan(lightness(toonHex(walnut)))
     expect(lightness(out)).toBeLessThan(0.45)
+  })
+
+  it('painted fabrics come out close to their swatch in the Cartoon look', () => {
+    const rgb = (hex: string) => {
+      const n = parseInt(hex.slice(1), 16)
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+    }
+    const dist = (a: string, b: string) => Math.hypot(...rgb(a).map((v, i) => v - rgb(b)[i]))
+    for (const swatch of ['#b5534a', '#5f8f5a']) {
+      const out = toonHex(styleBase('toon', 'sofa', swatch))
+      expect(dist(out, swatch)).toBeLessThan(dist(toonHex(swatch), swatch))
+      expect(dist(out, swatch)).toBeLessThan(24)
+    }
+    expect(styleBase('classic', 'sofa', '#b5534a')).toBe('#b5534a')
   })
 })

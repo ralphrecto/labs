@@ -48,3 +48,8 @@
 @media (prefers-reduced-motion: reduce) {
   .photo-kept, .al-sheet, .al-big { animation: none; }
 }
+/* Today's visitor, stuck on the corner of the photo they loved (below a twist's emoji when both). */
+.al-visitor { top: 14px; left: 4px; right: auto; font-size: 20px; }
+.al-visitor.second { left: 4px; }
+.al-moon { font-weight: 400; }
+.al-emoji.big.al-visitor { top: 20px; left: 20px; right: auto; }

@@ -59,6 +59,10 @@ const CHIP_IDS: Record<string, [string, string][]> = {
   desk: [['Small', 'desk-sm'], ['Mid', 'desk'], ['Large', 'desk-standing']],
   rug: [['5×8', 'rug-5x8'], ['6×9', 'rug-6x9'], ['8×10', 'rug-8x10'], ['9×12', 'rug-9x12']],
   'floor-lamp': [['Floor', 'floor-lamp'], ['Arc', 'arc-lamp']],
+  armchair: [['Classic', 'armchair'], ['Accent', 'accent-chair'], ['Recliner', 'recliner'], ['Swivel', 'swivel']],
+  'coffee-table': [['Classic', 'coffee-rect'], ['Round', 'coffee-round'], ['Small', 'coffee-small']],
+  ottoman: [['Square', 'ottoman-sq'], ['Pouf', 'pouf'], ['Storage', 'ottoman-rect']],
+  'side-table': [['Square', 'side'], ['C-shape', 'side-c']],
 }
 const STARTER = new Map(STARTER_CATALOG.map((p) => [p.id, p]))
 
@@ -86,6 +90,11 @@ export function presetItem(entry: CatalogEntry, id: string, preset?: SizeChip): 
     ...(preset.height ? { height: preset.height } : {}),
     ...(preset.color ? { color: preset.color } : {}),
   })
+}
+
+/** " in the Living room" for a placement toast; nothing in a one-room home, where it can only go there. */
+export function inRoom(roomName?: string): string {
+  return roomName && useStore.getState().doc.rooms.length > 1 ? ` in the ${roomName}` : ''
 }
 
 /** "Box" reads as a generic custom piece in the drawer. */
@@ -316,7 +325,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     const fam = chose && preset?.color ? familyOf(entry.category) : undefined
     if (fam) useGame.getState().setTaste(fam, preset!.color!)
     const name = (preset ? preset.name : displayName(entry)).replace(/^(\w)(?=[a-z])/, (c) => c.toLowerCase())
-    st.notify(`Placed ${article(name)} ${name}${res.roomName ? ` in the ${res.roomName}` : ''}.`)
+    st.notify(`Placed ${article(name)} ${name}${inRoom(res.roomName)}.`)
     celebrate(entry.category + (preset ? `:${preset.label}` : ''))
   }
   const placeMine = (item: Item) => {
@@ -324,7 +333,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     const res = st.placeItem(item.id) // adds a placement of the same item and selects it
     if (!res.ok) return
     if (hint) useGame.getState().setBuyHint(null)
-    st.notify(`Placed ${counts.get(item.id) ? 'another' : 'your'} “${item.name}”${res.roomName ? ` in the ${res.roomName}` : ''}.`)
+    st.notify(`Placed ${counts.get(item.id) ? 'another' : 'your'} “${item.name}”${inRoom(res.roomName)}.`)
     celebrate(item.id)
   }
   const shop = () => useGame.getState().openSheet('shop')

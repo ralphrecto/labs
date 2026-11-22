@@ -37,3 +37,6 @@
   .photo-sheet, .photo-card { animation: none; }
   .photo-card img { transform: none; }
 }
+/* Keep Save / Done clear of the mode dock (and the home indicator): the card centres in the space above it. */
+.photo-sheet { padding-bottom: calc(var(--dock-h, 96px) + 12px + env(safe-area-inset-bottom)); }
+.photo-card img { max-height: min(68vh, calc(100vh - var(--dock-h, 96px) - 150px - env(safe-area-inset-bottom))); }

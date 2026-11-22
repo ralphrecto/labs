@@ -3,7 +3,11 @@
 import { create } from 'zustand'
 import { analyze } from '../analysis'
 import { useStore } from '../store'
-import { addAlbumPhoto, deleteAlbumPhoto, listAlbum, type AlbumPhoto } from '../storage'
+import { addAlbumPhoto, deleteAlbumPhoto, listAlbum, type AlbumPhoto as StoredPhoto } from '../storage'
+import { VISIT_BY_ID } from './visits'
+
+/** A kept photo, plus the visitor who loved the room that day (their emoji, as a corner sticker). */
+export type AlbumPhoto = StoredPhoto & { visitor?: string }
 import { useGame } from './gameStore'
 import { LEVELS, scoreHome, TWISTS } from './goals'
 
@@ -22,7 +26,7 @@ export const useAlbum = create<{ rev: number }>(() => ({ rev: 0 }))
 const bump = () => useAlbum.setState((s) => ({ rev: s.rev + 1 }))
 
 /** The shot, cover-cropped to 4:3 and downscaled to `width`, as a JPEG data URL (null on failure). */
-export function shotDataURL(shot: HTMLCanvasElement, width = 360): string | null {
+export function shotDataURL(shot: HTMLCanvasElement, width = 480): string | null {
   try {
     const W = width
     const H = Math.round(width * 0.75)
@@ -52,6 +56,9 @@ export function keepPhoto(src: string | null, extra: { level: string; stars: num
     const { doc } = useStore.getState()
     const layoutId = extra.layoutId ?? doc.activeLayoutId
     const layout = doc.layouts.find((l) => l.id === layoutId)
+    // Today's visitor rides along on the photo when they were happy with the open design.
+    const vs = useGame.getState().visit
+    const visitor = vs.done && layoutId === doc.activeLayoutId ? VISIT_BY_ID[vs.visitId]?.emoji : undefined
     const photo: AlbumPhoto = {
       id: uid(),
       homeId: doc.apartment.id,
@@ -62,6 +69,7 @@ export function keepPhoto(src: string | null, extra: { level: string; stars: num
       stars: extra.stars,
       evening: extra.evening,
       src,
+      ...(visitor ? { visitor } : {}),
       ...(extra.twist ? { twist: extra.twist, emoji: TWIST_EMOJI[extra.twist], pinned: true } : {}),
     }
     const ok = addAlbumPhoto(photo)
@@ -72,7 +80,7 @@ export function keepPhoto(src: string | null, extra: { level: string; stars: num
   }
 }
 
-export const albumFor = (homeId: string) => listAlbum(homeId)
+export const albumFor = (homeId: string): AlbumPhoto[] => listAlbum(homeId)
 export function removePhoto(homeId: string, id: string) {
   const ok = deleteAlbumPhoto(homeId, id)
   bump()
@@ -116,7 +124,9 @@ function dreamPolaroid(layoutId: string, twist: string) {
     if (!layout) return
     let stars = 0
     try {
-      stars = scoreHome(doc, layout, analyze(doc, layout)).stars
+      const vs = useGame.getState().visit
+      const visit = vs.visitId && layoutId === doc.activeLayoutId ? { id: vs.visitId, done: vs.done } : null
+      stars = scoreHome(doc, layout, analyze(doc, layout), visit).stars
     } catch {
       /* the caption just shows no stars */
     }
