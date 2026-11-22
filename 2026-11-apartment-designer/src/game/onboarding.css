@@ -232,3 +232,25 @@
 
 /* Narrow phones: the two welcome links wrap, so drop the dot between them. */
 @media (max-width: 430px) { .onb-dot { display: none; } }
+
+/* Found screen: the room's name is editable in place. */
+.g-toggle input.onb-room-name { appearance: none; flex: 1 1 120px; width: auto; min-width: 0; height: auto; font: inherit; font-weight: 800; color: var(--g-ink); background: transparent; border: none; border-bottom: 2px dashed #d9c7ad; border-radius: 0; padding: 2px 0; margin-right: 8px; cursor: text; box-shadow: none; }
+.g-toggle input.onb-room-name::after { content: none; }
+.g-toggle input.onb-room-name:focus { outline: none; border-bottom-color: var(--g-coral); border-bottom-style: solid; }
+.onb-door-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; }
+.onb-door-row > span { flex: 1; min-width: 0; }
+.onb-found-ico.door { background: var(--g-sage); }
+.onb-door-row .g-btn { flex: none; padding: 8px 14px; font-size: 13px; }
+.onb-door-row .g-btn svg { width: 14px; height: 14px; }
+.onb-unsized { background: color-mix(in srgb, var(--g-coral) 14%, var(--g-paper)); }
+.onb-found .onb-door-row small { margin-top: 0; }
+
+/* Phones: the file button comes right after the title, before the how-to tips, so it's above the fold. */
+@media (max-width: 699px) {
+  .onb-scroll { display: flex; flex-direction: column; }
+  .onb-scroll > * { flex: none; }
+  .onb-scroll > .onb-title { order: -3; }
+  .onb-scroll > .onb-drop { order: -2; margin-top: 12px; }
+  .onb-scroll > .onb-try { order: -1; margin-top: 12px; }
+  .onb-scroll > .onb-tips { margin-top: 14px; }
+}
