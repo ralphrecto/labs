@@ -6,7 +6,7 @@ import { emptyDoc, rectRoom, sampleDoc } from '../../model/sample'
 import type { Doc, Placement } from '../../model/types'
 import { unpackDoc } from '../../store'
 import { useGame, VISIT_KEY } from '../gameStore'
-import { applicableVisits, LEVELS, nextGoal, scoreHome, todayVisit, VISIT_LEVEL, VISITS, type VisitInput } from '../goals'
+import { applicableVisits, LEVELS, nextGoal, scoreHome, todayVisit, VISIT_LEVEL, VISITS, visitLeads, type VisitInput } from '../goals'
 
 const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
 const score = (d: Doc, visit?: VisitInput) => scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)), visit)
@@ -111,7 +111,9 @@ describe('visitor of the day', () => {
       }
       const next = nextGoal(s, fits)
       if (next?.visit && offeredAt < 0) offeredAt = s.level.index
-      if (next?.visit) expect(s.level.index >= VISIT_LEVEL || !s.goals.some((g) => !g.bonus && !g.done)).toBe(true)
+      // Below Cozy the visitor leads only when it's one pick away (round 12).
+      if (next?.visit) expect(s.level.index >= VISIT_LEVEL || !s.goals.some((g) => !g.bonus && !g.done) || (vg.progress ?? 0) >= 0.5).toBe(true)
+      if (next?.visit) expect(visitLeads(s)).toBe(true)
       if (next?.id === 'unpack' && next.near) {
         Object.assign(d, unpackDoc(d, next.near)!.doc)
         continue
@@ -120,7 +122,7 @@ describe('visitor of the day', () => {
       if (!drop(d, next.item, next.near)) break
     }
     expect(dream).toBeGreaterThan(0)
-    expect(offeredAt).toBeGreaterThanOrEqual(VISIT_LEVEL)
+    expect(offeredAt).toBeGreaterThanOrEqual(0)
   }, 60000)
 
   it('Next gives a tab-less hint when the piece has nowhere to go, never a dead end', () => {

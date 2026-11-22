@@ -113,8 +113,10 @@ describe('scoreHome', () => {
     const t = place(d, 'coffee-table', 2, 3.04 - 0.47 - 0.3)
     const g = () => goal(d, (g) => g.id === `coffee:${sofa.id}`)!
     expect(g().done).toBe(true)
-    // Inside the sofa's 45 cm knee room it blocks the sofa's clearance: it doesn't count (round 5).
+    // 35–60 cm counts since round 12 (40 cm was "too close" before); closer than 35 cm doesn't.
     t.y = 3.04 - 0.4 - 0.3
+    expect(g().done).toBe(true)
+    t.y = 3.04 - 0.3 - 0.3
     expect(g().done).toBe(false)
     expect(g().hint).toMatch(/knees/)
     t.y = 3.04 - 0.7 - 0.3
@@ -402,11 +404,11 @@ describe('scoreHome', () => {
     const g0 = goal(d, (g) => g.id.startsWith('density:'))!
     expect(g0.done).toBe(false)
     expect(g0.tab).toBeUndefined()
-    // 40% coverage used to be "just right"; now it's crowded.
-    place(d, 'box', 2, 2, 0, { width: 2, depth: 3.2 })
+    // Over 40% coverage is crowded (round 12 raised the cap from 35%: free decorating isn't punished).
+    place(d, 'box', 2, 2, 0, { width: 2, depth: 3.5 })
     const g = goal(d, (g) => g.id.startsWith('density:'))!
     expect(g.done).toBe(false)
-    expect(g.hint).toMatch(/crowded \(aim for 15–35%\)/)
+    expect(g.hint).toMatch(/crowded \(aim for 15–40%\)/)
   }, 30000)
 
   it('wants room to get into bed: both sides for a double, one for a twin (round 3)', () => {
@@ -690,7 +692,8 @@ describe('round 6 (play-test review)', () => {
       d.items.push(item)
       layoutOf(d).placements.push({ id: `dnp${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation, on: r.spot.on })
     }
-    expect(dream, `Dream home after ${dream} placements`).toBeGreaterThanOrEqual(12)
+    // 11 since round 12: a roomier coffee-table range and density cap mean fewer fix-ups on the way.
+    expect(dream, `Dream home after ${dream} placements`).toBeGreaterThanOrEqual(11)
     expect(dream).toBeLessThanOrEqual(25)
   }, 60000)
 })
