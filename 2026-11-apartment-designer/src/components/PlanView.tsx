@@ -23,6 +23,7 @@ import {
   wallInwardNormal,
   wallSegments,
 } from '../model/geometry'
+import { clampOnHost, HOSTED, hostAt } from '../model/placement'
 import { snapDrawPoint, snapPlacement, type SnapGuide } from '../model/snapping'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 import { formatLength, parseLength } from '../model/units'
@@ -31,6 +32,7 @@ import { planToScan, rotateAbout, scanToPlan, snapAxes, snapCorner, straightenFr
 import { scanCenter, scanCorners, underlayOf, useScanRuntime } from '../scan/runtime'
 import type { ScanRef } from '../model/types'
 import { PlanScanLayer } from './ScanPanels'
+import { viewFrame } from '../three/viewFrame'
 import { placementShift } from '../scan/apply'
 import { reviewChoice, useScanUI } from '../scan/scanUi'
 
@@ -203,6 +205,26 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
     return v(vb.x + (e.clientX - r.left) / vs.k, vb.y + (e.clientY - r.top) / vs.k)
   }
 
+  // The HUD maps drawer drops through the plan when it's showing (see viewFrame).
+  const mapRef = useRef({ toWorld, vb, k: vs.k })
+  mapRef.current = { toWorld, vb, k: vs.k }
+  useEffect(() => {
+    const toFloor = (x: number, y: number) => (svgRef.current ? mapRef.current.toWorld({ clientX: x, clientY: y }) : null)
+    const toScreen = (p: Vec2) => {
+      const svg = svgRef.current
+      if (!svg) return null
+      const r = svg.getBoundingClientRect()
+      const m = mapRef.current
+      return { x: r.left + (p.x - m.vb.x) * m.k, y: r.top + (p.y - m.vb.y) * m.k }
+    }
+    viewFrame.toFloor = toFloor
+    viewFrame.toScreen = toScreen
+    return () => {
+      if (viewFrame.toFloor === toFloor) viewFrame.toFloor = null
+      if (viewFrame.toScreen === toScreen) viewFrame.toScreen = null
+    }
+  }, [])
+
   const store = useStore.getState
 
   /**
@@ -320,6 +342,25 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
       const pi = placementsWithItems.find((x) => x.p.id === drag.id)
       if (!pi) return
       const proposed = { ...pi.p, x: w.x - drag.grab.x, y: w.y - drag.grab.y }
+      if (pi.p.on && HOSTED.has(pi.item.category)) {
+        // A table lamp slides over tops and onto another one under the pointer (the side table to
+        // the desk); off every top it stays clamped to the one it's on.
+        if (!drag.moved) {
+          s.beginGesture()
+          setDrag({ ...drag, moved: true })
+        }
+        const layoutNow = activeLayout(s.doc)
+        const host =
+          hostAt(s.doc, layoutNow, proposed, pi.item, pi.p.on) ??
+          layoutNow.placements.flatMap((h) => {
+            const it = h.id === pi.p.on ? doc.items.find((i) => i.id === h.itemId) : undefined
+            return it ? [{ id: h.id, item: it, p: h }] : []
+          })[0]
+        if (!host) return
+        const c = clampOnHost(host, pi.item, proposed)
+        s.updatePlacement(drag.id, { x: c.x, y: c.y, rotation: host.p.rotation, on: host.id })
+        return
+      }
       const others = placementsWithItems.filter((x) => x.p.id !== drag.id)
       const res = e.altKey ? { placement: proposed, guides: [] } : snapPlacement(pi.item, proposed, doc.rooms, others, snap)
       if (!drag.moved) {
@@ -534,7 +575,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
         onPointerLeave={() => setCursor(null)}
         onDoubleClick={() => mode === 'draw-room' && finishDraft()}
         xmlns="http://www.w3.org/2000/svg"
-        style={{ background: COLORS.paper }}
+        style={{ background: COLORS.paper, cursor: drag?.type === 'item' ? 'grabbing' : undefined }}
       >
         <rect x={vb.x} y={vb.y} width={vb.w} height={vb.h} fill={COLORS.paper} onPointerDown={onBackgroundDown} />
         <g pointerEvents="none">
@@ -739,7 +780,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
                   stroke={stroke}
                   strokeWidth={(selected || flag ? 2.5 : 1) * px}
                   strokeDasharray={item.floorLevel ? `${5 * px} ${3 * px}` : undefined}
-                  style={{ cursor: readOnly ? undefined : 'grab' }}
+                  style={{ cursor: readOnly ? undefined : drag?.type === 'item' ? 'grabbing' : 'grab' }}
                   onPointerDown={(e) => {
                     if (readOnly || mode !== 'select') return onBackgroundDown(e)
                     store().select({ kind: 'placement', id: p.id })
