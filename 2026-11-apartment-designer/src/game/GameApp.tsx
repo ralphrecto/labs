@@ -246,7 +246,9 @@ const BOTTOM_HUD = ['.buy-drawer', '.hud-ctx-wrap', '.hud-tray', '.hud-dock', '.
 const INSET_SETTLE_MS = 700
 const TOP_HUD = ['.hud-top', '.goal-next', '.hud-look-bar']
 /** When the furniture drawer is a right-hand column (keep in step with buy.css). */
-const DESKTOP_SIDE_DRAWER = '(min-width: 1100px) and (min-height: 700px)'
+const DESKTOP_SIDE_DRAWER = '(min-width: 1100px) and (min-height: 700px), (min-width: 1000px) and (min-height: 640px) and (orientation: landscape)'
+/** The slim selection bar above the drawer: its height and gap (hud.css). */
+const CTX_BAR_H = 52
 /** Height kept for the slim selection strip at the top left of the stage beside the side drawer. */
 const SIDE_CTX_H = 56
 
@@ -301,9 +303,11 @@ function useHudInset(root: RefObject<HTMLDivElement | null>, frameKey: string): 
         // Room for the selection strip at the top left, whether or not something is selected now.
         top = Math.max(top, offsetTopIn(drawer, game) + SIDE_CTX_H)
       }
+      // With the drawer along the bottom, a selection bar will ride above it: the plan keeps that clear too.
+      const ctx = !side && game.querySelector('.hud-drawer-slot:not(.tucked) .buy-drawer') && !game.querySelector('.hud-ctx-wrap') ? CTX_BAR_H : 0
       if (performance.now() > openUntil.current) return
       setInset((was) =>
-        Math.abs(was.top - top) < 4 && Math.abs(was.bottom - bottom) < 4 && Math.abs((was.right ?? 0) - right) < 4 ? was : { top, bottom, right },
+        Math.abs(was.top - top) < 4 && Math.abs(was.bottom - bottom) < 4 && Math.abs((was.right ?? 0) - right) < 4 && (was.ctx ?? 0) === ctx ? was : { top, bottom, right, ctx },
       )
     }
     const schedule = () => {

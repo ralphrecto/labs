@@ -7,6 +7,7 @@ import {
   centroid,
   clearanceZones,
   closestPointOnSegment,
+  convexOverlap,
   dist,
   doorSwing,
   dot,
@@ -74,7 +75,7 @@ export interface PlanViewProps {
    * Screen space (CSS px) the game HUD covers at the top, bottom and right: the plan is fitted into
    * what's left, with a tighter margin. Leave out for the classic editor (whole pane).
    */
-  inset?: { top: number; bottom: number; right?: number }
+  inset?: { top: number; bottom: number; right?: number; ctx?: number }
 }
 
 export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset }: PlanViewProps) {
@@ -134,7 +135,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
     const top = inset?.top ?? 0
     const right = inset?.right ?? 0
     const availW = Math.max(size.w * 0.5, size.w - right)
-    const availH = Math.max(size.h * 0.25, size.h - top - (inset?.bottom ?? 0))
+    const availH = Math.max(size.h * 0.25, size.h - top - (inset?.bottom ?? 0) - (inset?.ctx ?? 0))
     const k = Math.min(availW / w, availH / h)
     // Centre the plan in the part of the pane the HUD leaves visible, not the middle of the pane.
     const dx = (availW - size.w) / 2
@@ -151,7 +152,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])
   // Re-fit when the HUD around the game's plan settles into a new shape.
-  const insetKey = inset ? `${Math.round(inset.top)}:${Math.round(inset.bottom)}:${Math.round(inset.right ?? 0)}` : ''
+  const insetKey = inset ? `${Math.round(inset.top)}:${Math.round(inset.bottom)}:${Math.round(inset.right ?? 0)}:${inset.ctx ?? 0}` : ''
   useEffect(() => {
     if (fitted.current) fit()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -486,6 +487,38 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
 
   const pieceBoxes = placementsWithItems.map(({ p, item }) => bounds(footprint(item, p)))
   const dimsDone: { l: number; mid: Vec2 }[] = []
+  // Dimension labels already drawn (world boxes): a wall's length never lands on top of another's.
+  const labelBoxes: Box[] = []
+  const boxesHit = (b: Box) => labelBoxes.some((o) => o.maxX > b.minX && o.minX < b.maxX && o.maxY > b.minY && o.minY < b.maxY)
+  // The selected piece's width and depth, drawn beside it. Wall lengths near them step aside.
+  const selDims = (() => {
+    if (selection?.kind !== 'placement') return null
+    const pi = placementsWithItems.find((x) => x.p.id === selection.id)
+    if (!pi) return null
+    const [c0, c1, , c3] = footprint(pi.item, pi.p)
+    const wMid = scale(add(c0, c1), 0.5)
+    const dMid = scale(add(c0, c3), 0.5)
+    const t1 = add(wMid, scale(norm(sub(wMid, v(pi.p.x, pi.p.y))), 12 * px))
+    const t2 = add(dMid, scale(norm(sub(dMid, v(pi.p.x, pi.p.y))), 12 * px))
+    return { t1, t2, w: formatLength(pi.item.width, units), d: formatLength(pi.item.depth, units) }
+  })()
+  if (selDims)
+    for (const [t, text] of [
+      [selDims.t1, selDims.w],
+      [selDims.t2, selDims.d],
+    ] as const) {
+      const r = (text.length * fs * 0.9 * 0.58) / 2 + 20 * px
+      labelBoxes.push({ minX: t.x - r, maxX: t.x + r, minY: t.y - fs * 0.5 - 20 * px, maxY: t.y + fs * 0.5 + 20 * px })
+    }
+  // Labels a piece doesn't need: a lamp on a table, a rug under the sofa or the table, a pendant over the table.
+  const solidBodies = placementsWithItems
+    .filter(({ item, p }) => !item.floorLevel && !p.on && item.category !== 'pendant')
+    .map(({ item, p }) => ({ id: p.id, body: footprint(item, p) }))
+  const unlabelled = new Set(
+    placementsWithItems
+      .filter(({ p, item }) => !!p.on || ((item.floorLevel || item.category === 'pendant') && solidBodies.some((o) => convexOverlap(footprint(item, p), o.body, 0.01))))
+      .map(({ p }) => p.id),
+  )
   return (
     <div className="plan-wrap" ref={wrapRef} onContextMenu={(e) => e.preventDefault()}>
       {title && <div className="plan-title">{title}</div>}
@@ -638,14 +671,21 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
               const u = norm(sub(b, a))
               const half = v(Math.abs(u.x) * fs * 1.6 + Math.abs(u.y) * fs * 0.6, Math.abs(u.y) * fs * 1.6 + Math.abs(u.x) * fs * 0.6)
               const clear = (q: Vec2) => pieceBoxes.every((o) => o.maxX < q.x - half.x || o.minX > q.x + half.x || o.maxY < q.y - half.y || o.minY > q.y + half.y)
-              const m = [add(mid, scale(n, -(room.wallThickness + 10 * px))), add(mid, scale(n, 14 * px))].find(clear)
+              const text = formatLength(l, units)
+              const along = (text.length * fs * 0.92 * 0.58) / 2 + 4 * px
+              const across = fs * 0.6
+              const hx = Math.abs(u.x) * along + Math.abs(u.y) * across
+              const hy = Math.abs(u.y) * along + Math.abs(u.x) * across
+              const boxAt = (q: Vec2): Box => ({ minX: q.x - hx, maxX: q.x + hx, minY: q.y - hy, maxY: q.y + hy })
+              const m = [add(mid, scale(n, -(room.wallThickness + 10 * px))), add(mid, scale(n, 14 * px))].find((q) => clear(q) && !boxesHit(boxAt(q)))
               if (!m) return null
+              labelBoxes.push(boxAt(m))
               let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI
               if (ang > 90) ang -= 180
               if (ang < -90) ang += 180
               return (
                 <text key={`${room.id}:${i}`} x={m.x} y={m.y} transform={`rotate(${ang} ${m.x} ${m.y})`} dominantBaseline="middle" opacity={selectedRoom?.id === room.id ? 1 : 0.7}>
-                  {formatLength(l, units)}
+                  {text}
                 </text>
               )
             }),
@@ -683,17 +723,19 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
             const hw = item.width / 2
             const hd = item.depth / 2
             const deg = (p.rotation * 180) / Math.PI
-            const labelSize = Math.min(fs, (item.width / Math.max(4, item.name.length)) * 1.6)
+            // A pendant hangs over the table: a small disc, so the table's name stays readable under it.
+            const pendant = item.category === 'pendant'
+            const sk = pendant ? 0.6 : 1
             return (
               <g key={p.id} transform={`translate(${p.x} ${p.y}) rotate(${deg})`}>
                 <rect
-                  x={-hw}
-                  y={-hd}
-                  width={item.width}
-                  height={item.depth}
-                  rx={item.category === 'rug' ? 0 : Math.min(0.03, hw / 4)}
+                  x={-hw * sk}
+                  y={-hd * sk}
+                  width={item.width * sk}
+                  height={item.depth * sk}
+                  rx={item.category === 'rug' ? 0 : pendant ? hw * sk : Math.min(0.03, hw / 4)}
                   fill={item.color}
-                  fillOpacity={item.floorLevel ? 0.45 : 0.85}
+                  fillOpacity={item.floorLevel ? 0.45 : pendant ? 0.6 : 0.85}
                   stroke={stroke}
                   strokeWidth={(selected || flag ? 2.5 : 1) * px}
                   strokeDasharray={item.floorLevel ? `${5 * px} ${3 * px}` : undefined}
@@ -705,26 +747,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
                     begin({ type: 'item', id: p.id, grab: sub(w, v(p.x, p.y)), moved: false }, e)
                   }}
                 />
-                {!item.floorLevel && <line x1={-hw + 0.04} y1={hd - 0.04} x2={hw - 0.04} y2={hd - 0.04} stroke="#ffffff" strokeOpacity={0.8} strokeWidth={2 * px} pointerEvents="none" />}
+                {!item.floorLevel && !pendant && <line x1={-hw + 0.04} y1={hd - 0.04} x2={hw - 0.04} y2={hd - 0.04} stroke="#ffffff" strokeOpacity={0.8} strokeWidth={2 * px} pointerEvents="none" />}
                 <ItemGlyph category={item.category} hw={hw} hd={hd} px={px} />
-                <text
-                  pointerEvents="none"
-                  x={0}
-                  y={0}
-                  fontSize={labelSize}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fill="#ffffff"
-                  stroke="#000000"
-                  strokeOpacity={0.25}
-                  strokeWidth={labelSize * 0.12}
-                  paintOrder="stroke"
-                  fontFamily="system-ui, sans-serif"
-                  fontWeight={600}
-                  transform={Math.abs(Math.sin(p.rotation)) > 0.7 && item.depth > item.width ? `rotate(${p.rotation > Math.PI ? 90 : -90})` : Math.cos(p.rotation) < -0.7 ? 'rotate(180)' : undefined}
-                >
-                  {item.name}
-                </text>
                 {selected && !readOnly && (
                   <g>
                     <line x1={0} y1={hd} x2={0} y2={hd + 22 * px} stroke={COLORS.accent} strokeWidth={1.5 * px} pointerEvents="none" />
@@ -744,26 +768,43 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
             )
           })}
 
+        {/* Item names, over every piece (a pendant over the table doesn't hide the table's name) */}
+        {placementsWithItems.map(({ p, item }) => {
+          if (unlabelled.has(p.id)) return null
+          const labelSize = Math.min(fs, (item.width / Math.max(4, item.name.length)) * 1.6)
+          // (Rotations can be negative or past a full turn: read the turn as 0 to 2π.)
+          const r = ((p.rotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)
+          return (
+            <g key={`label:${p.id}`} transform={`translate(${p.x} ${p.y}) rotate(${(p.rotation * 180) / Math.PI})`}>
+            <text
+              pointerEvents="none"
+              x={0}
+              y={0}
+              fontSize={labelSize}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill="#ffffff"
+              stroke="#000000"
+              strokeOpacity={0.25}
+              strokeWidth={labelSize * 0.12}
+              paintOrder="stroke"
+              fontFamily="system-ui, sans-serif"
+              fontWeight={600}
+              transform={Math.abs(Math.sin(r)) > 0.7 && item.depth > item.width ? `rotate(${r > Math.PI ? 90 : -90})` : Math.cos(r) < -0.7 ? 'rotate(180)' : undefined}
+            >
+              {item.name}
+            </text>
+            </g>
+          )
+        })}
+
         {/* Selected item dimensions */}
-        {selection?.kind === 'placement' &&
-          (() => {
-            const pi = placementsWithItems.find((x) => x.p.id === selection.id)
-            if (!pi) return null
-            const fp = footprint(pi.item, pi.p)
-            const [c0, c1, , c3] = fp
-            const wMid = scale(add(c0, c1), 0.5)
-            const dMid = scale(add(c0, c3), 0.5)
-            const out = norm(sub(wMid, v(pi.p.x, pi.p.y)))
-            const out2 = norm(sub(dMid, v(pi.p.x, pi.p.y)))
-            const t1 = add(wMid, scale(out, 12 * px))
-            const t2 = add(dMid, scale(out2, 12 * px))
-            return (
-              <g pointerEvents="none" fontSize={fs * 0.9} fill={COLORS.accent} fontFamily="system-ui, sans-serif" textAnchor="middle" dominantBaseline="middle" fontWeight={600}>
-                <text x={t1.x} y={t1.y}>{formatLength(pi.item.width, units)}</text>
-                <text x={t2.x} y={t2.y}>{formatLength(pi.item.depth, units)}</text>
-              </g>
-            )
-          })()}
+        {selDims && (
+          <g pointerEvents="none" fontSize={fs * 0.9} fill={COLORS.accent} fontFamily="system-ui, sans-serif" textAnchor="middle" dominantBaseline="middle" fontWeight={600}>
+            <text x={selDims.t1.x} y={selDims.t1.y}>{selDims.w}</text>
+            <text x={selDims.t2.x} y={selDims.t2.y}>{selDims.d}</text>
+          </g>
+        )}
 
         {/* Walking paths */}
         {showPath &&
