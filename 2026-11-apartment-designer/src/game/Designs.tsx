@@ -11,7 +11,7 @@ import { catalogEntry, itemFromCatalog } from '../model/catalog'
 import { findDrop } from '../model/placement'
 import { activeLayout } from '../store'
 import { useGame } from './gameStore'
-import { applicableTwists, levelProgress, sameArrangement, TWISTS, LEVELS } from './goals'
+import { applicableTwists, finishedTwists, levelProgress, pickTwists, sameArrangement, TWIST_IDS, TWISTS, LEVELS } from './goals'
 import * as I from './icons'
 import './designs.css'
 
@@ -183,8 +183,9 @@ export function useDesignScores(doc: Doc) {
     let top = 0
     if (doc.layouts.length > 1)
       for (const l of doc.layouts) {
-        // An untouched copy never takes the crown from its source.
-        if (scores.get(l.id)?.sameAs) continue
+        // An untouched copy never takes the crown from its source, and a finished remix has its
+        // own badge (its twist, ticked) rather than racing the others on stars: Less is more can't win that.
+        if (scores.get(l.id)?.sameAs || (l.remix && (scores.get(l.id)?.twistDone || l.remix.dreamAt))) continue
         const st = scores.get(l.id)?.stars ?? 0
         if (st > top) [best, top] = [l.id, st]
       }
@@ -408,6 +409,11 @@ function RemixBadge({ l, done }: { l: Layout; done: boolean }) {
         ↻ Twist: {t.title}
         {done && ' ✓'}
       </span>
+      {!!l.remix!.dreamAt && (
+        <span className="dz-crown dz-twist-won" title={`${t.name} twist finished`}>
+          {TWIST_EMOJI[l.remix!.twist] ?? '↻'} ✓
+        </span>
+      )}
     </>
   )
 }
@@ -452,8 +458,9 @@ export function RemixPicker() {
         return true
       }
     }
-    return applicableTwists(doc, fits).slice(0, 3)
+    return pickTwists(doc, applicableTwists(doc, fits))
   }, [open, doc])
+  const finished = useMemo(() => finishedTwists(doc), [doc.layouts])
   if (!open)
     return (
       <button className="g-btn primary" onClick={() => useRemixPicker.setState({ open: true })}>
@@ -478,10 +485,16 @@ export function RemixPicker() {
           <strong>
             {TWIST_EMOJI[t] ? `${TWIST_EMOJI[t]} ` : ''}
             {TWISTS[t].name}
+            {finished.has(t) && <span className="dz-picker-done" title="You finished this twist before"> ✓</span>}
           </strong>
           <small>{TWISTS[t].hint}</small>
         </button>
       ))}
+      {finished.size > 0 && (
+        <p className="dz-picker-count">
+          {finished.size} of {TWIST_IDS.length} twists done
+        </p>
+      )}
       <button className="g-btn sm ghost" onClick={() => useRemixPicker.setState({ open: false })}>
         Not now
       </button>

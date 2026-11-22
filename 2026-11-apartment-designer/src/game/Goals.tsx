@@ -14,6 +14,7 @@ import { useModal } from './useModal'
 import { openRemixPicker } from './Designs'
 import { TWISTS } from './goals'
 import { reduceMotion } from '../motion'
+import { listHomes } from '../storage'
 import type { Issue } from '../model/checks'
 import './feel.css'
 
@@ -129,8 +130,17 @@ function Stars({ n, filled = true }: { n: number; filled?: boolean }) {
 
 type Banner =
   | { key: number; kind: 'goal'; goal: Goal; more: number }
-  /** `line`: "Sample apartment · Move-in day · Cozy, 14★". `top`: at the top level, lead with a variation. */
-  | { key: number; kind: 'welcome'; goal?: Goal; home: string; away?: string; line: string; top: boolean }
+  /** `line`: "Sample apartment · Move-in day · Cozy" (the home's name only with more than one home; the stars sit in the badge). `top`: at the top level, lead with a variation. */
+  | { key: number; kind: 'welcome'; goal?: Goal; home: string; away?: string; line: string; stars: number; top: boolean }
+
+/** Homes saved on this device (the welcome card names the home only when there's more than one). */
+function homeCount() {
+  try {
+    return listHomes().length
+  } catch {
+    return 1
+  }
+}
 
 /** At the top level there's nothing left to climb in this design: a remix (with a twist) is the next game. */
 function tryVariation() {
@@ -255,7 +265,12 @@ export function VibeMeter() {
     }
     const toast = useStore.getState().toast
     const placedToast = !!toast && PLACED_TOAST.test(toast)
-    if (fresh.length) {
+    // First half of a two-step goal (a desk without its chair, a table without a chair).
+    const half = placedToast ? score.goals.find((g) => TWO_STEP.has(g.id) && !g.done && (g.progress ?? 0) > (before.progress.get(g.id) ?? 0) && g.item) : undefined
+    // A room's "feels just right" that tips over as a side effect is no headline when the piece
+    // just placed is half of something: the nudge to finish it ("Now add a chair") says more.
+    const incidental = fresh.length > 0 && fresh.every((g) => g.id.startsWith('density:'))
+    if (fresh.length && !(half && incidental)) {
       const best = [...fresh].sort((a, b) => b.stars - a.stars)[0]
       // One short line per action ("+1★ Every room has something"): the room shows in 3D and the
       // pill's pop has the total.
@@ -263,14 +278,11 @@ export function VibeMeter() {
       levelGoalLine = line
       if (placedToast) useStore.getState().notify(line)
       else setBanner({ key: Date.now(), kind: 'goal', goal: best, more: fresh.length - 1 })
-    } else if (placedToast) {
-      // First half of a two-step goal (a desk without its chair): say what finishes it.
-      const half = score.goals.find((g) => TWO_STEP.has(g.id) && !g.done && (g.progress ?? 0) > (before.progress.get(g.id) ?? 0) && g.item)
-      if (half) {
-        const what = toast!.replace(/^Placed (an? )?/, '').replace(/ in the .*$/, '').replace(/\.$/, '')
-        useStore.getState().notify(`${what.charAt(0).toUpperCase()}${what.slice(1)} placed. Now add a ${piece(half.item!)} beside it.`)
-        setPop({ key: Date.now(), delta: 0, half: true })
-      }
+    } else if (half) {
+      // Say what finishes it (the pill's pop still counts any incidental star).
+      const what = toast!.replace(/^Placed (an? )?/, '').replace(/ in the .*$/, '').replace(/\.$/, '')
+      useStore.getState().notify(`${what.charAt(0).toUpperCase()}${what.slice(1)} placed. Now add a ${piece(half.item!)} beside it.`)
+      setPop({ key: Date.now(), delta: score.stars - before.stars, half: true })
     }
   }, [score, designKey])
 
@@ -285,7 +297,8 @@ export function VibeMeter() {
       goal: nextRef.current,
       home: homeName,
       away: lastAwayMs ? ago(lastAwayMs) : undefined,
-      line: `${homeName} · ${designName} · ${sc.level.name}, ${sc.stars}★`,
+      line: `${homeCount() > 1 ? `${homeName} · ` : ''}${designName} · ${sc.level.name}`,
+      stars: sc.stars,
       // At the top level a remix comes before any bonus goal (only core goals beat it).
       top: sc.level.index >= LEVELS.length - 1 && (!nextRef.current || !!nextRef.current.bonus),
     })
@@ -349,7 +362,7 @@ export function VibeMeter() {
           {Array.from({ length: SPARKS }, (_, i) => (
             <i key={i} style={{ '--a': `${(360 / SPARKS) * i + (i % 2) * 12}deg`, '--d': `${i % 2 ? 34 : 48}px` } as CSSProperties} />
           ))}
-          <span className="goal-plus">{pop.half ? '½' : `+${pop.delta}`} ★</span>
+          <span className="goal-plus">{pop.half && !pop.delta ? '½' : `+${pop.delta}`} ★</span>
         </div>
       )}
       {loss && (
@@ -419,8 +432,9 @@ export function VibeMeter() {
             else if (banner.goal) useGame.getState().showGoal({ id: banner.goal.id })
           }}
         >
-          <span className="goal-banner-check">
+          <span className="goal-banner-check" aria-label={`${banner.stars} stars`}>
             <IconStar />
+            {banner.stars}
           </span>
           <span className="goal-banner-text">
             <small>
@@ -699,6 +713,9 @@ export function GoalsSheet() {
   const bonusLeft = bonus.filter((g) => !g.done).length
   const bonusStars = bonus.reduce((a, g) => a + (g.done ? g.stars : 0), 0)
   const bonusMax = bonus.reduce((a, g) => a + g.stars, 0)
+  // A remix's twist: named under the level, and pinned above the other goals.
+  const twist = score.goals.find((g) => g.id.startsWith('twist:'))
+  const twistInfo = twist ? TWISTS[twist.id.slice(6) as keyof typeof TWISTS] : undefined
   return (
     <div className="g-scrim" onClick={close}>
       <div ref={sheetRef} className="g-sheet goal-sheet" role="dialog" aria-modal="true" aria-label="Goals" onClick={(e) => e.stopPropagation()}>
@@ -721,6 +738,11 @@ export function GoalsSheet() {
               )}
               {score.best > score.level.index && ` · Best: ${LEVELS[score.best]}`}
             </div>
+            {twist && twistInfo && (
+              <div className={`goal-twist-pill${twist.done ? ' done' : ''}`}>
+                ↻ Twist: {twistInfo.title} · {twist.done ? 'done ✓' : `${Math.round((twist.progress ?? 0) * 100)}%`}
+              </div>
+            )}
             <div className="goal-meter-bar big">
               <i style={{ width: `${Math.round(fill * 100)}%` }} />
             </div>
@@ -735,8 +757,16 @@ export function GoalsSheet() {
             </div>
           </div>
         </div>
+        {twist && (
+          <section className="goal-group goal-cat-twist">
+            <h3>Today’s twist</h3>
+            <ul>
+              <GoalRow g={twist} focus={twist.id === focusId} />
+            </ul>
+          </section>
+        )}
         {CATEGORY_ORDER.map((cat) => {
-          const goals = score.goals.filter((g) => g.category === cat)
+          const goals = score.goals.filter((g) => g.category === cat && g !== twist)
           if (!goals.length) return null
           const locked = goals.filter((g) => g.locked && !g.done)
           const rows = locked.length > 1 ? [...goals.filter((g) => !locked.includes(g) && !g.done), lockedRow(locked), ...goals.filter((g) => g.done)] : goals

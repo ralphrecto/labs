@@ -3,7 +3,7 @@ import { analyze } from '../../analysis'
 import { catalogEntry, itemFromCatalog } from '../../model/catalog'
 import { emptyDoc, rectRoom, sampleDoc } from '../../model/sample'
 import type { Doc, Item, Placement, TwistId } from '../../model/types'
-import { ANCHORS, applicableTwists, remixedLayout, sameArrangement } from '../goals'
+import { ANCHORS, applicableTwists, finishedTwists, pickTwists, remixedLayout, sameArrangement, talkCornerSpot } from '../goals'
 import { findDrop } from '../../model/placement'
 import { unpackDoc } from '../../store'
 import { bankableLevel, bestLevelKey, DREAM_BONUS_STARS, inferEntrance, LEVEL_FRACTIONS, LEVELS, levelThresholds, nextGoal, scoreHome, SNAG_LEVEL_CAP, WARNING_LEVEL_CAP, withBestLevel, type Goal } from '../goals'
@@ -868,4 +868,81 @@ describe('remix this home (round 8)', () => {
     expect(twistOf(d).done).toBe(false)
     expect(score(d).level.index).toBeLessThanOrEqual(WARNING_LEVEL_CAP)
   }, 60000)
+})
+
+describe('remix twists lead the day (round 10)', () => {
+  let k = 0
+  const ids = () => `tw${++k}`
+  const cat = (d: Doc, p: Placement) => d.items.find((i) => i.id === p.itemId)!.category
+
+  /** Follows the Next chip; a twist goal that is a move is done as the player would (the armchair to the talk spot). */
+  function play(d: Doc, tag: string, log: string[]) {
+    const fits = (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
+    for (let i = 0; i < 40; i++) {
+      const s = score(d)
+      if (s.level.index === LEVELS.length - 1) return i
+      const next = nextGoal(s, fits)
+      log.push(`${i} ★${s.stars} ${next?.id}:${next?.item ?? '(move)'}`)
+      if (next?.id === 'unpack' && next.near) {
+        Object.assign(d, unpackDoc(d, next.near)!.doc)
+        continue
+      }
+      if (next?.id === 'twist:talk-corner' && !next.item) {
+        const spot = talkCornerSpot(d, layoutOf(d))!
+        const chair = layoutOf(d).placements.find((p) => p.id === next.near)!
+        expect(cat(d, chair)).toBe('armchair')
+        expect(next.hint).toMatch(/^(Turn|Move) the armchair/)
+        Object.assign(chair, spot)
+        continue
+      }
+      if (!next?.item || !next.tab) return -1
+      const item = itemFromCatalog(catalogEntry(next.item), `${tag}n${i}`)
+      const r = findDrop(d, layoutOf(d), item, { nextTo: next.near })
+      if (!r.ok) return -1
+      d.items.push(item)
+      layoutOf(d).placements.push({ id: `${tag}p${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation, on: r.spot.on })
+    }
+    return -1
+  }
+
+  it('a talk-corner remix of the sample leads with its twist and still reaches Dream home', () => {
+    const d = sampleDoc()
+    const log: string[] = []
+    expect(play(d, 'o', log), log.join('\n')).toBeGreaterThan(0)
+    expect(applicableTwists(d)).toContain('talk-corner')
+    const l = remixedLayout(d, d.activeLayoutId, 'talk-corner', ids)!
+    d.layouts.push(l)
+    d.activeLayoutId = l.id
+    const rx: string[] = []
+    const dream = play(d, 'r', rx)
+    expect(dream, rx.join('\n')).toBeGreaterThan(0)
+    // The twist comes first after unpacking, not at the end of a replay.
+    const first = rx.findIndex((x) => x.includes('twist:'))
+    expect(first, rx.join('\n')).toBeGreaterThanOrEqual(0)
+    expect(first, rx.join('\n')).toBeLessThanOrEqual(2)
+    expect(score(d).goals.find((g) => g.id === 'twist:talk-corner')!.done).toBe(true)
+    expect(score(d).goals.find((g) => g.id === 'nook')!.done).toBe(true)
+  }, 60000)
+
+  it('Dream home seats two at the dining table', () => {
+    const d = sampleDoc()
+    const log: string[] = []
+    play(d, 'e', log)
+    const g = score(d).goals.find((x) => x.id === 'eat-two')!
+    expect(g.done, log.join('\n')).toBe(true)
+    expect(log.some((x) => x.includes('eat-two:dining-chair')), log.join('\n')).toBe(true)
+  }, 60000)
+
+  it('offers twists not yet finished first, turned by the day, never one being played', () => {
+    const d = sampleDoc()
+    const all: TwistId[] = ['talk-corner', 'open-floor', 'window-seat', 'fresh-spots', 'bed-swap', 'less-is-more']
+    expect(pickTwists(d, all, 0)).toEqual(['talk-corner', 'open-floor', 'window-seat'])
+    expect(pickTwists(d, all, 1)).toEqual(['open-floor', 'window-seat', 'fresh-spots'])
+    const done = { ...remixedLayout(d, d.activeLayoutId, 'open-floor', ids)!, remix: { from: 'x', twist: 'open-floor' as TwistId, anchors: 1, dreamAt: 1 } }
+    const playing = remixedLayout(d, d.activeLayoutId, 'window-seat', ids)!
+    d.layouts.push(done, playing)
+    expect(finishedTwists(d)).toEqual(new Set(['open-floor']))
+    expect(pickTwists(d, all, 0)).toEqual(['talk-corner', 'fresh-spots', 'bed-swap'])
+    expect(pickTwists(d, all, 0, 6)).toEqual(['talk-corner', 'fresh-spots', 'bed-swap', 'less-is-more', 'open-floor'])
+  })
 })

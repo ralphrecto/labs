@@ -479,7 +479,8 @@ export const useStore = create<State>((set, get) => ({
     const copy = remixedLayout(get().doc, sourceId, twist, uid)
     if (!copy) return
     switchDesign((d) => ({ ...d, layouts: [...d.layouts, copy], activeLayoutId: copy.id }))
-    get().notify(`${copy.name}: start from your big pieces. Twist: ${TWISTS[twist].title.toLowerCase()}.`)
+    const n = copy.placements.length
+    get().notify(`${TWISTS[twist].name}! Kept your ${n === 1 ? 'big piece' : `${n} big pieces`}. The rest is waiting in Mine.`)
   },
   markRemixDream: (layoutId) =>
     set((s) => {

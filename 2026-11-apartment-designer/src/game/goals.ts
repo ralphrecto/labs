@@ -278,6 +278,13 @@ export function nextGoal(score: HomeScore, fits?: (category: string) => boolean)
     const g = open.find((x) => x.id === id && x.snag)
     if (g) return g
   }
+  // A remix's twist is the day's headline: once the big pieces are in (somewhere to sleep and sit),
+  // Next leads with it rather than replaying the original step for step. A twist done by moving a
+  // piece points at that piece; one that needs a piece suggests it when it fits.
+  const twist = open.find((g) => g.id.startsWith('twist:'))
+  if (twist && !open.some((g) => !g.bonus && (g.id === 'sleep' || g.id === 'sit'))) {
+    if (twist.item && twist.tab ? !fits || fits(twist.item) : !!twist.near) return twist
+  }
   const pool = score.livingFirst ? [...open.filter((g) => LIVING_GOAL.test(g.id)), ...open.filter((g) => !LIVING_GOAL.test(g.id))] : open
   // score.goals is already ranked (closest to done, basics first). A goal a piece of furniture
   // finishes is the easiest next step, so the first of those wins; then the first core goal.
@@ -449,6 +456,31 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
     progress: tables.length ? 0.5 : chairs.length ? 0.25 : 0,
     stars: 2,
     category: 'basics',
+  })
+  // Dinner for two: two chairs (or a bench) pulled up to the same table. Later than the first
+  // chair (a comfort goal), so the table works first; Dream home wants both seats.
+  const seatsAt = (t: P) => chairs.filter((c) => polygonGap(t.body, c.body) <= RULES.chairToTable).reduce((a, c) => a + (c.category === 'bench' ? 2 : 1), 0)
+  const mostSeats = tables.reduce((m, t) => Math.max(m, seatsAt(t)), 0)
+  const seatTable = tables.slice().sort((a, b) => seatsAt(b) - seatsAt(a))[0]
+  if (canEat) add({
+    id: 'eat-two',
+    title: 'Seats for two at the table',
+    hint: !tables.length
+      ? 'Once the dining table is in, pull up two chairs.'
+      : mostSeats >= 2
+        ? 'Dinner for two.'
+        : stuckChairs
+          ? 'Move the dining table off the wall so two chairs fit.'
+          : mostSeats === 1
+            ? 'Pull a second chair up to the table, so someone can join you.'
+            : 'Pull two chairs up to the dining table.',
+    tab: servedTable ? 'dining' : undefined,
+    item: servedTable ? 'dining-chair' : undefined,
+    near: seatTable?.id,
+    done: mostSeats >= 2,
+    progress: mostSeats >= 2 ? 1 : servedTable ? 0.5 : 0,
+    stars: 1,
+    category: 'comfort',
   })
   add({
     id: 'storage',
@@ -885,7 +917,9 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis): HomeSco
   const armchairs = of('armchair')
   const nookFor = ofAny('armchair').length ? nookTarget(doc, layout) : undefined
   // Only a real lamp makes it a reading corner; a side table or bookshelf beside the chair is a start.
-  const nook = armchairs.some((a) => of('floor-lamp', 'table-lamp').some((x) => polygonGap(a.body, x.body) <= NEXT_TO_REACH))
+  // A seat facing the armchair across a conversation corner shares its light: a lamp beside either counts.
+  const nookSeats = [...armchairs, ...of('sofa').filter((s) => armchairs.some((a) => talkPair(a, s).ok))]
+  const nook = nookSeats.some((a) => of('floor-lamp', 'table-lamp').some((x) => polygonGap(a.body, x.body) <= NEXT_TO_REACH))
   // A side table already beside the reading chair: the lamp goes on it.
   const nookTable = armchairs.flatMap((a) => of('side-table').filter((x) => polygonGap(a.body, x.body) <= NEXT_TO_REACH))[0]
   const nookStart = armchairs.some((a) => of('side-table', 'bookshelf').some((x) => polygonGap(a.body, x.body) <= NEXT_TO_REACH))
@@ -1075,14 +1109,16 @@ export const ANCHORS = new Set(['bed', 'sofa', 'tv-stand', 'wardrobe', 'dining-t
 
 /** The twist challenges, in the order the picker offers them. */
 export const TWISTS: Record<TwistId, { name: string; title: string; hint: string }> = {
-  'talk-corner': { name: 'Talk corner', title: 'Conversation corner', hint: 'Turn two seats (a sofa and an armchair) to face each other, less than 2.4 m apart.' },
-  'open-floor': { name: 'Open floor', title: 'Open floor', hint: 'Keep the middle of the living room clear (1 m around its centre), with at least 4 pieces in the room.' },
+  'talk-corner': { name: 'Talk corner', title: 'Conversation corner', hint: 'Turn the sofa and an armchair to face each other, under 3 m apart.' },
+  'open-floor': { name: 'Open floor', title: 'Open floor', hint: 'Keep the living room’s middle clear (4+ pieces in the room).' },
   'window-seat': { name: 'Window seat', title: 'Sofa faces the window', hint: 'Turn the sofa to look out of a window in its room.' },
-  'fresh-spots': { name: 'Fresh start', title: 'Everything in a new spot', hint: 'Move each of the big pieces at least 80 cm from where it stood in the original.' },
-  'bed-swap': { name: 'Bed swap', title: 'Bed on a different wall', hint: 'Put the bed’s head against another wall than in the original.' },
+  'fresh-spots': { name: 'Fresh start', title: 'Everything in a new spot', hint: 'Move each big piece at least 80 cm from its old spot.' },
+  'bed-swap': { name: 'Bed swap', title: 'Bed on a different wall', hint: 'Put the bed’s head against a different wall.' },
   'less-is-more': { name: 'Less is more', title: 'Dream home in 10 pieces', hint: 'Reach Dream home with 10 pieces of furniture or fewer.' },
 }
-const TWIST_IDS = Object.keys(TWISTS) as TwistId[]
+/** Two seats this close (centre to centre, m) and facing each other make a conversation corner. */
+export const TALK_DIST = 3.0
+export const TWIST_IDS = Object.keys(TWISTS) as TwistId[]
 
 /**
  * Twists the plan can take: a window-seat needs a window in a room with a sofa (or a living room),
@@ -1094,10 +1130,78 @@ export function applicableTwists(doc: Doc, fits?: (category: string) => boolean)
   const sofaIn = (r: Room) => (layout?.placements ?? []).some((p) => items.get(p.itemId)?.category === 'sofa' && pointInPolygon(v(p.x, p.y), r.polygon))
   return TWIST_IDS.filter((t) => {
     if (t === 'window-seat') return doc.rooms.some((r) => r.openings.some((o) => o.kind === 'window') && (sofaIn(r) || LIVING.test(r.name)))
-    if (t === 'talk-corner') return !fits || fits('armchair')
+    if (t === 'talk-corner') return talkCornerFits(doc, layout) ?? (!fits || fits('armchair'))
     if (t === 'bed-swap') return doc.rooms.some((r) => BEDROOM.test(r.name) && !UTILITY_ROOM.test(r.name))
     return true
   }).filter((t) => !(layout && ALREADY_MET_CHECK.has(t) && twistMetBy(doc, layout, t)))
+}
+
+/**
+ * Whether a remix of `layout` has room for a conversation corner: an armchair facing a sofa
+ * (turned toward it, under TALK_DIST away, clear of the TV's sightline) on clear floor among the
+ * big pieces a remix keeps (a lamp beside either seat then makes the reading corner). Null when there's no sofa to try.
+ */
+function talkCornerFits(doc: Doc, layout: Layout | undefined): boolean | null {
+  const spot = talkCornerSpot(doc, layout)
+  return spot === undefined ? null : !!spot
+}
+
+/** The spot talkCornerFits found for the armchair (null: none; undefined: no sofa to try). */
+export function talkCornerSpot(doc: Doc, layout: Layout | undefined): { x: number; y: number; rotation: number } | null | undefined {
+  if (!layout) return undefined
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const kept = layout.placements.flatMap((p) => {
+    const it = items.get(p.itemId)
+    return it && ANCHORS.has(it.category) ? [{ p, it, body: orientedRect(v(p.x, p.y), it.width / 2, it.depth / 2, p.rotation) }] : []
+  })
+  const sofas = kept.filter((k) => k.it.category === 'sofa')
+  if (!sofas.length) return undefined
+  const chair = catalogEntry('armchair')
+  const tv = kept.some((k) => k.it.category === 'tv-stand')
+  for (const s of sofas) {
+    const sc = v(s.p.x, s.p.y)
+    // With a TV, the floor in front of the sofa is the view: the chair goes to one side, angled in.
+    const view = tv ? orientedRect(sc, s.it.width / 2, 2, s.p.rotation, v(0, s.it.depth / 2 + 2)) : null
+    const side0 = s.it.width / 2 + chair.width / 2 + 0.05
+    const offs = tv ? [side0, side0 + 0.3] : [0, 0.7, side0]
+    for (const d of [1.4, 1.8, 2.2, 2.6])
+      for (const o of offs)
+        for (const side of o ? [1, -1] : [1]) {
+          const c = add2(sc, rot(v(side * o, d), s.p.rotation))
+          if (dist(c, sc) > TALK_DIST - 0.1) continue
+          const dir = sub(sc, c)
+          const at = Math.atan2(-dir.x, dir.y)
+          const straight = s.p.rotation + Math.PI
+          // Turned toward the sofa's middle, straight across from it, or in between.
+          for (const r of [at, straight, (at + straight + (Math.abs(at - straight) > Math.PI ? 2 * Math.PI : 0)) / 2]) {
+            const rotation = normalizeAngle(r)
+            const body = orientedRect(c, chair.width / 2, chair.depth / 2, rotation)
+            if (dot(rot(v(0, 1), rotation), rot(v(0, 1), s.p.rotation)) >= -0.55 || dot(rot(v(0, 1), rotation), dir) <= 0) continue
+            const room = doc.rooms.find((rm) => pointInPolygon(c, rm.polygon))
+            if (!room || !polygonInsideRoom(body, room.polygon) || kept.some((k) => convexOverlap(body, k.body))) continue
+            if (view && convexOverlap(body, view)) continue
+            return { x: c.x, y: c.y, rotation }
+          }
+        }
+  }
+  return null
+}
+
+/** Twists finished in this home: some remix with that twist has reached Dream home. */
+export function finishedTwists(doc: Doc): Set<TwistId> {
+  return new Set(doc.layouts.flatMap((l) => (l.remix?.dreamAt ? [l.remix.twist] : [])))
+}
+
+/**
+ * The (up to) three twists the picker offers today: never one a remix is still playing, twists no
+ * design has finished first, each group turned round by the day so the picker changes day to day.
+ */
+export function pickTwists(doc: Doc, applicable: TwistId[], day = Math.floor(Date.now() / 864e5), n = 3): TwistId[] {
+  const playing = new Set(doc.layouts.flatMap((l) => (l.remix && !l.remix.dreamAt ? [l.remix.twist] : [])))
+  const done = finishedTwists(doc)
+  const turn = (xs: TwistId[]) => (xs.length ? xs.map((_, i) => xs[(i + day) % xs.length]) : xs)
+  const offer = applicable.filter((t) => !playing.has(t))
+  return [...turn(offer.filter((t) => !done.has(t))), ...turn(offer.filter((t) => done.has(t)))].slice(0, n)
 }
 
 /** Twists a design can already satisfy as it stands: no challenge if the source already does it. */
@@ -1148,6 +1252,17 @@ function nearestWall(doc: Doc, q: Vec2): string {
     if (c < d) [best, d] = [i, c]
   })
   return `${room.id}:${best}`
+}
+
+/** Two seats facing each other (not back to back), close enough to talk. */
+function talkPair(a: P, b: P): { ok: boolean; progress: number; facing: boolean; far: boolean } {
+  const d = dist(a.center, b.center)
+  const facingDot = dot(front(a), front(b))
+  const toward = dot(front(a), sub(b.center, a.center)) > 0
+  const facing = facingDot < -0.5 && toward
+  const far = d > TALK_DIST
+  const progress = 0.3 + 0.7 * clamp01((1 - facingDot) / 1.5) * (toward ? 1 : 0.5) * clamp01(TALK_DIST / Math.max(d, 0.01))
+  return { ok: facing && !far, progress, facing, far }
 }
 
 /** The twist goal of a remix, from what scoreHome already built. */
@@ -1208,21 +1323,29 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
   } else if (t === 'talk-corner') {
     const seats = of('sofa', 'armchair')
     progress = Math.min(seats.length, 1) * 0.3
+    /** The pair closest to talking, and what's still wrong with it. */
+    let bestPair: { a: P; b: P; facing: boolean; far: boolean } | undefined
+    let bestP = -1
     for (let i = 0; i < seats.length; i++)
       for (let j = i + 1; j < seats.length; j++) {
         const [a, b] = [seats[i], seats[j]]
-        const d = dist(a.center, b.center)
-        const facing = dot(front(a), front(b))
-        // Facing each other, not back to back: a looks toward b.
-        const toward = dot(front(a), sub(b.center, a.center)) > 0
-        if (facing < -0.5 && toward && d <= 2.4) done = true
-        progress = Math.max(progress, 0.3 + 0.7 * clamp01((1 - facing) / 1.5) * (toward ? 1 : 0.5) * clamp01(2.4 / Math.max(d, 0.01)))
+        const pr = talkPair(a, b)
+        if (pr.ok) done = true
+        if (pr.progress > bestP) [bestP, bestPair] = [pr.progress, { a, b, facing: pr.facing, far: pr.far }]
+        progress = Math.max(progress, pr.progress)
       }
-    // Point at the armchair to turn (or the sofa), or ask for an armchair when there's only one seat.
-    near = (of('armchair')[0] ?? seats[0])?.id
+    // Point at the armchair to turn or move (or the sofa), or ask for an armchair when there's only one seat.
+    const pairChair = bestPair && ([bestPair.a, bestPair.b].find((x) => x.category === 'armchair') ?? bestPair.b)
+    near = (pairChair ?? of('armchair')[0] ?? seats[0])?.id
     if (!done && seats.length < 2) {
       item = 'armchair'
-      hint = 'Add an armchair, then turn it and the sofa to face each other, less than 2.4 m apart.'
+      hint = `Add an armchair, then turn it and the sofa to face each other, under ${TALK_DIST} m apart.`
+    } else if (!done && bestPair && pairChair) {
+      const other = pairChair === bestPair.a ? bestPair.b : bestPair.a
+      const what = pairChair.name.toLowerCase()
+      hint = !bestPair.facing
+        ? `Turn the ${what} to face the ${other.name.toLowerCase()}${bestPair.far ? `, then bring it under ${TALK_DIST} m away` : ''}.`
+        : `Move the ${what} closer to the ${other.name.toLowerCase()}, under ${TALK_DIST} m away.`
     }
   } else if (t === 'open-floor') {
     const room = rooms.find((r) => LIVING.test(r.name)) ?? of('sofa')[0]?.room ?? rooms[0]

@@ -141,3 +141,8 @@
 .goal-levelup-mini .goal-banner-check svg { fill: #fff6dc; stroke: #b07a12; stroke-width: 1.6; }
 .goal-levelup-mini .goal-banner-text small { color: #c98700; }
 .goal-levelup-mini .goal-banner-text em { font-style: normal; font-size: 12px; font-weight: 800; color: var(--g-ink-2); }
+
+/* Goals sheet: a remix's twist, under the level and pinned on top. */
+.goal-twist-pill { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 999px; background: var(--g-sun); color: #6b4300; font-size: 12px; font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-twist-pill.done { background: #dcefd9; color: #2f6b2a; }
+.goal-cat-twist h3 { color: #c98700; }
