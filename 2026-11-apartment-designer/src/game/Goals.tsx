@@ -7,7 +7,7 @@ import { findDrop } from '../model/placement'
 import type { Doc } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { lastAwayMs, useGame } from './gameStore'
-import { bankableLevel, bestLevelKey, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, packedBoxIds, scoreHome, type Goal, type HomeScore } from './goals'
+import { bankableLevel, bestLevelKey, levelBlocker, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, packedBoxIds, scoreHome, type Goal, type HomeScore } from './goals'
 import { unpackAndCelebrate } from './unpack'
 import { IconCheck, IconClose, IconSparkle, IconStar } from './icons'
 import { useModal } from './useModal'
@@ -222,6 +222,12 @@ export function VibeMeter() {
   }, [score.level.index, designKey, shownLevel])
   const levelTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const pendingLevel = useRef<{ index: number; name: string } | null>(null)
+  /** The highest level celebrated (or banked before this visit) per design. Kept apart from the
+   * banked best, which a passive effect raises as soon as a level is reached: a level-up that got
+   * cancelled (a loss, a burst of goals) is still celebrated once the level is back. */
+  const celebrated = useRef<Record<string, number>>({})
+  const latestLevel = useRef(score.level.index)
+  latestLevel.current = bankableLevel(score)
   useEffect(() => () => clearTimeout(levelTimer.current), [])
 
   // Layout effect, so a "Placed a sofa" toast that a goal or level-up replaces never paints.
@@ -233,6 +239,7 @@ export function VibeMeter() {
     prev.current = { key: designKey, stars: score.stars, level: score.level.index, done, progress, visit: visitGoal?.id }
     // First render, or another design or home: no fanfare.
     if (!before || before.key !== designKey) {
+      celebrated.current[designKey] = Math.max(celebrated.current[designKey] ?? 0, useGame.getState().bestLevel[designKey] ?? 0, bankableLevel(score))
       clearTimeout(levelTimer.current)
       pendingLevel.current = null
       return
@@ -250,6 +257,25 @@ export function VibeMeter() {
       const behind = score.goals.filter(asks)
       if (fresh.some(asks) || (behind.length > 0 && behind.every((g) => g.done))) useGame.getState().setBuyHint(null)
     }
+    // A level never celebrated in this design, on a layout without errors, is celebrated, even when
+    // it comes with a burst of goals (a template, a paste) that gets no banner of its own. The
+    // level-up waits for a pause in placing (each change pushes it back), so the drop shows first.
+    const seen = celebrated.current[designKey] ?? 0
+    const leveled = score.level.index > before.level && bankableLevel(score) > seen
+    if (leveled) pendingLevel.current = { index: score.level.index, name: score.level.name }
+    if (pendingLevel.current) {
+      clearTimeout(levelTimer.current)
+      levelTimer.current = setTimeout(() => {
+        const lv = pendingLevel.current
+        pendingLevel.current = null
+        // Undone (or a snag appeared) while it waited: not yet; it's celebrated when it's back.
+        if (!lv || latestLevel.current < lv.index) return
+        celebrated.current[designKey] = Math.max(celebrated.current[designKey] ?? 0, lv.index)
+        // The level-up carries the goal line; the toast steps aside for it.
+        useStore.setState({ toast: null })
+        useGame.getState().celebrateLevel(lv.index, lv.name)
+      }, LEVEL_UP_QUIET_MS)
+    }
     if (fresh.length > 4) return
     // A new visitor (a new day) changes the stars on offer, not the player's work: no cheer, no loss.
     if (before.visit !== visitGoal?.id) return
@@ -266,24 +292,6 @@ export function VibeMeter() {
     }
     if (score.stars > before.stars) setLoss(null)
     if (score.stars > before.stars) setPop({ key: Date.now(), delta: score.stars - before.stars })
-    // Only a level never reached before in this design, on a layout without errors, is celebrated
-    // (the best is banked in a passive effect, after this one, so the store still holds the old best).
-    const banked = useGame.getState().bestLevel[designKey] ?? 0
-    const leveled = score.level.index > before.level && bankableLevel(score) > banked
-    // The level-up waits for a pause in placing (each change pushes it back), so the drop shows
-    // first and a burst of placements isn't covered up halfway.
-    if (leveled) pendingLevel.current = { index: score.level.index, name: score.level.name }
-    if (pendingLevel.current) {
-      clearTimeout(levelTimer.current)
-      levelTimer.current = setTimeout(() => {
-        const lv = pendingLevel.current
-        pendingLevel.current = null
-        if (!lv) return
-        // The level-up carries the goal line; the toast steps aside for it.
-        useStore.setState({ toast: null })
-        useGame.getState().celebrateLevel(lv.index, lv.name)
-      }, LEVEL_UP_QUIET_MS)
-    }
     const toast = useStore.getState().toast
     const placedToast = !!toast && PLACED_TOAST.test(toast)
     // First half of a two-step goal (a desk without its chair, a table without a chair).
@@ -806,8 +814,14 @@ export function GoalsSheet() {
                   : 'Top level reached. What a home!'
                 : score.level.toNext > 0
                   ? `${score.level.toNext} more ★ to ${score.level.next}`
-                  : `Fix the snag to reach ${score.level.next}`}
+                  : levelBlocker(score)}
             </div>
+            {!score.level.next && (
+              // At Dream home the chip may be today's visitor: the remix stays one tap away here.
+              <button type="button" className="goal-hero-remix" onClick={tryVariation}>
+                Remix this home
+              </button>
+            )}
           </div>
         </div>
         {twist && (

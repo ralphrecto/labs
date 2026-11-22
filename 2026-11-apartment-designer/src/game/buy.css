@@ -286,6 +286,14 @@
     top: 0; bottom: auto; left: calc(var(--desk-side-w) + 32px - 100vw); transform: none; align-items: flex-start;
     max-width: calc(100vw - var(--desk-side-w) - 64px);
   }
+  /* Cards are narrow in the side drawer: the size chips wrap onto a second line, never "Larg". */
+  .hud-drawer-slot .buy-presets { flex-wrap: wrap; overflow: visible; mask-image: none; -webkit-mask-image: none; }
+  .hud-drawer-slot .buy-preset { min-height: 26px; padding: 3px 6px; }
+  /* "Pick one" floats at the bottom left of the stage (above the bar would sit under the top HUD). */
+  .hud-drawer-slot .buy-drawer > .feel-pick {
+    top: auto; bottom: 0; left: calc(var(--desk-side-w) + 32px - 100vw);
+    max-width: min(420px, calc(100vw - var(--desk-side-w) - 64px));
+  }
   .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-cam { right: calc(16px + var(--desk-side-w) + 12px); }
   .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-toast .toast { left: calc(50% - var(--desk-side-w) / 2); }
 }

@@ -347,6 +347,19 @@ function makeRoomGoal(g: Goal): Goal {
   }
 }
 
+/**
+ * What stands between the stars and the next level when the stars are already there (toNext is
+ * 0): a snag, an open core goal ("Finish “A place to eat”"), or the extras Dream home asks for.
+ */
+export function levelBlocker(score: HomeScore): string {
+  const next = score.level.next ?? ''
+  const open = score.goals.filter((g) => !g.done && !g.visit)
+  if (score.errors > 0 || open.some((g) => g.snag)) return `Fix the snag to reach ${next}`
+  const core = open.find((g) => !g.bonus)
+  if (core) return `Finish “${core.title}” to reach ${next}`
+  return `Finish a bonus goal to reach ${next}`
+}
+
 /** Where the best level is remembered: per design, so designs of one home can be compared. */
 export const bestLevelKey = (doc: Doc) => `${doc.apartment.id}:${doc.activeLayoutId}`
 
@@ -1097,12 +1110,27 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
 
   // What to move when a core goal's piece has nowhere to go: the biggest piece in the room it
   // belongs in (the bedroom for a bed), pieces that could live in another room first.
+  // With no room to aim at (a desk can go anywhere), never ask to move a bedroom-only piece (the
+  // bed) out of its bedroom: a spare piece (a second armchair) goes first, then a single movable
+  // living piece (the dining table), the big anchors and bedroom pieces last.
+  const kinds = new Map<string, number>()
+  for (const x of solidPieces) kinds.set(x.category, (kinds.get(x.category) ?? 0) + 1)
+  const moveCost = (x: P, room: unknown) =>
+    room
+      ? Number(BEDROOM_ONLY.has(x.category))
+      : BEDROOM_ONLY.has(x.category)
+        ? 3
+        : ANCHORS.has(x.category) && x.category !== 'dining-table'
+          ? 2
+          : (kinds.get(x.category) ?? 0) > 1
+            ? 0
+            : 1
   for (const g of goals) {
     if (g.bonus || !g.item || !g.tab) continue
     const room = g.placeIn ? rooms.find((r) => r.id === g.placeIn) : BEDROOM_ONLY.has(g.item) ? bedrooms[0] : undefined
     const big = solidPieces
       .filter((x) => !x.host && x.category !== g.item && (!room || x.room?.id === room.id))
-      .sort((a, b) => Number(!!room && BEDROOM_ONLY.has(a.category)) - Number(!!room && BEDROOM_ONLY.has(b.category)) || polygonArea(b.body) - polygonArea(a.body))[0]
+      .sort((a, b) => moveCost(a, room) - moveCost(b, room) || polygonArea(b.body) - polygonArea(a.body))[0]
     if (big) g.makeRoom = { id: big.id, name: big.name.toLowerCase(), room: big.room?.name }
   }
 
@@ -1157,7 +1185,7 @@ export const ANCHORS = new Set(['bed', 'sofa', 'tv-stand', 'wardrobe', 'dining-t
 
 /** The twist challenges, in the order the picker offers them. */
 export const TWISTS: Record<TwistId, { name: string; title: string; hint: string }> = {
-  'talk-corner': { name: 'Talk corner', title: 'Conversation corner', hint: 'Turn the sofa and an armchair to face each other, under 3 m apart.' },
+  'talk-corner': { name: 'Talk corner', title: 'Talk corner', hint: 'Turn the sofa and an armchair to face each other, under 3 m apart.' },
   'open-floor': { name: 'Open floor', title: 'Open floor', hint: 'Keep the living room’s middle clear (4+ pieces in the room).' },
   'window-seat': { name: 'Window seat', title: 'Sofa faces the window', hint: 'Turn the sofa to look out of a window in its room.' },
   'fresh-spots': { name: 'Fresh start', title: 'Everything in a new spot', hint: 'Move each big piece at least 80 cm from its old spot.' },

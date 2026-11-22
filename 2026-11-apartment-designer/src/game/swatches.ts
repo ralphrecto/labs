@@ -61,6 +61,12 @@ export const PICKS: Record<string, Pick[]> = {
     { id: 'dining-chair', label: 'Chair', color: walnut },
     { id: 'dining-armchair', label: 'Carver', color: linen },
   ],
+  // One task chair in a few colours: the desk's chair gets pick cards like the dining chairs.
+  'office-chair': [
+    { id: 'office-chair', label: 'Black', color: charcoal },
+    { id: 'office-chair', label: 'Linen', color: linen },
+    { id: 'office-chair', label: 'Sage', color: sage },
+  ],
   nightstand: [
     { id: 'nightstand', label: 'Standard', color: walnut },
     { id: 'nightstand-sm', label: 'Slim', color: linen, look: { scale: 0.85 } },

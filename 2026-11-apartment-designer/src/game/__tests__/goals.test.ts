@@ -6,7 +6,7 @@ import type { Doc, Item, Placement, TwistId } from '../../model/types'
 import { ANCHORS, applicableTwists, finishedTwists, pickTwists, remixedLayout, sameArrangement, talkCornerSpot } from '../goals'
 import { findDrop } from '../../model/placement'
 import { unpackDoc } from '../../store'
-import { bankableLevel, bestLevelKey, DREAM_BONUS_STARS, inferEntrance, LEVEL_FRACTIONS, LEVELS, levelThresholds, nextGoal, scoreHome, SNAG_LEVEL_CAP, WARNING_LEVEL_CAP, withBestLevel, type Goal } from '../goals'
+import { bankableLevel, bestLevelKey, DREAM_BONUS_STARS, levelBlocker, inferEntrance, LEVEL_FRACTIONS, LEVELS, levelThresholds, nextGoal, scoreHome, SNAG_LEVEL_CAP, WARNING_LEVEL_CAP, withBestLevel, type Goal } from '../goals'
 
 const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
 const score = (d: Doc) => scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)))
@@ -944,5 +944,40 @@ describe('remix twists lead the day (round 10)', () => {
     expect(finishedTwists(d)).toEqual(new Set(['open-floor']))
     expect(pickTwists(d, all, 0)).toEqual(['talk-corner', 'fresh-spots', 'bed-swap'])
     expect(pickTwists(d, all, 0, 6)).toEqual(['talk-corner', 'fresh-spots', 'bed-swap', 'less-is-more', 'open-floor'])
+  })
+})
+
+describe('round 11: dead ends and blockers', () => {
+  it('"Make room for a desk" never asks to move the bed out of the bedroom', () => {
+    // A queen bed alone in the bedroom, a crowded living room with a dining table and two armchairs.
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Bedroom', 0, 0, 3.4, 3.4))
+    d.rooms.push(rectRoom('Living room', 3.4, 0, 4, 3.4))
+    place(d, 'bed', 1.7, 1.1, 0, { width: 1.6, depth: 2.0 })
+    place(d, 'sofa', 5.4, 0.5)
+    place(d, 'dining-table', 5.4, 2.4, 0, { width: 1.2, depth: 0.8 })
+    place(d, 'armchair', 4.0, 1.6, Math.PI / 2)
+    place(d, 'armchair', 6.9, 1.6, -Math.PI / 2)
+    const work = score(d).goals.find((g) => g.id === 'work')!
+    expect(work.item).toBe('desk')
+    const s = score(d)
+    const bed = d.items.find((i) => i.category === 'bed')!
+    const bedP = layoutOf(d).placements.find((p) => p.itemId === bed.id)!
+    expect(work.makeRoom).toBeDefined()
+    expect(work.makeRoom!.id).not.toBe(bedP.id)
+    // A spare armchair goes first: there are two of them.
+    const moved = layoutOf(d).placements.find((p) => p.id === work.makeRoom!.id)!
+    expect(d.items.find((i) => i.id === moved.itemId)!.category).toBe('armchair')
+    // Next's "Make room" card names that piece, not the bed.
+    const g = nextGoal(s, (c) => c !== 'desk')
+    if (g?.title.startsWith('Make room')) expect(g.hint).not.toMatch(/bed/)
+  })
+
+  it('names the open core goal (not "the snag") when the stars are there but a goal is open', () => {
+    const fake = (goals: Partial<Goal>[], errors = 0) =>
+      ({ errors, level: { index: 4, name: 'Designer home', next: 'Dream home', toNext: 0 }, goals: goals as Goal[] }) as unknown as Parameters<typeof levelBlocker>[0]
+    expect(levelBlocker(fake([{ id: 'sit', title: 'Seats for four', done: false, bonus: false, stars: 2 } as Goal]))).toBe('Finish \u201cSeats for four\u201d to reach Dream home')
+    expect(levelBlocker(fake([{ id: 'overlap', title: 'Nothing overlaps', done: false, snag: true, stars: 2 } as Goal]))).toBe('Fix the snag to reach Dream home')
+    expect(levelBlocker(fake([], 1))).toBe('Fix the snag to reach Dream home')
   })
 })

@@ -671,7 +671,7 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
   if (!cands.length && WALL_ONLY.has(cat))
     return {
       ok: false,
-      reason: `No free wall for ${/^[aeiou]/i.test(item.name) ? 'an' : 'a'} ${item.name.toLowerCase()} (${fmtSize(item, doc.apartment.units)}): it goes with its back to a wall and space in front. Clear a stretch of wall, or drag it in yourself.`,
+      reason: `No free wall for ${/^[aeiou]/i.test(item.name) ? 'an' : 'a'} ${item.name.toLowerCase()}. Clear some wall, or drag it in.`,
     }
   if (!cands.length)
     return {

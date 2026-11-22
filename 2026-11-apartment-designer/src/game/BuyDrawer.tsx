@@ -8,7 +8,9 @@ import { STARTER_CATALOG } from '../model/starterCatalog'
 import { uid } from '../model/sample'
 import type { Doc, Item, Room, Units } from '../model/types'
 import { formatLength } from '../model/units'
-import { activeLayout, useStore } from '../store'
+import { activeLayout, defaultDrop, useStore } from '../store'
+import { analyze } from '../analysis'
+import { scoreHome } from './goals'
 import { ImportDialog, Photo } from '../components/AddDialogs'
 import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
@@ -127,6 +129,11 @@ export const ACCEPTS: Record<string, string[]> = {
   'dining-chair': ['dining-chair', 'bench'],
 }
 
+/** A waiting piece's pick label: "From your boxes" when a box held its kind, otherwise "From Mine". */
+export function pickLabel(item: Item, items: Item[]): string {
+  return items.some((b) => b.unpacked && b.unpack?.includes(item.category)) ? 'From your boxes' : 'From Mine'
+}
+
 /** A boxed piece of yours (owned, not placed) that would finish a goal asking for `category`: its own kind first. */
 export function boxedFor(category: string, items: Item[], placed: (id: string) => boolean): Item | undefined {
   const ok = ACCEPTS[category] ?? [category]
@@ -152,6 +159,96 @@ function dropIn(doc: Doc, item: Item, room: Room): DropResult | null {
 
 /** Pieces the Next chip puts beside the piece its goal is about (a reading lamp by the armchair). */
 const BESIDE = new Set(['floor-lamp', 'table-lamp', 'side-table'])
+
+type Hint = { category: string; roomId?: string; near?: string; title?: string }
+type Spot = { x: number; y: number; rotation: number; on?: string; roomName?: string }
+
+/**
+ * Where a tap on a "Pick one" card (or the hinted card) puts `item`: in the goal's room, beside the
+ * goal's piece, or (spot undefined) wherever the store's default drop finds. `fail` is a reason to
+ * toast when the goal named a place that has no room.
+ */
+export function pickSpot(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; fail?: string } {
+  const layout = activeLayout(doc)
+  const room = hint?.category === item.category && hint.roomId ? doc.rooms.find((r) => r.id === hint.roomId) : undefined
+  const there = room ? dropIn(doc, item, room) : null
+  if (there?.ok) return { spot: { ...there.spot, roomName: room!.name } }
+  const nearId = hint?.category === item.category ? hint.near ?? (BESIDE.has(item.category) ? nookTarget(doc, layout) : undefined) : undefined
+  const beside = nearId ? findDrop(doc, layout, item, { nextTo: nearId }) : null
+  if (beside && !beside.ok && hint?.near) return { fail: beside.reason }
+  if (beside?.ok) return { spot: beside.spot }
+  return hint?.category === item.category ? cleanDrop(doc, item) : {}
+}
+
+/** Warnings and errors a trial placement `id` of `item` at `spot` would carry. */
+function trialIssues(doc: Doc, item: Item, spot: Spot): number {
+  const layout = activeLayout(doc)
+  const id = '__try'
+  const trial = { ...layout, placements: [...layout.placements, { id, itemId: item.id, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}) }] }
+  const issues = checkLayout({ ...doc, items: [...doc.items, item], layouts: doc.layouts.map((l) => (l.id === layout.id ? trial : l)) }, trial)
+  return issues.filter((i) => i.severity !== 'info' && i.placementIds.includes(id)).length
+}
+
+/**
+ * The store's default drop, unless it wedges the piece in with a clearance warning (an armchair
+ * squeezed beside the sofa) while a search pulled toward a room's middle finds a clean spot.
+ */
+function cleanDrop(doc: Doc, item: Item): { spot?: Spot } {
+  const first = defaultDrop(doc, item)
+  if (!first.ok || !trialIssues(doc, item, first.spot)) return {}
+  // Same room only: the room it picked is the one the goal wants it in (the living room's seats).
+  const room = doc.rooms.find((r) => r.id === first.spot.roomId)
+  if (!room) return {}
+  const alt = defaultDrop(doc, item, centroid(room.polygon))
+  if (alt.ok && alt.spot.roomId === room.id && !trialIssues(doc, item, alt.spot)) return { spot: alt.spot }
+  const only = findDrop({ ...doc, rooms: [room] }, activeLayout(doc), item, { near: centroid(room.polygon) })
+  if (only.ok && !trialIssues(doc, item, only.spot)) return { spot: { ...only.spot, roomName: room.name } }
+  return {}
+}
+
+/** How a piece placed by a pick card would leave the home: its stars, warnings, and goals it would undo. */
+export interface PickTrial {
+  ok: boolean
+  stars: number
+  warnings: number
+  /** Goals done now that the piece would undo (a long coffee table squeezing a walkway). */
+  broken: number
+}
+
+/** Dry-run a pick card: place `item` exactly as a tap would, then score the home. */
+export function trialPick(doc: Doc, item: Item, hint: Hint | null): PickTrial {
+  const layout = activeLayout(doc)
+  const before = scoreHome(doc, layout, analyze(doc, layout))
+  const warn = (a: ReturnType<typeof analyze>) => a.issues.filter((i) => i.severity !== 'info').length
+  const p = pickSpot(doc, item, hint)
+  const drop = p.fail ? null : p.spot ? { ok: true as const, spot: p.spot } : defaultDrop(doc, item)
+  if (!drop?.ok) return { ok: false, stars: before.stars, warnings: Infinity, broken: 0 }
+  const s = drop.spot
+  const l2 = { ...layout, placements: [...layout.placements, { id: '__pick', itemId: item.id, x: s.x, y: s.y, rotation: s.rotation, ...(s.on ? { on: s.on } : {}) }] }
+  const d2 = { ...doc, items: [...doc.items, item], layouts: doc.layouts.map((l) => (l.id === layout.id ? l2 : l)) }
+  const a2 = analyze(d2, l2)
+  const after = scoreHome(d2, l2, a2)
+  const doneAfter = new Set(after.goals.filter((g) => g.done).map((g) => g.id))
+  const broken = before.goals.filter((g) => g.done && !g.visit && !doneAfter.has(g.id)).length
+  return { ok: true, stars: after.stars, warnings: warn(a2) - warn(analyze(doc, layout)), broken }
+}
+
+/**
+ * The pick variants worth offering: ones that would undo a goal or add a warning go, unless every
+ * one does; then only the least bad stays. Order is kept.
+ */
+export function goodPicks<T>(cands: T[], trial: (c: T) => PickTrial): T[] {
+  if (cands.length < 2) return cands
+  const t = cands.map(trial)
+  const clean = cands.filter((_, i) => t[i].ok && t[i].broken === 0 && t[i].warnings <= 0)
+  if (clean.length) return clean
+  const cost = (x: PickTrial) => (x.ok ? 0 : 1000) + 10 * x.broken + x.warnings - x.stars / 100
+  let best = 0
+  t.forEach((x, i) => {
+    if (cost(x) < cost(t[best])) best = i
+  })
+  return [cands[best]]
+}
 
 const article = (name: string) => (/^[aeiou]/i.test(name) ? 'an' : 'a')
 
@@ -203,24 +300,16 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   const place = (entry: CatalogEntry, preset?: SizeChip, chose = false) => {
     const st = useStore.getState()
     const item = presetItem(entry, uid(), preset)
-    // A goal about one room ("Nothing in the Bathroom yet") puts the piece it pointed at in that room, if it fits there.
-    const room = hint?.category === entry.category && hint.roomId ? st.doc.rooms.find((r) => r.id === hint.roomId) : undefined
-    const there = room ? dropIn(st.doc, item, room) : null
-    // A goal about one piece ("A cozy reading corner") puts the lamp beside that piece (the armchair).
-    const nearId = !there?.ok && hint?.category === entry.category ? hint.near ?? (BESIDE.has(entry.category) ? nookTarget(st.doc, activeLayout(st.doc)) : undefined) : undefined
-    const beside = nearId ? findDrop(st.doc, activeLayout(st.doc), item, { nextTo: nearId }) : null
-    // A piece the goal named a place for (a coffee table in front of the sofa) that has no room
-    // there says so, rather than landing across the room where it finishes nothing.
-    if (beside && !beside.ok && hint?.near) {
-      st.notify(beside.reason)
+    // A goal about one room puts the piece in that room if it fits; a goal about one piece puts it
+    // beside that piece; a piece the goal named a place for that has no room there says so.
+    const { spot, fail } = pickSpot(st.doc, item, hint)
+    if (fail) {
+      st.notify(fail)
       return
     }
-    const spot = there?.ok ? there.spot : beside?.ok ? beside.spot : undefined
     // Otherwise the item goes to a free spot that suits it and is selected; when nothing fits, the store toasts why.
     let res = spot ? st.addItem(item, spot) : st.addItem(item)
-    if (res.ok && spot) {
-      res = { ...res, roomName: there?.ok ? room!.name : spot.roomName }
-    }
+    if (res.ok && spot) res = { ...res, roomName: spot.roomName }
     if (!res.ok) return
     if (hint) useGame.getState().setBuyHint(null)
     // Taste memory: the colour picked for a family (wood, fabric, light) is offered first next time.
@@ -253,23 +342,36 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   // "Pick one": 2-3 variants of the hinted piece, each placed in one tap. A piece of that kind
   // still waiting in your boxes (owned, not placed) comes first, so Next never sells you a copy.
   const taste = useGame((s) => s.taste)
+  const doc = useStore((s) => s.doc)
+  // Each variant is dry-run where a tap would put it: one that would undo a goal (a long coffee
+  // table closing a walkway) or wedge in with a warning isn't offered while a cleaner one is.
+  const vetted = useMemo(() => {
+    if (!hintEntry) return { all: 0, chips: [] }
+    const all = picksFor(hintEntry.category, taste).flatMap((pk) => {
+      const chip = pickChip(pk)
+      return chip ? [{ chip, taste: !!pk.taste }] : []
+    })
+    if (all.length < 2) return { all: all.length, chips: all }
+    try {
+      return { all: all.length, chips: goodPicks(all, (c) => trialPick(doc, presetItem(hintEntry, '__pick_item', c.chip), hint)) }
+    } catch {
+      return { all: all.length, chips: all }
+    }
+  }, [doc, hint, hintEntry, taste])
   const pickCards: PickCard[] = []
   let pickCount = 0
   let firstPick: (() => void) | undefined
   if (hintEntry) {
     const boxed = boxedFor(hintEntry.category, items, (id) => !!counts.get(id))
-    if (boxed) pickCards.push({ key: boxed.id, label: 'From your boxes', name: boxed.name, category: boxed.category, color: boxed.color, mine: true, onClick: () => placeMine(boxed) })
-    const chips = picksFor(hintEntry.category, taste).flatMap((pk) => {
-      const chip = pickChip(pk)
-      return chip ? [{ chip, taste: !!pk.taste }] : []
-    })
-    pickCount = chips.length
+    if (boxed) pickCards.push({ key: boxed.id, label: pickLabel(boxed, items), name: boxed.name, category: boxed.category, color: boxed.color, mine: true, onClick: () => placeMine(boxed) })
+    const chips = vetted.chips
+    pickCount = vetted.all
     for (const { chip, taste: liked } of chips.slice(0, 3 - pickCards.length))
       pickCards.push({ key: `${hintEntry.category}:${chip.label}`, label: chip.label, name: chip.name, category: hintEntry.category, color: chip.color, look: chip.look, taste: liked, onClick: () => place(hintEntry, chip, true) })
     // A plain tap on the hinted card places the first card without counting it as a chosen colour.
     const first = pickCards[0]
     const firstChip = chips[0]?.chip
-    if (chips.length >= 2 && first) firstPick = first.mine ? first.onClick : firstChip ? () => place(hintEntry, firstChip) : undefined
+    if (vetted.all >= 2 && first) firstPick = first.mine ? first.onClick : firstChip ? () => place(hintEntry, firstChip) : undefined
   }
   const showPicker = pickCount >= 2
 
