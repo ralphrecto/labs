@@ -371,3 +371,102 @@ export function downloadBlob(blob: Blob, filename: string) {
 export function slug(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'apartment'
 }
+
+// ---- Photo album -----------------------------------------------------------
+// Every photo taken in Look mode (and each remix twist's first Dream home) is kept as a small
+// keepsake: a ~360px JPEG data URL, about 30 KB. Each home has its own list under
+// `apartment-designer:album:<home id>`, newest first, capped at ALBUM_CAP: the oldest unpinned
+// photo goes first. Storage can fail at any point (private mode, quota), so every call degrades to
+// "nothing kept" rather than throwing.
+
+const albumKey = (homeId: string) => `apartment-designer:album:${homeId}`
+export const ALBUM_CAP = 12
+
+export interface AlbumPhoto {
+  id: string
+  homeId: string
+  layoutId: string
+  layoutName: string
+  /** When it was taken (ms). */
+  date: number
+  /** e.g. "Level 3 · Cozy" */
+  level: string
+  stars: number
+  evening: boolean
+  /** The remix twist this photo celebrates, if any. */
+  twist?: string
+  /** Twist emoji shown on the polaroid. */
+  emoji?: string
+  /** Pinned photos are dropped last when the album is full. */
+  pinned?: boolean
+  /** The picture itself, as a data URL. */
+  src: string
+}
+
+/** Reads a home's album; throws only if storage itself can't be read (a broken entry reads as empty). */
+function readAlbum(ls: Storage, homeId: string): AlbumPhoto[] {
+  const raw = ls.getItem(albumKey(homeId))
+  try {
+    const list = raw ? (JSON.parse(raw) as AlbumPhoto[]) : []
+    return Array.isArray(list) ? list.filter((p) => p && typeof p.id === 'string' && typeof p.src === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+export function listAlbum(homeId: string): AlbumPhoto[] {
+  const ls = store()
+  if (!ls) return []
+  try {
+    return readAlbum(ls, homeId)
+  } catch {
+    return []
+  }
+}
+
+/** Drops the oldest unpinned photo (or the oldest of all, if every one is pinned). */
+function dropOldest(list: AlbumPhoto[]): AlbumPhoto[] {
+  let at = -1
+  for (let i = list.length - 1; i >= 0; i--) if (!list[i].pinned) { at = i; break }
+  if (at < 0) at = list.length - 1
+  return list.filter((_, i) => i !== at)
+}
+
+function writeAlbum(ls: Storage, homeId: string, list: AlbumPhoto[]): boolean {
+  // On a full quota, make room by dropping old photos until it fits (or nothing is left).
+  let l = list
+  for (;;) {
+    try {
+      if (l.length) ls.setItem(albumKey(homeId), JSON.stringify(l))
+      else ls.removeItem(albumKey(homeId))
+      return true
+    } catch {
+      if (l.length <= 1) return false
+      l = dropOldest(l)
+    }
+  }
+}
+
+/** Keeps a photo (newest first). Returns false when it couldn't be stored. */
+export function addAlbumPhoto(photo: AlbumPhoto, cap = ALBUM_CAP): boolean {
+  const ls = store()
+  if (!ls) return false
+  try {
+    let list = [photo, ...readAlbum(ls, photo.homeId).filter((p) => p.id !== photo.id)]
+    while (list.length > cap) list = dropOldest(list)
+    if (!writeAlbum(ls, photo.homeId, list)) return false
+    return readAlbum(ls, photo.homeId).some((p) => p.id === photo.id)
+  } catch {
+    return false
+  }
+}
+
+export function deleteAlbumPhoto(homeId: string, id: string): boolean {
+  const ls = store()
+  if (!ls) return false
+  try {
+    return writeAlbum(ls, homeId, readAlbum(ls, homeId).filter((p) => p.id !== id))
+  } catch {
+    return false
+  }
+}

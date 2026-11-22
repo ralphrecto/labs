@@ -7,12 +7,16 @@ import { useGame } from './gameStore'
 import { useHomeScore } from './Goals'
 import { LEVELS } from './goals'
 import { reduceMotion } from '../motion'
+import { keepPhoto, shotDataURL } from './album'
 import './photo.css'
+import './album.css'
 
 interface Snap {
   url: string
   blob: Blob | null
   file: string
+  /** Whether the photo also went into the album. */
+  kept: boolean
 }
 
 const roundRect = (g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
@@ -103,9 +107,11 @@ export function PhotoShutter() {
     if (!reduceMotion) flushSync(() => setFlash((f) => f + 1))
     const compose = () => {
       const card = composePolaroid(canvas, design ? `${design} · ${name}` : name, level, score.stars)
+      // A small copy goes into the album; the card works the same if storage fails.
+      const kept = keepPhoto(shotDataURL(canvas), { level, stars: score.stars, evening })
       card.toBlob((blob) => {
         const url = blob ? URL.createObjectURL(blob) : card.toDataURL('image/png')
-        setSnap({ url, blob, file: fileName(name) })
+        setSnap({ url, blob, file: fileName(name), kept })
       }, 'image/png')
     }
     if (reduceMotion) compose()
@@ -184,6 +190,11 @@ export function PhotoShutter() {
         <div className="photo-sheet" role="dialog" aria-label="Your photo" onClick={() => setSnap(null)}>
           <div className="photo-card" onClick={(e) => e.stopPropagation()}>
             <img src={snap.url} alt={`${name}, ${score.level.name}, ${score.stars} stars`} />
+            {snap.kept && (
+              <p className="photo-kept" role="status">
+                <span aria-hidden>📌</span> Added to your album
+              </p>
+            )}
             <div className="photo-actions">
               {canShare ? (
                 <button className="g-btn primary" onClick={share}>

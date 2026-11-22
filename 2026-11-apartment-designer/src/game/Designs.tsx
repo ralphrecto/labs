@@ -1,6 +1,7 @@
 // "Your designs": the homes you've moved into and the designs for the open one, as little
 // top-down postcards. Rename and delete sit behind a "…" menu, and deleting asks first.
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { analyze } from '../analysis'
 import type { Doc, Layout } from '../model/types'
 import { deleteHome, restoreHome, switchHome, useStore } from '../store'
@@ -13,7 +14,13 @@ import { activeLayout } from '../store'
 import { useGame } from './gameStore'
 import { applicableTwists, finishedTwists, levelProgress, pickTwists, sameArrangement, TWIST_IDS, TWISTS, LEVELS } from './goals'
 import * as I from './icons'
+import { albumFor, removePhoto, restorePhoto, TWIST_EMOJI, useAlbum, watchRemixDreams } from './album'
+import type { AlbumPhoto } from '../storage'
 import './designs.css'
+import './album.css'
+
+// A remix's first Dream home drops a polaroid into the album by itself.
+watchRemixDreams()
 
 /** A tiny floor plan: room outlines plus a rectangle per piece, in the piece's own color. */
 export function DesignThumb({ doc, layout, size = 64 }: { doc: Doc; layout?: Layout; size?: number }) {
@@ -301,6 +308,8 @@ export function DesignsSheetBody() {
       ) : (
         <HomesStrip onRenameHome={() => setRenamingHome(true)} />
       )}
+      <h3 className="hud-h3">Album</h3>
+      <AlbumRow homeId={doc.apartment.id} />
       <h3 className="hud-h3">Designs for {doc.apartment.name}</h3>
       <DreamCount scores={scores} />
       <div className="dz-designs">
@@ -432,15 +441,6 @@ function DreamCount({ scores }: { scores: Map<string, { dream: boolean; sameAs?:
   )
 }
 
-/** A small picture for each twist in the picker. */
-const TWIST_EMOJI: Record<string, string> = {
-  'talk-corner': '💬',
-  'open-floor': '🕺',
-  'window-seat': '🪟',
-  'fresh-spots': '🔀',
-  'bed-swap': '🛏️',
-  'less-is-more': '🍃',
-}
 
 /**
  * "Remix this home": the primary button of the Designs sheet, which opens a small picker of three
@@ -499,5 +499,138 @@ export function RemixPicker() {
         Not now
       </button>
     </div>
+  )
+}
+
+// ---- Album ----------------------------------------------------------------
+
+const shortDate = (t: number) => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+const longDate = (t: number) => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
+/** A gentle, stable tilt per photo, so the corkboard looks pinned by hand. */
+const tilt = (id: string) => {
+  let h = 0
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) | 0
+  return ((Math.abs(h) % 7) - 3) * 1.1
+}
+
+/** The corkboard: the home's photos as slightly tilted polaroids. Tap one to see it larger. */
+export function AlbumRow({ homeId }: { homeId: string }) {
+  const rev = useAlbum((s) => s.rev)
+  const photos = useMemo(() => albumFor(homeId), [homeId, rev])
+  const [open, setOpen] = useState<AlbumPhoto | null>(null)
+  const [removed, setRemoved] = useState<AlbumPhoto | null>(null)
+  return (
+    <>
+      {removed && (
+        <div className="dz-undo" role="status">
+          <span>Photo taken off the board</span>
+          <button
+            className="g-btn sm"
+            onClick={() => {
+              restorePhoto(removed)
+              setRemoved(null)
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      )}
+      {photos.length === 0 ? (
+        <div className="al-board al-empty">
+          <p>
+            Take a photo in Look to start your album.{' '}
+            <button
+              className="al-link"
+              onClick={() => {
+                useGame.getState().setMode('look')
+                useGame.getState().openSheet(null)
+              }}
+            >
+              Go to Look
+            </button>
+          </p>
+        </div>
+      ) : (
+        <div className="al-board" role="list" aria-label="Your album">
+          {photos.map((p) => (
+            <button
+              key={p.id}
+              role="listitem"
+              className={`al-polaroid${p.twist ? ' twist' : ''}`}
+              style={{ '--tilt': `${tilt(p.id)}deg` } as React.CSSProperties}
+              onClick={() => setOpen(p)}
+              aria-label={`Photo of ${p.layoutName || 'your home'}, ${longDate(p.date)}, ${p.level}`}
+            >
+              <img src={p.src} alt="" loading="lazy" />
+              {p.emoji && <span className="al-emoji" aria-hidden>{p.emoji}</span>}
+              <span className="al-cap">
+                <b>{shortDate(p.date)}</b>
+                <small>{p.level.replace(/^Level \d+ · /, '')}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {open && (
+        <AlbumLightbox
+          photo={open}
+          onClose={() => setOpen(null)}
+          onDelete={() => {
+            if (removePhoto(homeId, open.id)) setRemoved(open)
+            setOpen(null)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function AlbumLightbox({ photo, onClose, onDelete }: { photo: AlbumPhoto; onClose: () => void; onDelete: () => void }) {
+  const [asking, setAsking] = useState(false)
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', k)
+    return () => window.removeEventListener('keydown', k)
+  }, [onClose])
+  const t = photo.twist ? TWISTS[photo.twist as keyof typeof TWISTS] : undefined
+  return createPortal(
+    <div className="al-sheet" role="dialog" aria-modal="true" aria-label="Photo" onClick={onClose}>
+      <figure className="al-big" onClick={(e) => e.stopPropagation()}>
+        <img src={photo.src} alt={`${photo.layoutName || 'Your home'}, ${photo.level}`} />
+        {photo.emoji && <span className="al-emoji big" aria-hidden>{photo.emoji}</span>}
+        <figcaption>
+          <strong>{photo.layoutName || 'Your home'}</strong>
+          <span>{longDate(photo.date)}</span>
+          <span>
+            {photo.level} · ★ {photo.stars}
+            {photo.evening ? ' · evening' : ''}
+          </span>
+          {t && <span className="al-twist">↻ {t.name} twist, finished</span>}
+        </figcaption>
+        <div className="al-actions">
+          {asking ? (
+            <>
+              <span className="al-ask">Take this photo off the board?</span>
+              <button className="g-btn sm ghost" onClick={() => setAsking(false)}>
+                Keep it
+              </button>
+              <button className="g-btn sm dz-danger" onClick={onDelete}>
+                Delete
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="g-btn sm ghost" onClick={() => setAsking(true)}>
+                <I.IconTrash width={16} height={16} /> Delete
+              </button>
+              <button className="g-btn sm primary" onClick={onClose} autoFocus>
+                Close
+              </button>
+            </>
+          )}
+        </div>
+      </figure>
+    </div>,
+    document.querySelector('.game') ?? document.body,
   )
 }

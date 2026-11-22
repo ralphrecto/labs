@@ -1,0 +1,50 @@
+/* The photo album: a corkboard of tilted polaroids in the Designs sheet, and its lightbox. Prefix .al- */
+.photo-kept { margin: -4px 0 0; padding: 6px 14px; border-radius: 999px; background: color-mix(in srgb, var(--g-paper, #fffdf8) 92%, transparent); color: var(--g-ink, #3b2f26); font: 800 13px/1.2 var(--g-font, system-ui); box-shadow: var(--g-shadow-sm, 0 2px 6px rgba(0,0,0,.15)); animation: al-kept 0.5s var(--g-ease, ease) 0.25s both; }
+@keyframes al-kept { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.al-board {
+  display: flex; flex-wrap: wrap; gap: 14px 12px; padding: 14px 12px 16px; margin: 2px 0 14px; border-radius: 16px;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(120, 78, 40, 0.10) 0 1.5px, transparent 2px) 0 0 / 14px 14px,
+    radial-gradient(circle at 70% 60%, rgba(255, 240, 220, 0.18) 0 1px, transparent 1.6px) 0 0 / 11px 11px,
+    #d7b48a;
+  box-shadow: inset 0 0 0 4px #b98d5f, inset 0 3px 10px rgba(80, 48, 20, 0.25);
+}
+.al-polaroid {
+  position: relative; flex: none; width: 104px; padding: 6px 6px 0; border: none; border-radius: 3px; cursor: pointer;
+  background: #fffdf8; box-shadow: 0 4px 10px rgba(60, 36, 14, 0.28); transform: rotate(var(--tilt, 0deg));
+  transition: transform 0.2s var(--g-ease, ease); font-family: var(--g-font); color: #3b2f26; text-align: left;
+}
+.al-polaroid::before { content: ''; position: absolute; top: -5px; left: 50%; width: 11px; height: 11px; margin-left: -5px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ff9a8a, var(--g-coral, #e86f5a) 60%, #a8412f); box-shadow: 0 2px 3px rgba(0,0,0,.3); }
+.al-polaroid:hover, .al-polaroid:focus-visible { transform: rotate(0deg) scale(1.05); z-index: 1; }
+.al-polaroid img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 1px; background: #efe6da; }
+.al-cap { display: flex; flex-direction: column; padding: 5px 2px 7px; line-height: 1.15; }
+.al-cap b { font-size: 12px; font-weight: 800; }
+.al-cap small { font-size: 10.5px; font-weight: 700; color: #8a7465; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.al-emoji { position: absolute; right: 2px; top: 52px; font-size: 22px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+.al-emoji.big { top: 20px; right: 20px; font-size: 38px; }
+.al-polaroid.twist { background: #fff7e6; }
+
+.al-empty { display: block; padding: 18px 16px; }
+.al-empty p { margin: 0; padding: 12px 14px; background: #fffdf8; border-radius: 4px; transform: rotate(-1.2deg); font: 700 14px/1.4 var(--g-font); color: var(--g-ink-2); box-shadow: 0 4px 10px rgba(60, 36, 14, 0.22); max-width: 300px; }
+.al-link { border: none; background: none; padding: 0; font: inherit; font-weight: 800; color: var(--g-coral); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+.al-sheet { position: absolute; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(40, 26, 14, 0.62); animation: al-fade 0.2s ease; }
+.al-big { position: relative; margin: 0; width: min(380px, 100%); display: flex; flex-direction: column; padding: 12px 12px 14px; background: #fffdf8; border-radius: 6px; box-shadow: 0 18px 40px rgba(40, 24, 10, 0.4); transform: rotate(-1.5deg); animation: al-drop 0.35s var(--g-ease, ease); }
+.al-big img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; }
+.al-big figcaption { display: flex; flex-direction: column; gap: 2px; padding: 10px 4px 4px; font: 700 13px/1.3 var(--g-font); color: #8a7465; }
+.al-big figcaption strong { font-size: 18px; font-weight: 800; color: #3b2f26; }
+.al-twist { color: var(--g-coral, #e86f5a); font-weight: 800; }
+.al-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 10px; }
+.al-ask { flex: 1 1 100%; font: 800 14px var(--g-font); color: #3b2f26; }
+@keyframes al-fade { from { opacity: 0; } }
+@keyframes al-drop { from { transform: translateY(-18px) rotate(3deg); opacity: 0; } }
+
+@media (max-width: 600px) {
+  /* Phones: one row of polaroids that scrolls sideways. */
+  .al-board:not(.al-empty) { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; padding-top: 16px; }
+  .al-polaroid { scroll-snap-align: start; width: 96px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .photo-kept, .al-sheet, .al-big { animation: none; }
+}
