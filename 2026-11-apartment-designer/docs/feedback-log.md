@@ -312,3 +312,21 @@ Shipped:
 Rolled over: "From your boxes" pick is untested in the browser; plan labels on a shared wall sit close; 700-1100px still uses the bottom sheet; toast copy for 3+ items.
 
 209 tests pass.
+
+## Round 10 (2026-11-22 02:10-02:50 UTC)
+
+Reviewers: newcomer on iPhone (pick cards, boxes), tablet and interior designer (iPad, 1024x768, the Dream home result), long-session player (what happens after Dream home).
+
+Shipped:
+- **Remix depth:** the twist is the first goal of a remix and gets a honey pill and a pinned "Today's twist" section in the goals sheet. The twist picker puts unfinished twists first, rotates daily, never re-offers the one in progress, and counts "N of 6 twists done". Talk corner is now winnable with Dream home (3 m reach, a sofa-side lamp counts for the reading corner, a fit check before it's offered). Finished remixes get their own badge instead of competing for the crown. A remix toast says what was kept.
+- **Seats for two:** a new comfort goal asks for a second dining chair, so Dream home no longer has a table for four with one chair.
+- **Pick cards:** hidden while something is selected, headed with the goal title, wider two-line labels, visibly different variants (round table model, tall chest, smaller plant), "Carver" chairs, and walnut that stays brown in Cartoon. "From your boxes" matches anything the goal accepts. Remove sends bought pieces to Mine. The Mine badge counts only pieces waiting to be placed.
+- **Toasts:** a clean two-line clamp and friendlier unpack copy ("Unpacked 4 things! 3 are waiting in Mine.").
+- **Welcome back:** the stars moved into the badge, so the payoff isn't cut off.
+- **Tablet:** the side column also applies to landscape screens from 1000px. iPad portrait gets one sideways row of cards. 44px touch targets on coarse pointers.
+- **Plan:** upside-down labels fixed, wall dimensions never stack, labels hidden for hosted lamps and covered rugs, and the plan fit allows for the selection bar.
+- **Placement:** the office chair centres on the desk with roll-back room, and plants keep off chair pull-out zones and hug walls.
+
+Rolled over: a daily "visitor" request and a photo album (the long-session player's hooks); bathroom fixtures in the sample; the welcome-back card and the level-up toast still sit near the right-hand buttons on phones; the iPhone plan's leftmost wall dimension is clipped; the "Seats for two" goal is not yet tied to the pendant and table goals.
+
+220 tests pass.
