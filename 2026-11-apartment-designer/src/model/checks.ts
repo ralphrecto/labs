@@ -16,6 +16,7 @@ import {
 } from './geometry'
 import type { Doc, Item, Layout, Placement, Room, Vec2 } from './types'
 import { formatLength } from './units'
+import { isWallDecor } from './wallDecor'
 
 export type Severity = 'error' | 'warning' | 'info'
 
@@ -106,7 +107,8 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   const issues: Issue[] = []
   const units = doc.apartment.units
   const placed = placedItems(doc, layout)
-  const solid = placed.filter((x) => !x.item.floorLevel && !x.p.on)
+  // Wall decor hangs above the floor: it never overlaps, needs no clearance and blocks no walkway.
+  const solid = placed.filter((x) => !x.item.floorLevel && !x.p.on && !isWallDecor(x.item.category))
 
   // Items overlapping each other.
   for (let i = 0; i < solid.length; i++)
@@ -141,7 +143,7 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   // Clearance zones blocked by other items or walls.
   const tables = solid.filter((o) => o.item.category === 'dining-table')
   for (const x of placed) {
-    if (x.p.on) continue
+    if (x.p.on || isWallDecor(x.item.category)) continue
     const checked = { ...x.item, clearance: checkedClearance(x.item, x.body, tables) }
     for (const zone of clearanceZones(checked, x.p)) {
       const need = checked.clearance[zone.side]
@@ -284,7 +286,7 @@ export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport 
   const emptyFree = free.slice()
   // Block furniture (rugs don't block).
   for (const x of placedItems(doc, layout)) {
-    if (x.item.floorLevel || x.p.on) continue
+    if (x.item.floorLevel || x.p.on || isWallDecor(x.item.category)) continue
     fillConvex(x.body, 0)
   }
 

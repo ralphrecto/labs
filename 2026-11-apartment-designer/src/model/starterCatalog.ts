@@ -114,6 +114,15 @@ const groups: Record<string, Row[]> = {
     ['plant-lg', 'Large floor plant', 'plant', 60, 60, 160, { tags: 'fiddle leaf fig tree' }],
     ['plant-md', 'Medium plant', 'plant', 45, 45, 100],
   ],
+  'Wall decor': [
+    ['art-sm', 'Small framed print', 'wall-art', 40, 3, 50, { tags: 'picture poster frame' }],
+    ['art-md', 'Framed art', 'wall-art', 60, 4, 80, { tags: 'picture painting frame' }],
+    ['art-lg', 'Large canvas', 'wall-art', 100, 4, 70, { color: '#7fa7c9', tags: 'picture painting landscape' }],
+    ['mirror-round', 'Round mirror', 'mirror', 60, 4, 60],
+    ['wall-shelf', 'Floating shelf with books', 'wall-shelf', 80, 22, 30, { tags: 'ledge books' }],
+    ['wall-clock', 'Wall clock', 'wall-clock', 35, 5, 35],
+    ['curtains', 'Curtains (pair)', 'curtains', 180, 12, 230, { tags: 'drapes window' }],
+  ],
   'Appliances & other': [
     ['fridge', 'Refrigerator', 'box', 91, 76, 178, { color: '#d9dcdf', tags: 'fridge kitchen' }],
     ['washer', 'Washer or dryer', 'box', 69, 76, 99, { color: '#e6e8ea', tags: 'laundry' }],

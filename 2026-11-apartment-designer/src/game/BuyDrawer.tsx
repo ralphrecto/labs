@@ -25,11 +25,12 @@ export const CATEGORY_GROUPS: { key: string; label: string; emoji?: string; cate
   { key: 'dining', label: 'Dining', emoji: '🍽️', categories: ['dining-table', 'dining-chair', 'bench', 'sideboard'] },
   { key: 'work', label: 'Work', emoji: '💻', categories: ['desk', 'office-chair', 'bookshelf'] },
   { key: 'decor', label: 'Decor', emoji: '🪴', categories: ['plant', 'floor-lamp', 'table-lamp', 'pendant', 'rug', 'box'] },
+  { key: 'wall', label: 'Walls', emoji: '🖼️', categories: ['wall-art', 'mirror', 'wall-shelf', 'curtains', 'wall-clock'] },
   { key: 'mine', label: 'Mine', emoji: '⭐', categories: [] },
 ]
 
 /** The category drawn on each tab chip. */
-const TAB_ICON: Record<string, string> = { living: 'sofa', bedroom: 'bed', dining: 'dining-chair', work: 'desk', decor: 'plant' }
+const TAB_ICON: Record<string, string> = { living: 'sofa', bedroom: 'bed', dining: 'dining-chair', work: 'desk', decor: 'plant', wall: 'wall-art' }
 
 /** Mime type the stage reads on drop: the catalog category of the dragged card. */
 export const CATALOG_DRAG_TYPE = 'application/x-apt-catalog'
@@ -63,6 +64,7 @@ const CHIP_IDS: Record<string, [string, string][]> = {
   'coffee-table': [['Classic', 'coffee-rect'], ['Round', 'coffee-round'], ['Small', 'coffee-small']],
   ottoman: [['Square', 'ottoman-sq'], ['Pouf', 'pouf'], ['Storage', 'ottoman-rect']],
   'side-table': [['Square', 'side'], ['C-shape', 'side-c']],
+  'wall-art': [['Small', 'art-sm'], ['Medium', 'art-md'], ['Wide', 'art-lg']],
 }
 const STARTER = new Map(STARTER_CATALOG.map((p) => [p.id, p]))
 

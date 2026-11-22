@@ -7,6 +7,7 @@ import { useAnalysis } from '../analysis'
 import { bounds, centroid, dist, norm, openingEndpoints, pointInPolygon, polygonArea, scale, sub, add, v, wallInwardNormal, wallSegments } from '../model/geometry'
 import { clampOnHost, HOSTED, hostAt } from '../model/placement'
 import { snapPlacement } from '../model/snapping'
+import { isWallDecor, mountBottom, snapToWall } from '../model/wallDecor'
 import type { Item, Opening, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { ItemModel } from './ItemModel'
@@ -494,9 +495,12 @@ function PlacedItem({
   dragOk,
   wobble = 0,
   lift = 0,
+  wallMode,
 }: {
   item: Item
   p: Placement
+  /** Wall decor hides with its wall when the dollhouse view cuts that wall away. */
+  wallMode?: WallMode
   /** Height of the top this piece stands on (a table lamp on its nightstand). */
   lift?: number
   selected: boolean
@@ -514,8 +518,23 @@ function PlacedItem({
   const tint = style === 'classic'
   const highlight = selected ? SELECT_LINE : tint && flag === 'error' ? '#d64545' : tint && flag === 'warning' ? '#d68a1f' : undefined
   const h = Math.max(item.height, 0.02)
+  const onWall = isWallDecor(item.category)
+  const groupRef = useRef<THREE.Group>(null)
+  useFrame(({ camera }) => {
+    const g = groupRef.current
+    if (!g || !onWall) return
+    // The wall it hangs on: its back faces out of the room (front is rot((0, 1), rotation)).
+    const nx = Math.sin(p.rotation)
+    const nz = -Math.cos(p.rotation)
+    const ox = p.x + nx * (item.depth / 2)
+    const oz = p.y + nz * (item.depth / 2)
+    // Seen from behind its wall it would show through (or float where the wall is cut): hide it.
+    const outside = (camera.position.x - ox) * nx + (camera.position.z - oz) * nz > 0
+    g.visible = !(wallMode === 'low' || (wallMode === 'auto' && outside))
+  })
   return (
     <group
+      ref={groupRef}
       position={[p.x, lift, p.y]}
       rotation={[0, -p.rotation, 0]}
       onPointerDown={(e) => onGrab(e, p)}
@@ -537,7 +556,7 @@ function PlacedItem({
         )}
       </Hop>
       </Wobble>
-      {dragOk !== undefined && <DragFootprint w={item.width} d={item.depth} ok={dragOk} />}
+      {dragOk !== undefined && !onWall && <DragFootprint w={item.width} d={item.depth} ok={dragOk} />}
       {selected && (tint ? (
         <mesh position={[0, 0.003, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[item.width + 0.06, item.depth + 0.06]} />
@@ -643,7 +662,9 @@ function Scene({
     // A second tap on a moving box that's already selected unpacks it (see onUp).
     const again = s.selection?.kind === 'placement' && s.selection.id === p.id
     s.select({ kind: 'placement', id: p.id })
-    const w = p.on ? hitAt(e, lift(p)) : hit(e)
+    const grabbed = byId.get(p.itemId)
+    // Wall decor is grabbed at its own height, so it tracks the pointer along the wall.
+    const w = p.on ? hitAt(e, lift(p)) : grabbed && isWallDecor(grabbed.category) ? hitAt(e, mountBottom(grabbed) + grabbed.height / 2) : hit(e)
     if (!w) return
     // A finger jitters: it has to travel a few pixels before a tap turns into a drag.
     const ne = e.nativeEvent
@@ -685,9 +706,25 @@ function Scene({
       s.updatePlacement(d.id, { x: next.x, y: next.y, rotation: next.rotation, on: next.on })
       return
     }
+    if (isWallDecor(item.category)) {
+      // Wall decor slides along the walls: it snaps to the nearest wall face it fits on.
+      const ww = hitAt(e, mountBottom(item) + item.height / 2)
+      if (!ww) return
+      if (!d.moved) {
+        if (Math.hypot(e.nativeEvent.clientX - d.sx, e.nativeEvent.clientY - d.sy) < d.slop) return
+        s.beginGesture()
+        d.moved = true
+        setCursor()
+      }
+      const spot = snapToWall(s.doc, activeLayout(s.doc), item, sub(ww, d.grab), d.id)
+      if (!spot) return
+      d.lastClean = { ...cur, x: spot.x, y: spot.y, rotation: spot.rotation }
+      s.updatePlacement(d.id, { x: spot.x, y: spot.y, rotation: spot.rotation })
+      return
+    }
     const w = hit(e)
     if (!w) return
-    const others = placed.filter((x) => x.p.id !== d.id && !x.p.on)
+    const others = placed.filter((x) => x.p.id !== d.id && !x.p.on && !isWallDecor(x.item.category))
     const solid = others.map((x) => ({ id: x.p.id, item: x.item, p: x.p }))
     if (!d.moved) {
       if (Math.hypot(e.nativeEvent.clientX - d.sx, e.nativeEvent.clientY - d.sy) < d.slop) return
@@ -731,8 +768,8 @@ function Scene({
           s.updatePlacement(d.id, { x: d.lastClean.x, y: d.lastClean.y, rotation: d.lastClean.rotation, on: d.lastClean.on })
           setWobbles((w) => ({ ...w, [d.id]: (w[d.id] ?? 0) + 1 }))
         }
-      } else if (cur && item && d.base) {
-        const solid = placed.filter((x) => x.p.id !== d.id && !x.p.on).map((x) => ({ id: x.p.id, item: x.item, p: x.p }))
+      } else if (cur && item && d.base && !isWallDecor(item.category)) {
+        const solid = placed.filter((x) => x.p.id !== d.id && !x.p.on && !isWallDecor(x.item.category)).map((x) => ({ id: x.p.id, item: x.item, p: x.p }))
         const r = settleDrop(item, cur, d.lastClean, solid, s.doc.rooms, d.base)
         if (r.bounced) {
           s.updatePlacement(d.id, { x: r.placement.x, y: r.placement.y, rotation: r.placement.rotation })
@@ -780,7 +817,7 @@ function Scene({
   const walls = useMemo(() => wallSegmentsForWalking(doc.rooms, doorways), [doc.rooms, doorways])
   // Furniture you walk around (rugs you walk over).
   const boxes = useMemo<ItemBox[]>(
-    () => placed.filter(({ item }) => !item.floorLevel).map(({ p, item }) => ({ x: p.x, y: p.y, hw: item.width / 2, hd: item.depth / 2, rotation: p.rotation })),
+    () => placed.filter(({ item }) => !item.floorLevel && !isWallDecor(item.category)).map(({ p, item }) => ({ x: p.x, y: p.y, hw: item.width / 2, hd: item.depth / 2, rotation: p.rotation })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [layout.placements, doc.items],
   )
@@ -880,6 +917,7 @@ function Scene({
             dragOk={dragFx?.id === p.id ? dragFx.ok : undefined}
             wobble={wobbles[p.id]}
             lift={lift(p)}
+            wallMode={wallMode}
           />
         ))}
       </group>
@@ -1267,7 +1305,7 @@ export function eyeSpot(doc: ReturnType<typeof useStore.getState>['doc']): EyeSp
   const items = new Map(doc.items.map((i) => [i.id, i]))
   const boxes = layout.placements.flatMap((pl) => {
     const it = items.get(pl.itemId)
-    return it && !it.floorLevel ? [{ x: pl.x, y: pl.y, hw: it.width / 2, hd: it.depth / 2, rotation: pl.rotation }] : []
+    return it && !it.floorLevel && !isWallDecor(it.category) ? [{ x: pl.x, y: pl.y, hw: it.width / 2, hd: it.depth / 2, rotation: pl.rotation }] : []
   })
   const clear = clearOfItems(p, boxes, c)
   if (pointInPolygon(clear, room.polygon)) p = clear

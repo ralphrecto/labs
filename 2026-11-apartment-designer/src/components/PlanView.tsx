@@ -24,6 +24,7 @@ import {
   wallSegments,
 } from '../model/geometry'
 import { clampOnHost, HOSTED, hostAt } from '../model/placement'
+import { isWallDecor, snapToWall } from '../model/wallDecor'
 import { snapDrawPoint, snapPlacement, type SnapGuide } from '../model/snapping'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 import { formatLength, parseLength } from '../model/units'
@@ -67,6 +68,9 @@ interface ViewState {
   k: number
 }
 
+
+/** Tiny badge glyphs for wall decor in the plan. */
+const WALL_GLYPH: Record<string, string> = { 'wall-art': '▣', mirror: '◯', 'wall-shelf': '☰', 'wall-clock': '◷', curtains: '⫴' }
 export interface PlanViewProps {
   /** Show a specific layout read-only (used by compare). Defaults to the active layout, editable. */
   layoutId?: string
@@ -342,6 +346,16 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
       const pi = placementsWithItems.find((x) => x.p.id === drag.id)
       if (!pi) return
       const proposed = { ...pi.p, x: w.x - drag.grab.x, y: w.y - drag.grab.y }
+      if (isWallDecor(pi.item.category)) {
+        // Wall decor slides along the walls, snapping to the nearest wall face it fits on.
+        if (!drag.moved) {
+          s.beginGesture()
+          setDrag({ ...drag, moved: true })
+        }
+        const spot = snapToWall(s.doc, activeLayout(s.doc), pi.item, proposed, drag.id)
+        if (spot) s.updatePlacement(drag.id, { x: spot.x, y: spot.y, rotation: spot.rotation })
+        return
+      }
       if (pi.p.on && HOSTED.has(pi.item.category)) {
         // A table lamp slides over tops and onto another one under the pointer (the side table to
         // the desk); off every top it stays clamped to the one it's on.
@@ -361,7 +375,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
         s.updatePlacement(drag.id, { x: c.x, y: c.y, rotation: host.p.rotation, on: host.id })
         return
       }
-      const others = placementsWithItems.filter((x) => x.p.id !== drag.id)
+      const others = placementsWithItems.filter((x) => x.p.id !== drag.id && !isWallDecor(x.item.category))
       const res = e.altKey ? { placement: proposed, guides: [] } : snapPlacement(pi.item, proposed, doc.rooms, others, snap)
       if (!drag.moved) {
         s.beginGesture()
@@ -553,11 +567,11 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
     }
   // Labels a piece doesn't need: a lamp on a table, a rug under the sofa or the table, a pendant over the table.
   const solidBodies = placementsWithItems
-    .filter(({ item, p }) => !item.floorLevel && !p.on && item.category !== 'pendant')
+    .filter(({ item, p }) => !item.floorLevel && !p.on && item.category !== 'pendant' && !isWallDecor(item.category))
     .map(({ item, p }) => ({ id: p.id, body: footprint(item, p) }))
   const unlabelled = new Set(
     placementsWithItems
-      .filter(({ p, item }) => !!p.on || ((item.floorLevel || item.category === 'pendant') && solidBodies.some((o) => convexOverlap(footprint(item, p), o.body, 0.01))))
+      .filter(({ p, item }) => !!p.on || isWallDecor(item.category) || ((item.floorLevel || item.category === 'pendant') && solidBodies.some((o) => convexOverlap(footprint(item, p), o.body, 0.01))))
       .map(({ p }) => p.id),
   )
   return (
@@ -767,6 +781,26 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
             // A pendant hangs over the table: a small disc, so the table's name stays readable under it.
             const pendant = item.category === 'pendant'
             const sk = pendant ? 0.6 : 1
+            if (isWallDecor(item.category)) {
+              // Wall decor: a thin strip on the wall face with a small badge in front of it.
+              const t = Math.max(item.category === 'curtains' ? 0.06 : 0.035, 4 * px)
+              const grab = (e: RPointerEvent) => {
+                if (readOnly || mode !== 'select') return onBackgroundDown(e)
+                store().select({ kind: 'placement', id: p.id })
+                begin({ type: 'item', id: p.id, grab: sub(toWorld(e), v(p.x, p.y)), moved: false }, e)
+              }
+              const r = 7 * px
+              return (
+                <g key={p.id} transform={`translate(${p.x} ${p.y}) rotate(${deg})`} style={{ cursor: readOnly ? undefined : drag?.type === 'item' ? 'grabbing' : 'grab' }} onPointerDown={grab}>
+                  <rect x={-hw} y={-hd - 4 * px} width={item.width} height={t + 4 * px + 2 * r + 4 * px} fill="transparent" />
+                  <rect x={-hw} y={-hd} width={item.width} height={t} rx={t / 2} fill={item.color} stroke={stroke} strokeWidth={(selected ? 2.5 : 1) * px} />
+                  <circle cx={0} cy={-hd + t + r + 2 * px} r={r} fill="#fffaf1" stroke={stroke} strokeWidth={(selected ? 2 : 1) * px} />
+                  <text x={0} y={-hd + t + r + 2 * px} fontSize={9 * px} textAnchor="middle" dominantBaseline="central" fill="#4a4740" pointerEvents="none">
+                    {WALL_GLYPH[item.category] ?? '▣'}
+                  </text>
+                </g>
+              )
+            }
             return (
               <g key={p.id} transform={`translate(${p.x} ${p.y}) rotate(${deg})`}>
                 <rect

@@ -19,6 +19,7 @@ import { downloadJSON, parseDoc } from '../storage'
 import { camMoved, Scene3D, type SceneInset, type WallMode } from '../three/Scene3D'
 import { BuyDrawer, CATEGORY_GROUPS, ShopSheet } from './BuyDrawer'
 import { dropSpotAt, flushEditRun, rotatePlacementSmart } from './editActions'
+import { isWallDecor } from '../model/wallDecor'
 import { ItemThumb } from './ItemThumb'
 import { GoalsSheet, LevelUpCard, VibeMeter } from './Goals'
 import { unpackAndCelebrate } from './unpack'
@@ -736,9 +737,12 @@ function ContextBar({ slim = false }: { slim?: boolean }) {
             <I.IconBox />
           </Act>
         )}
-        <Act label="Rotate" tip="Rotate 90°" keys="R" onClick={() => rotatePlacementSmart(p.id, Math.PI / 2)}>
-          <I.IconRotate />
-        </Act>
+        {/* Wall decor always faces into the room: nothing to turn. */}
+        {!isWallDecor(item?.category) && (
+          <Act label="Rotate" tip="Rotate 90°" keys="R" onClick={() => rotatePlacementSmart(p.id, Math.PI / 2)}>
+            <I.IconRotate />
+          </Act>
+        )}
         {!packed && (
           <Act label="Copy" keys="Ctrl+D" onClick={() => s.duplicatePlacement(p.id)}>
             <I.IconCopy />
@@ -1197,7 +1201,7 @@ function useGameShortcuts() {
       else if (k === 'Home') {
         e.preventDefault()
         setCam({ resetKey: camState.resetKey + 1 })
-      } else if (/^[1-6]$/.test(k) && g.mode === 'buy') g.setBuyTab(CATEGORY_GROUPS[Number(k) - 1].key)
+      } else if (/^[1-7]$/.test(k) && g.mode === 'buy') g.setBuyTab(CATEGORY_GROUPS[Number(k) - 1].key)
       else if (k === 'Enter' && st.selection && t.tagName !== 'BUTTON' && t.tagName !== 'A') st.select(null)
     }
     window.addEventListener('keydown', onKey)

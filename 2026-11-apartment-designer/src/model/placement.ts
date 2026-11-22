@@ -30,6 +30,7 @@ import {
   closestPointOnSegment,
 } from './geometry'
 import type { Doc, Item, Layout, Placement, Room, Vec2 } from './types'
+import { findWallDrop, isWallDecor } from './wallDecor'
 import { catalogEntry, itemFromCatalog } from './catalog'
 import { chairBackNeed, CHAIR_REACH, DRAWER_PIECES, MIN_DRAWER_FRONT, polygonGap, sideCompanion, TABLE_PULL_OUT, walkingPaths } from './checks'
 
@@ -181,6 +182,8 @@ const fmtSize = (it: DropItem, units: Doc['apartment']['units']) =>
  */
 export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?: Vec2; walkCheck?: boolean; nextTo?: string } = {}): DropResult {
   if (HOSTED.has(item.category)) return findHostDrop(doc, layout, item, opts)
+  // Wall decor hangs on a wall (wallDecor.ts) and plays no part in the floor search below.
+  if (isWallDecor(item.category)) return findWallDrop(doc, layout, item, opts)
   const rooms = doc.rooms
   if (!rooms.length) return { ok: true, spot: { x: 1, y: 1, rotation: 0 } }
   const byId = new Map(doc.items.map((i) => [i.id, i]))
@@ -190,7 +193,7 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
     const body = orientedRect(v(p.x, p.y), it.width / 2, it.depth / 2, p.rotation)
     return [{ id: p.id, item: it, p, body, room: rooms.find((r) => pointInPolygon(v(p.x, p.y), r.polygon)) }]
   })
-  const solids = others.filter((o) => !o.item.floorLevel && !o.p.on)
+  const solids = others.filter((o) => !o.item.floorLevel && !o.p.on && !isWallDecor(o.item.category))
   const rugs = others.filter((o) => o.item.floorLevel)
   const zonesOfOthers = solids.flatMap((o) => clearanceZones(o.item, o.p).map((z) => ({ poly: z.poly, side: z.side, owner: o.item.category })))
   // The space in front of a bed, wardrobe, dresser or desk is where you get in, sit or open the

@@ -4,6 +4,7 @@
 import { add, orientedRect, pointInPolygon, polygonInsideRoom, polygonsOverlap, rot, v } from '../model/geometry'
 import { clampOnHost, HOSTED, hostAt } from '../model/placement'
 import { snapPlacement } from '../model/snapping'
+import { isWallDecor, snapToWall } from '../model/wallDecor'
 import type { Item, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore, type PlaceAt } from '../store'
 import { viewFrame } from '../three/viewFrame'
@@ -42,8 +43,8 @@ export type Conflicts = { outside: boolean; hits: Set<string> }
 
 /** What a pose runs into: out of every room, and which solid pieces it overlaps (rugs never block). */
 function conflicts(item: Item, p: Placement, others: Others, rooms: Room[] = useStore.getState().doc.rooms): Conflicts {
-  if (p.on) return { outside: false, hits: new Set() }
-  others = others.filter((o) => !o.p.on)
+  if (p.on || isWallDecor(item.category)) return { outside: false, hits: new Set() }
+  others = others.filter((o) => !o.p.on && !isWallDecor(o.item.category))
   const b = body(item, p)
   const outside = rooms.length > 0 && !rooms.some((r) => polygonInsideRoom(b, r.polygon))
   const hits = new Set(item.floorLevel ? [] : others.filter((o) => !o.item.floorLevel && polygonsOverlap(b, body(o.item, o.p))).map((o) => o.id))
@@ -132,6 +133,8 @@ export function rotatePlacementSmart(id: string, delta: number) {
     const it = o.id === id ? undefined : byId.get(o.itemId)
     return it ? [{ id: o.id, item: it, p: o }] : []
   })
+  // Wall decor always faces into the room: a turn does nothing.
+  if (isWallDecor(item.category)) return
   const step = Math.abs(delta)
   let next: Placement = { ...p, rotation: normAngle(Math.round((p.rotation + delta) / step) * step) }
   const host = p.on ? layout.placements.find((x) => x.id === p.on) : undefined
@@ -177,6 +180,13 @@ export function nudgePlacement(id: string, screen: Vec2, step: number) {
       if (Math.hypot(c.x - to.x, c.y - to.y) > 1e-6) return
     }
   }
+  const wallItem = s.doc.items.find((i) => i.id === p.itemId)
+  if (wallItem && isWallDecor(wallItem.category)) {
+    // Wall decor slides along its wall (or round the corner onto the next one).
+    const spot = snapToWall(s.doc, activeLayout(s.doc), wallItem, to, id)
+    if (spot) inEditRun(() => useStore.getState().updatePlacement(id, { x: spot.x, y: spot.y, rotation: spot.rotation }))
+    return
+  }
   inEditRun(() => useStore.getState().updatePlacement(id, { x: to.x, y: to.y }))
 }
 
@@ -198,10 +208,14 @@ export function dropSpotAt(item: Item, pt: Vec2): PlaceAt | null {
   }
   const room = doc.rooms.find((r) => pointInPolygon(pt, r.polygon))
   if (!room) return null
+  if (isWallDecor(item.category)) {
+    const spot = snapToWall(doc, layout, item, pt)
+    return spot ? { x: spot.x, y: spot.y, rotation: spot.rotation } : null
+  }
   const byId = new Map(doc.items.map((i) => [i.id, i]))
   const others: Others = layout.placements.flatMap((o) => {
     const it = byId.get(o.itemId)
-    return it && !o.on ? [{ id: o.id, item: it, p: o }] : []
+    return it && !o.on && !isWallDecor(it.category) ? [{ id: o.id, item: it, p: o }] : []
   })
   const proposed: Placement = { id: '', itemId: item.id, x: pt.x, y: pt.y, rotation: 0 }
   const snapped = { ...proposed, ...snapPlacement(item, proposed, doc.rooms, others, s.snap).placement }
