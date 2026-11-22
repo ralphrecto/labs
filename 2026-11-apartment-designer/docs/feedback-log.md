@@ -386,7 +386,7 @@ Rolled over:
 
 257 tests pass.
 
-## Round 13 (2026-11-22 22:20-2026-11-23 00:30 UTC)
+## Round 13 (2026-11-22 22:20-23:25 UTC)
 
 The round started with two features built straight from the backlog (wall decor; steady stars while dragging). Two reviewers ran alongside them: one on the scan-your-own-home path, one on accessibility and performance. Two more implementers then fixed what those reviewers found, working on the merged code.
 
