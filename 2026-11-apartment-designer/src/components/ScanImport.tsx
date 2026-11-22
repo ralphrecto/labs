@@ -42,6 +42,8 @@ export function ScansPanel() {
   const [over, setOver] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const s = useStore.getState()
+  // Once the home has a real scan, this panel is for adding the next room, not trying things out.
+  const hasReal = scans.some((r) => !/^sample/i.test(r.fileName ?? r.name))
 
   return (
     <section
@@ -59,7 +61,7 @@ export function ScansPanel() {
         else s.notify('Drop a PLY, SPZ, GLB or OBJ scan file.')
       }}
     >
-      <h3>Scans</h3>
+      <h3>{hasReal ? 'Add a room' : 'Scans'}</h3>
       {scans.length > 0 && (
         <ul className="list layouts">
           {scans.map((r) => {
@@ -77,19 +79,23 @@ export function ScansPanel() {
           })}
         </ul>
       )}
-      {scans.length === 0 && (
+      {hasReal ? (
+        <p className="muted small">
+          Scan another room in Scaniverse and bring it in here. It lands beside your other rooms, ready to size and furnish.
+        </p>
+      ) : scans.length === 0 && (
         <p className="muted small">
           Import a room scan to trace your walls over it at true size. In Scaniverse, export a splat as <strong>PLY</strong> or <strong>SPZ</strong>, or a mesh as <strong>GLB</strong> or OBJ.
         </p>
       )}
       <div className={`drop-hint small muted${over ? ' over' : ''}`}>{busy ?? 'Drop a scan file here, or'}</div>
       <div className="btn-row">
-        <button className="primary" disabled={!!busy} onClick={() => fileRef.current?.click()}>
-          Import scan…
+        <button className="primary g-btn sm" disabled={!!busy} onClick={() => fileRef.current?.click()}>
+          {hasReal ? 'Import another room…' : 'Import scan…'}
         </button>
-        <button disabled={!!busy} onClick={() => void doImport({ name: 'Sample living room.ply', type: 'application/octet-stream', blob: new Blob([samplePly() as BlobPart]) }, setBusy)} title="A synthetic splat scan of an L-shaped room, to try the tools">
+        {!hasReal && <button className="g-btn sm ghost" disabled={!!busy} onClick={() => void doImport({ name: 'Sample living room.ply', type: 'application/octet-stream', blob: new Blob([samplePly() as BlobPart]) }, setBusy)} title="A synthetic splat scan of an L-shaped room, to try the tools">
           Try a sample
-        </button>
+        </button>}
       </div>
       <input
         ref={fileRef}

@@ -18,6 +18,7 @@ export function ScanImportPanel() {
   const importSpatialLM = useScanUI((s) => s.importSpatialLM)
   const fileRef = useRef<HTMLInputElement>(null)
   const [text, setText] = useState('')
+  const hasReal = useStore((s) => (s.doc.scans ?? []).some((r) => !/^sample/i.test(r.fileName ?? r.name)))
   return (
     <section className="panel">
       <h3>From a scan</h3>
@@ -26,9 +27,11 @@ export function ScanImportPanel() {
         <button disabled={!!busy} onClick={() => fileRef.current?.click()} title="A point cloud or Gaussian splat export (.ply), in meters">
           Open scan (.ply)…
         </button>
-        <button disabled={!!busy} onClick={() => analyze(syntheticScan())}>
-          Try a sample scan
-        </button>
+        {!hasReal && (
+          <button disabled={!!busy} onClick={() => analyze(syntheticScan())}>
+            Try a sample scan
+          </button>
+        )}
       </div>
       {busy && <p className="small scan-busy">{busy}</p>}
       <details>

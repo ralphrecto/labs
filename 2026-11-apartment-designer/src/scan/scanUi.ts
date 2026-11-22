@@ -55,6 +55,35 @@ export function reviewChoice(r: ScanReview): ApplyChoice {
   }
 }
 
+/** A file name that says nothing about the room: "Scan 2026-11-20 14.32", "3DGS_8f2a…", "IMG_0042", a date or an id. */
+export function isGenericScanName(name: string) {
+  const n = name.trim().replace(/\.[a-z0-9]+$/i, '')
+  if (!n) return true
+  if (/^(scan|3dgs|splat|capture|untitled|img|mesh|model|export|scaniverse|room ?plan|new scan)(?![a-z])/i.test(n)) return true
+  if (/\d{4}[-_. ]\d{1,2}[-_. ]\d{1,2}|\d{1,2}[-_. ]\d{1,2}[-_. ]\d{2,4}|\d{1,2}[.:]\d{2}/.test(n)) return true
+  if (!/[a-z]{3,}/i.test(n.replace(/[0-9a-f]{6,}/gi, ''))) return true
+  return false
+}
+
+/** Name for the found room: the file's name if it says something, else a guess from the furniture. */
+export function friendlyRoomName(fileName: string, objects: { category: string }[]) {
+  const name = fileName.trim().replace(/\.[a-z0-9]+$/i, '')
+  if (!isGenericScanName(name)) return name
+  const has = (c: string) => objects.some((o) => o.category === c)
+  if (has('bed')) return 'Bedroom'
+  if (has('sofa')) return 'Living room'
+  if (has('desk')) return 'Office'
+  if (has('dining-table')) return 'Dining room'
+  return 'Living room'
+}
+
+/** A picked file we don't read: say which formats do work, and how to get one out of Scaniverse. */
+export function notScanFileMessage(name: string) {
+  const e = name.toLowerCase().split('.').pop() ?? ''
+  const unsupported = e === 'usdz' || e === 'fbx' || e === 'usd' || e === 'stl'
+  return `${unsupported ? `That’s a .${e} file: .usdz and .fbx aren’t supported yet. ` : 'That isn’t a scan file. '}In Scaniverse, tap Share, then Export, choose PLY (or SPZ), and pick that file here. GLB and OBJ meshes work too.`
+}
+
 function startReview(estimate: SceneEstimate, name: string): ScanReview {
   return {
     estimate,
@@ -80,7 +109,7 @@ export const useScanUI = create<ScanUIState>((set, get) => ({
       const leveled = cloudToScan(cloud, scan)
       set((s) => ({ clouds: { ...s.clouds, [scan.id]: leveled } }))
       void saveScan(leveled)
-      set({ review: startReview(estimate, scan.name || 'Scanned room'), busy: null })
+      set({ review: startReview(estimate, friendlyRoomName(scan.name, estimate.objects)), busy: null })
       const found = estimate.objects.length
       useStore.getState().notify(
         estimate.room

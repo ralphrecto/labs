@@ -6,7 +6,7 @@ import { SCAN_ACCEPT, isScanFileName } from '../scan/importers'
 import { importScanFile, scanCenter, scanEntry, useScanRuntime } from '../scan/runtime'
 import { SAMPLE_TRUTH, sampleFilePoint, samplePly } from '../scan/sampleScan'
 import { placementShift } from '../scan/apply'
-import { reviewChoice, useScanUI, type ReviewObject } from '../scan/scanUi'
+import { notScanFileMessage, reviewChoice, useScanUI, type ReviewObject } from '../scan/scanUi'
 import { useAnalysis } from '../analysis'
 import { activeLayout, loadSample, newEmptyDoc, switchHome, useStore } from '../store'
 import { listHomes } from '../storage'
@@ -32,23 +32,32 @@ function placeNextToRooms() {
   return { x: Math.max(...pts.map((p) => p.x)) + 0.8, y: Math.min(...pts.map((p) => p.y)) }
 }
 
-function finish() {
+function finish(opts?: { door?: boolean }) {
   const s = useStore.getState()
   if (s.mode !== 'select') s.setMode('select')
   s.setUI({ scanDraft: null, selection: null })
-  useGame.getState().setMode('buy')
+  useGame.getState().setMode(opts?.door ? 'build' : 'buy')
   useGame.getState().setPhase('play')
+  if (opts?.door) {
+    // Straight into Build → Door, so the front door the scan missed is one tap on a wall away.
+    s.setMode('door')
+  }
 }
+
 
 export function Onboarding() {
   const [step, setStep] = useState<Step>('welcome')
   const [scanId, setScanId] = useState<string | null>(null)
   // The sample scan comes with its tape lengths, so the player doesn't measure it by hand.
   const [isSample, setIsSample] = useState(false)
+  // "Add another room scan" from the last step: the next scan joins this home instead of starting a new one.
+  const [adding, setAdding] = useState(false)
+  // The player asked to put in the door the scan missed, straight after moving in.
+  const [doorNext, setDoorNext] = useState(false)
   const idx = STEPS.indexOf(step)
 
   const back = () => {
-    if (step === 'scan') setStep('welcome')
+    if (step === 'scan') setStep(adding ? 'done' : 'welcome')
     else if (step === 'measure') setStep('scan')
     else if (step === 'detect') {
       useScanUI.getState().cancel()
@@ -71,6 +80,7 @@ export function Onboarding() {
         {step === 'welcome' && <Welcome onScan={() => setStep('scan')} />}
         {step === 'scan' &&
           <ScanStep
+            adding={adding}
             onImported={(id, sample) => {
               setScanId(id)
               setIsSample(sample)
@@ -87,9 +97,21 @@ export function Onboarding() {
               useScanUI.getState().cancel()
               setStep('measure')
             }}
+            doorNext={doorNext}
+            onDoorNext={setDoorNext}
           />
         )}
-        {step === 'done' && <Done />}
+        {step === 'done' && (
+          <Done
+            doorNext={doorNext}
+            onAddRoom={() => {
+              setAdding(true)
+              setDoorNext(false)
+              setScanId(null)
+              setStep('scan')
+            }}
+          />
+        )}
       </main>
     </div>
   )
@@ -209,7 +231,7 @@ function HouseArt({ small }: { small?: boolean }) {
 
 // ---------------------------------------------------------------- 2 · how to scan + import
 
-function ScanStep({ onImported }: { onImported: (id: string, sample: boolean) => void }) {
+function ScanStep({ onImported, adding }: { onImported: (id: string, sample: boolean) => void; adding?: boolean }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<{ name: string; message: string } | null>(null)
   const [over, setOver] = useState(false)
@@ -223,14 +245,21 @@ function ScanStep({ onImported }: { onImported: (id: string, sample: boolean) =>
     }
   }, [])
   const progress = useScanRuntime((s) => Object.values(s.entries).find((e) => e.status === 'loading')?.message)
+  // On a phone the message sits below the fold of a long page: bring it into view.
+  const errorRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [error])
 
   const run = async (file: { name: string; type?: string; blob: Blob }, sample = false) => {
     setError(null)
     setBusy(file.name)
     try {
-      // A first scan is the whole home: start from a clean apartment.
-      newEmptyDoc()
-      const [ref] = await Promise.all([importScanFile(file, placeNextToRooms), wait(900)])
+      // A first scan is the whole home, so it starts a clean apartment at the origin; another room
+      // goes beside the ones already there. Only swap homes once the file has read, so a broken file
+      // leaves the open home alone.
+      const [ref] = await Promise.all([importScanFile(file, adding ? placeNextToRooms : () => ({ x: 0, y: 0 })), wait(900)])
+      if (!adding) newEmptyDoc()
       useStore.getState().addScan(ref)
       if (alive.current) onImported(ref.id, sample)
     } catch (err) {
@@ -240,7 +269,7 @@ function ScanStep({ onImported }: { onImported: (id: string, sample: boolean) =>
   }
   const pick = (f: File | undefined) => {
     if (!f) return
-    if (!isScanFileName(f.name)) return setError({ name: f.name, message: 'That isn’t a scan file. Export from Scaniverse and pick the file it makes (it ends in .ply, .spz, .glb or .obj).' })
+    if (!isScanFileName(f.name)) return setError({ name: f.name, message: notScanFileMessage(f.name) })
     void run({ name: f.name, type: f.type, blob: f })
   }
 
@@ -257,10 +286,10 @@ function ScanStep({ onImported }: { onImported: (id: string, sample: boolean) =>
 
   return (
     <div className="onb-scroll">
-      <Title kicker="Step 1 · Scan" sub="Use the free Scaniverse app on your phone. Any phone camera works.">
-        Scan your place
+      <Title kicker={adding ? 'Another room' : 'Step 1 · Scan'} sub={adding ? 'Scan the next room the same way. It goes right beside the rooms you already have.' : 'Use the free Scaniverse app on your phone. Any phone camera works.'}>
+        {adding ? 'Add another room' : 'Scan your place'}
       </Title>
-      <button
+      {!adding && <button
         className="onb-try g-card"
         onClick={() => void run({ name: 'Sample living room.ply', type: 'application/octet-stream', blob: new Blob([samplePly() as BlobPart]) }, true)}
       >
@@ -274,7 +303,7 @@ function ScanStep({ onImported }: { onImported: (id: string, sample: boolean) =>
         <span className="onb-try-go" aria-hidden>
           ›
         </span>
-      </button>
+      </button>}
       <ol className="onb-tips">
         <Tip n={1} art={<TipArtSplat />} title="Start a new scan">
           Pick the <b>Splat</b> option. It’s the one that works with just your camera.
@@ -283,7 +312,7 @@ function ScanStep({ onImported }: { onImported: (id: string, sample: boolean) =>
           Phone at chest height, circle the room along the walls. Catch the floor and every corner.
         </Tip>
         <Tip n={3} art={<TipArtExport />} title="Send it here">
-          Tap <b>Share</b>, then <b>Export</b>, and pick the file here (AirDrop or Save to Files works).
+          Tap <b>Share</b>, then <b>Export</b>, choose <b>PLY</b> (or SPZ), then pick the file here. AirDrop or Save to Files works.
         </Tip>
       </ol>
 
@@ -301,7 +330,7 @@ function ScanStep({ onImported }: { onImported: (id: string, sample: boolean) =>
         }}
       >
         {error ? (
-          <div className="onb-error" role="alert">
+          <div className="onb-error" role="alert" ref={errorRef}>
             <div className="onb-error-face" aria-hidden>
               :(
             </div>
@@ -316,10 +345,7 @@ function ScanStep({ onImported }: { onImported: (id: string, sample: boolean) =>
         <button className="g-btn primary big onb-wide" onClick={() => fileRef.current?.click()}>
           {error ? 'Try another file' : 'Choose scan file'}
         </button>
-        <details className="onb-formats">
-          <summary>Which files work?</summary>
-          Scaniverse exports ending in .ply or .spz (splats), or .glb or .obj (meshes).
-        </details>
+        <p className="onb-formats">Works with Scaniverse exports ending in .ply or .spz (splats), or .glb or .obj (meshes). Not .usdz or .fbx yet.</p>
       </div>
       <input
         ref={fileRef}
@@ -689,7 +715,19 @@ function Confidence({ count, spread, bad }: { count: number; spread: number; bad
 
 // ---------------------------------------------------------------- 4 · find your rooms
 
-function DetectStep({ scanId, onNext, onRemeasure }: { scanId: string; onNext: () => void; onRemeasure: () => void }) {
+function DetectStep({
+  scanId,
+  onNext,
+  onRemeasure,
+  doorNext,
+  onDoorNext,
+}: {
+  scanId: string
+  onNext: () => void
+  onRemeasure: () => void
+  doorNext?: boolean
+  onDoorNext?: (v: boolean) => void
+}) {
   const review = useScanUI((s) => s.review)
   const sized = useStore((s) => ((s.doc.scans ?? []).find((r) => r.id === scanId)?.references.length ?? 0) > 0)
   const units = useStore((s) => s.doc.apartment.units)
@@ -794,6 +832,7 @@ function DetectStep({ scanId, onNext, onRemeasure }: { scanId: string; onNext: (
   const roomOn = review.includeRoom && !!room
   const nothing = !roomOn && accepted.length === 0
   const scanRef = (useStore.getState().doc.scans ?? []).find((r) => r.id === scanId)
+  const noDoor = roomOn && !room.openings.some((o) => o.kind === 'door')
 
   return (
     <div className="onb-detect">
@@ -803,7 +842,16 @@ function DetectStep({ scanId, onNext, onRemeasure }: { scanId: string; onNext: (
       <div className="onb-preview g-card">
         <PlanView />
       </div>
-      <CeilingCheck height={(scanRef && scanCeiling(scanRef)) ?? (roomOn ? room.ceilingHeight : null)} onRemeasure={onRemeasure} />
+      {sized ? (
+        <CeilingCheck height={(scanRef && scanCeiling(scanRef)) ?? (roomOn ? room.ceilingHeight : null)} onRemeasure={onRemeasure} />
+      ) : (
+        <p className="onb-ceiling onb-unsized">
+          Not sized yet, so furniture fit is a guess.
+          <button type="button" className="onb-fix" onClick={onRemeasure}>
+            <IconRuler /> Measure a length
+          </button>
+        </p>
+      )}
       <div className="onb-found g-card">
         {room && (
           <label className="g-toggle onb-found-row room">
@@ -811,13 +859,40 @@ function DetectStep({ scanId, onNext, onRemeasure }: { scanId: string; onNext: (
               <span className="onb-found-ico">
                 <IconHome />
               </span>
-              {review.roomName || 'Room'}
+              <input
+                className="onb-room-name"
+                value={review.roomName}
+                placeholder="Room name"
+                aria-label="Room name"
+                maxLength={40}
+                onChange={(e) => useScanUI.getState().setReview({ roomName: e.target.value })}
+                onKeyDown={(e) => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter') e.currentTarget.blur()
+                }}
+                onClick={(e) => e.preventDefault()}
+                onFocus={(e) => e.currentTarget.select()}
+              />
               <small>
                 {roomDetails(room.openings.map((o) => o.kind), formatLength(room.ceilingHeight, units))}
               </small>
             </span>
             <input type="checkbox" checked={review.includeRoom} onChange={(e) => useScanUI.getState().setReview({ includeRoom: e.target.checked })} />
           </label>
+        )}
+        {noDoor && (
+          <div className="onb-found-row onb-door-row">
+            <span>
+              <span className="onb-found-ico door" aria-hidden>
+                <IconDoorSmall />
+              </span>
+              No door found
+              <small>You can add your front door in Build.</small>
+            </span>
+            <button type="button" className={`g-btn sm${doorNext ? ' primary' : ''}`} aria-pressed={!!doorNext} onClick={() => onDoorNext?.(!doorNext)}>
+              {doorNext ? <><IconCheck /> Next up</> : 'Add it next'}
+            </button>
+          </div>
         )}
         {objects.map((o) => (
           <label key={o.id} className="g-toggle onb-found-row">
@@ -849,6 +924,15 @@ function DetectStep({ scanId, onNext, onRemeasure }: { scanId: string; onNext: (
         </button>
       </div>
     </div>
+  )
+}
+
+function IconDoorSmall() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17M3 21h18" />
+      <circle cx="14.5" cy="12" r="1" fill="currentColor" />
+    </svg>
   )
 }
 
@@ -896,12 +980,13 @@ function DetectArt() {
 
 const CONFETTI = ['var(--g-coral)', 'var(--g-sun)', 'var(--g-sage)', 'var(--g-sky)', 'var(--g-plum)']
 
-function Done() {
+function Done({ doorNext, onAddRoom }: { doorNext?: boolean; onAddRoom: () => void }) {
   // The same goal the Next chip shows once the home opens.
   const doc = useStore((s) => s.doc)
   const layout = activeLayout(doc)
   const analysis = useAnalysis(doc, layout)
   const first = useMemo(() => nextGoal(scoreHome(doc, layout, analysis)), [doc, layout, analysis])
+  const hasScan = (doc.scans ?? []).length > 0
   return (
     <div className="onb-center onb-done">
       <div className="onb-confetti" aria-hidden>
@@ -935,9 +1020,14 @@ function Done() {
         </span>
       </div>
       <div className="onb-actions">
-        <button className="g-btn primary big onb-wide" onClick={finish}>
-          Start designing
+        <button className="g-btn primary big onb-wide" onClick={() => finish({ door: doorNext })}>
+          {doorNext ? 'Add my front door' : 'Start designing'}
         </button>
+        {hasScan && (
+          <button className="g-btn ghost onb-wide" onClick={onAddRoom}>
+            <IconScan /> Add another room scan
+          </button>
+        )}
       </div>
     </div>
   )
