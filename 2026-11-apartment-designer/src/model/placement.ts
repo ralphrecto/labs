@@ -27,6 +27,7 @@ import {
   v,
   wallInwardNormal,
   wallSegments,
+  closestPointOnSegment,
 } from './geometry'
 import type { Doc, Item, Layout, Placement, Room, Vec2 } from './types'
 import { catalogEntry, itemFromCatalog } from './catalog'
@@ -74,6 +75,10 @@ const FRONT_OPEN = new Set(['bed', 'wardrobe', 'dresser', 'desk'])
 const WALL_ONLY = new Set(['desk', 'bookshelf', 'sideboard', 'wardrobe', 'dresser', 'console-table'])
 /** A dining table this long (m) seats four or more. */
 const FOUR_SEATER = 1.2
+/** Room behind a desk chair to roll it back and stand up (m). */
+const OFFICE_CHAIR_ROLL = 0.6
+/** Small decor that tucks against a wall or into a corner, out of everyone's way. */
+const DECOR = new Set(['plant', 'box'])
 /** Pieces that may stand in a dining table's pull-out space. */
 const AT_TABLE = new Set(['dining-chair', 'bench'])
 /** Score cost of a table for four with a long side to the wall: any spot off the wall wins. */
@@ -226,6 +231,7 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
       const outD = room.wallThickness + 0.5
       keepOut.push([add(a, scale(n, inD)), add(b, scale(n, inD)), add(b, scale(n, -outD)), add(a, scale(n, -outD))])
     }
+  const doorMids = rooms.flatMap((r) => r.openings.filter((o) => o.kind === 'door').map((o) => scale(add(...openingEndpoints(r, o)), 0.5)))
   const windows = rooms.flatMap((r) =>
     r.openings.filter((o) => o.kind === 'window').map((o) => ({ room: r, wall: o.wall, ends: openingEndpoints(r, o) })),
   )
@@ -352,14 +358,37 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
         ? { ...(item as Item), clearance: { front: TABLE_PULL_OUT, back: TABLE_PULL_OUT, left: 0.5, right: 0.5 } }
         : cat === 'dining-chair' && item.clearance
           ? { ...(item as Item), clearance: { ...item.clearance, back: chairBackNeed({ item: item as Item, body }, diningTables) } }
-          : (item as Item)
-    // A dining chair with no room behind it to pull it out doesn't count as a seat: it goes elsewhere at the table if it can.
-    const blockedCost = cat === 'dining-chair' ? 16 : 6
+          : cat === 'office-chair'
+            ? // A desk chair rolls back to stand up: that space counts like a dining chair's pull-out.
+              { ...(item as Item), clearance: { front: 0, back: OFFICE_CHAIR_ROLL, left: 0, right: 0 } }
+            : (item as Item)
+    // A chair with no room behind it to pull it out doesn't count as a seat: it goes elsewhere at the table or desk if it can.
+    const blockedCost = cat === 'dining-chair' || cat === 'office-chair' ? 16 : 6
     for (const z of clearanceZones(asItem, pl)) {
       if (!polygonInsideRoom(z.poly, room.polygon, 0.01)) s -= blockedCost
       else if (solids.some((o) => convexOverlap(z.poly, o.body, 0.005) && !sideCompanion(item.category, z.side, o.item.category))) s -= blockedCost
     }
     if (!VIEW_OK.has(cat)) for (const z of viewZones) if (convexOverlap(body, z.poly, 0.005)) s -= 10
+    // A desk chair keeps its distance from the other pieces in the room (the foot of the bed).
+    if (cat === 'office-chair')
+      for (const o of solids) {
+        if (o.item.category === 'desk' || o.room?.id !== room.id) continue
+        const g = polygonGap(body, o.body)
+        if (g < OFFICE_CHAIR_ROLL) s -= (OFFICE_CHAIR_ROLL - g) * 20
+      }
+    // Small decor stays out of the way: off any table's chair pull-out floor and other pieces'
+    // clearances, against a wall or in a corner rather than out in the middle of the floor.
+    if (DECOR.has(cat)) {
+      for (const t of diningTables) for (const z of tablePullOuts(t.item, t.p)) if (convexOverlap(body, z, 0.005)) s -= 15
+      for (const z of zonesOfOthers) if (convexOverlap(body, z.poly, 0.005)) s -= 6
+      // (A plant alone in an empty room just goes where it looks best.)
+      const wallGaps = emptyRooms.has(room.id) ? [] : wallSegments(room)
+        .map(([a, b]) => closestPointOnSegment(c, a, b).distance - Math.min(hw, hd))
+        .sort((a, b) => a - b)
+      s -= Math.min(wallGaps[0] ?? 0, 2) * 4
+      // ...and not by a door, where it narrows the way in.
+      if (wallGaps.length) for (const dm of doorMids) s -= Math.max(0, 1.2 - dist(c, dm)) * 10
+    }
     // A room past the designers' third of the floor feels crammed (the density goal): a roomier room wins.
     const fill = (solids.filter((o) => o.room?.id === room.id).reduce((a, o) => a + polygonArea(o.body), 0) + 4 * hw * hd) / polygonArea(room.polygon)
     if (fill > (BEDROOM.test(room.name) ? FILL_MAX_BEDROOM : FILL_MAX)) s -= 20
@@ -454,9 +483,10 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
   if (cat === 'office-chair')
     for (const d of ofCat('desk'))
       for (const gap of [0.03, 0.12, 0.25])
-        for (const u of [0, -0.25, 0.25]) {
+        for (const u of [0, -0.12, 0.12, -0.25, 0.25]) {
           if (Math.abs(u) + hw > d.item.width / 2 + 0.1) continue
-          consider(local(d, v(u, d.item.depth / 2 + gap + hd)), d.p.rotation + Math.PI, 25 - gap * 4 - Math.abs(u) * 2)
+          // Centred on the desk's front edge; off to one side only when that keeps it clear.
+          consider(local(d, v(u, d.item.depth / 2 + gap + hd)), d.p.rotation + Math.PI, 25 - gap * 4 - Math.abs(u) * 12)
         }
   if (cat === 'coffee-table' || cat === 'ottoman')
     for (const s of ofCat('sofa')) for (const gap of [0.46, 0.48, 0.5]) consider(local(s, v(0, s.item.depth / 2 + gap + hd)), s.p.rotation, cat === 'coffee-table' ? 25 : 12)

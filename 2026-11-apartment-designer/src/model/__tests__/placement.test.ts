@@ -3,7 +3,7 @@ import { analyze } from '../../analysis'
 import { catalogEntry, itemFromCatalog } from '../catalog'
 import { checkLayout } from '../checks'
 import { clearanceZones, convexOverlap, doorSwing, footprint, pointInPolygon, polygonInsideRoom, v, wallInwardNormal, wallSegments, closestPointOnSegment } from '../geometry'
-import { findDrop, MIN_DRAWER_FRONT, polygonGap } from '../placement'
+import { findDrop, MIN_DRAWER_FRONT, polygonGap, tablePullOuts } from '../placement'
 import { emptyDoc, rectRoom, sampleDoc } from '../sample'
 import type { Doc, Item, Opening, Placement } from '../types'
 import { scoreHome } from '../../game/goals'
@@ -368,6 +368,56 @@ describe('findDrop round 5', () => {
     for (const c of ['dining-chair', 'dining-chair', 'sideboard', 'bookshelf', 'armchair', 'plant']) {
       const r = drop(d, c)
       if (r.p && c !== 'dining-chair') for (const z of sides) expect(convexOverlap(footprint(r.item, r.p), z, 0.005), c).toBe(false)
+    }
+  })
+})
+
+describe('findDrop round 10', () => {
+  const itemOf = (d: Doc, p: Placement) => d.items.find((i) => i.id === p.itemId)!
+  const ofCat = (d: Doc, c: string) => layoutOf(d).placements.filter((p) => itemOf(d, p).category === c)
+  const localTo = (q: Placement, o: Placement) => {
+    const c = Math.cos(-o.rotation)
+    const s = Math.sin(-o.rotation)
+    return v((q.x - o.x) * c - (q.y - o.y) * s, (q.x - o.x) * s + (q.y - o.y) * c)
+  }
+
+  it('keeps the dining table out from between the sofa and the TV in the sample', () => {
+    const d = sampleDoc()
+    const { item, p } = drop(d, 'dining-table')
+    expect(p).not.toBeNull()
+    const sofa = ofCat(d, 'sofa')[0]
+    const tv = ofCat(d, 'tv-stand')[0]
+    const body = footprint(item, p!)
+    // The strip between them, as wide as the sofa.
+    const sofaItem = itemOf(d, sofa)
+    const y0 = tv.y + itemOf(d, tv).depth / 2
+    const y1 = sofa.y - sofaItem.depth / 2
+    const strip = [v(sofa.x - sofaItem.width / 2, y0), v(sofa.x + sofaItem.width / 2, y0), v(sofa.x + sofaItem.width / 2, y1), v(sofa.x - sofaItem.width / 2, y1)]
+    expect(convexOverlap(body, strip, 0.005)).toBe(false)
+  })
+
+  it('centres the desk chair at the desk, clear of the bed', () => {
+    const d = sampleDoc()
+    const desk = drop(d, 'desk')
+    const chair = drop(d, 'office-chair')
+    expect(desk.p && chair.p).toBeTruthy()
+    expect(Math.abs(localTo(chair.p!, desk.p!).x)).toBeLessThan(0.13)
+    const bed = ofCat(d, 'bed')[0]
+    expect(polygonGap(footprint(chair.item, chair.p!), footprint(itemOf(d, bed), bed))).toBeGreaterThanOrEqual(0.45)
+  })
+
+  it('tucks plants against walls, off the dining chairs\' pull-out floor', () => {
+    const d = sampleDoc({ settled: true })
+    const table = ofCat(d, 'dining-table')[0]
+    const zones = tablePullOuts(itemOf(d, table), table)
+    for (let i = 0; i < 3; i++) {
+      const { item, p } = drop(d, 'plant')
+      expect(p).not.toBeNull()
+      const body = footprint(item, p!)
+      for (const z of zones) expect(convexOverlap(body, z, 0.005)).toBe(false)
+      const room = roomOf(d, p!)
+      const gap = Math.min(...wallSegments(room).map(([a, b]) => closestPointOnSegment(v(p!.x, p!.y), a, b).distance)) - item.width / 2
+      expect(gap).toBeLessThan(0.35)
     }
   })
 })

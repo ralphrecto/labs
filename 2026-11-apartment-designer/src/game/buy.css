@@ -18,6 +18,10 @@
   .buy-drawer { max-height: 26vh; }
   .hud-drawer-slot.expanded .buy-drawer { max-height: 42vh; }
 }
+/* Touch screens: the size and colour chips are big enough to hit. */
+@media (pointer: coarse) {
+  .buy-preset { min-height: 32px; padding: 3px 8px; }
+}
 @keyframes buy-open { from { transform: translateY(70%) scale(0.98); opacity: 0; } 60% { opacity: 1; } }
 
 /* ---------------------------------------------------------------- category tabs */
@@ -60,6 +64,11 @@
   .buy-grid { display: grid; grid-template-columns: repeat(auto-fit, 104px); justify-content: center; gap: 8px; overflow-x: hidden; overflow-y: auto; padding: 12px 14px 8px; scrollbar-width: thin; }
   .buy-grid .buy-card { width: 104px; }
   .buy-grid .buy-empty { width: 150px; }
+}
+/* Tablets in portrait: one row of cards that scrolls sideways (as on phones), never a row cut in half. */
+@media (min-width: 700px) and (max-width: 1099px) and (orientation: portrait) {
+  .buy-drawer { max-height: none; }
+  .buy-grid { display: flex; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; }
 }
 
 .buy-card {
@@ -256,8 +265,8 @@
 /* The drawer is a column down the right, from under the top bar to above the mode bar, so the
    home keeps most of the screen. GameApp's useHudInset counts its width at the right (keep the
    query in step with DESKTOP_SIDE_DRAWER there). */
-@media (min-width: 1100px) and (min-height: 700px) {
-  .game { --desk-side-w: 360px; }
+@media (min-width: 1100px) and (min-height: 700px), (min-width: 1000px) and (min-height: 640px) and (orientation: landscape) {
+  .game { --desk-side-w: clamp(320px, 30vw, 360px); }
   .hud-drawer-slot .buy-drawer {
     left: auto; right: 16px; top: calc(var(--top-h) + 8px); bottom: calc(var(--dock-h) + 4px);
     width: var(--desk-side-w); max-width: none; max-height: none; margin: 0; border-radius: var(--g-r-lg); padding: 10px 0 8px;

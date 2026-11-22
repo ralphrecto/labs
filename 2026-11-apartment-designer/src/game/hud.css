@@ -419,3 +419,8 @@
   .hud-keys dl > div { grid-template-columns: 112px 1fr; }
 }
 /* ==================== end r9-c ==================== */
+
+/* Touch screens: the round icon buttons (Undo, Redo, Settings, Plan, the camera column) reach 44px. */
+@media (pointer: coarse) {
+  .hud-top .g-icon.sm, .hud-cam .g-icon.sm, .g-icon.sm.hud-view { width: 44px; height: 44px; }
+}

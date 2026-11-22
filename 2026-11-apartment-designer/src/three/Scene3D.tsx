@@ -915,6 +915,8 @@ export interface SceneInset {
   bottom: number
   /** A column of buttons down the right edge (the phone camera buttons): the home is framed beside it. */
   right?: number
+  /** Room for the selection bar above the drawer when nothing is selected yet (the plan keeps it clear). */
+  ctx?: number
 }
 
 /**
@@ -947,7 +949,8 @@ const FULL_FILL = 0.94
 const DESKTOP_FILL = 0.9
 /** Look mode in the game: framed between the look bar and the mode bar, with a little margin. */
 const LOOK_FILL = 0.9
-const isDesktop = (w: number, h: number) => w >= 1100 && h >= 700
+/** Keep in step with DESKTOP_SIDE_DRAWER in GameApp.tsx and the side-drawer block in buy.css. */
+const isDesktop = (w: number, h: number) => (w >= 1100 && h >= 700) || (w >= 1000 && h >= 640 && w > h)
 /** Look mode frames between the look bar and the mode bar on wider screens; phones keep the whole screen. */
 const lookInset = (inset: SceneInset | undefined, full: boolean | undefined, w: number, h: number) => (full && (w <= 700 || h <= 500) ? undefined : inset)
 /** The overview looks down from the front, a little to the right. */
