@@ -378,7 +378,6 @@
   }
   .hud-drawer-slot.expanded .buy-tab.on .buy-tab-icon::after { transform: rotate(225deg); bottom: -9px; }
   .buy-drawer:has(> .hud-ctx-wrap.slim) { padding: 6px 0 4px; }
-  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-tabs,
   .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-name,
   .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-size,
   .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-presets,
@@ -426,3 +425,16 @@
 @media (pointer: coarse) {
   .hud-top .g-icon.sm, .hud-cam .g-icon.sm, .g-icon.sm.hud-view { width: 44px; height: 44px; }
 }
+
+/* ==================== r12-c: drag and drop, gestures, focus ==================== */
+/* Where a card dragged in from the drawer will land: its footprint, snapped, on the floor. */
+.hud-drop-ghost { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; overflow: visible; }
+.hud-drop-ghost polygon { fill: color-mix(in srgb, var(--g-sage) 22%, transparent); stroke: var(--g-sage); stroke-width: 2.5; stroke-dasharray: 7 5; stroke-linejoin: round; }
+/* Fiddling never costs stars mid-gesture: a lost star waits until the piece is let go, and then
+   holds back a moment more, so a quick fix (or Undo) cancels it before it's ever shown. */
+.game.gesturing .feel-loss { visibility: hidden; }
+.game .feel-loss { animation: hud-loss-hold 3s steps(1, end), g-fade 0.3s var(--g-ease, ease-out) 3s backwards; }
+@keyframes hud-loss-hold { from { visibility: hidden; } to { visibility: visible; } }
+@media (prefers-reduced-motion: reduce) { .game .feel-loss { animation: hud-loss-hold 3s steps(1, end); } }
+/* The star pill's focus ring in the game's warm coral, following its round shape. */
+.game .goal-meter:focus-visible { outline: 3px solid var(--g-coral); outline-offset: 3px; border-radius: 999px; }

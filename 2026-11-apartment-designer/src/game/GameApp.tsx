@@ -5,22 +5,25 @@ import { Inspector } from '../components/Panels'
 import { PlanView } from '../components/PlanView'
 import { ScanReviewPanel } from '../components/ScanPanels'
 import { ScansPanel } from '../components/ScanImport'
-import { catalogEntry } from '../model/catalog'
-import { pointInPolygon, polygonArea, v } from '../model/geometry'
+import { catalogEntry, itemFromCatalog } from '../model/catalog'
+import { orientedRect, pointInPolygon, polygonArea, v } from '../model/geometry'
+import type { Item } from '../model/types'
+import { viewFrame } from '../three/viewFrame'
 import { formatLength, parseLength, unitLabel } from '../model/units'
 import { toScanData } from '../scan/align'
 import { scanEntry } from '../scan/runtime'
 import { useScanUI } from '../scan/scanUi'
-import { activeLayout, loadSample, openDocAsHome, useStore } from '../store'
+import { activeLayout, loadSample, openDocAsHome, useStore, type PlaceAt } from '../store'
 import { DesignsSheetBody, RemixPicker } from './Designs'
 import { downloadJSON, parseDoc } from '../storage'
 import { camMoved, Scene3D, type SceneInset, type WallMode } from '../three/Scene3D'
 import { BuyDrawer, CATEGORY_GROUPS, ShopSheet } from './BuyDrawer'
-import { flushEditRun, rotatePlacementSmart } from './editActions'
+import { dropSpotAt, flushEditRun, rotatePlacementSmart } from './editActions'
 import { ItemThumb } from './ItemThumb'
 import { GoalsSheet, LevelUpCard, VibeMeter } from './Goals'
 import { unpackAndCelebrate } from './unpack'
 import { useGame, type GameMode } from './gameStore'
+import { familyOf } from './swatches'
 import * as I from './icons'
 import { Onboarding } from './Onboarding'
 import { PhotoShutter } from './PhotoShutter'
@@ -57,6 +60,7 @@ function GameApp() {
   const review = useScanUI((s) => s.review)
   const selection = useStore((s) => s.selection)
   const storeMode = useStore((s) => s.mode)
+  const gesturing = useStore((s) => s.gesture)
 
   // Esc in the game also closes sheets.
   useEffect(() => {
@@ -86,7 +90,7 @@ function GameApp() {
   const inset = useHudInset(gameRef, `${phase}:${mode}:${view}:${cam.resetKey}:${cam.eye}:${!!review}:${focusRoom}`)
   useGameShortcuts()
   return (
-    <div ref={gameRef} className={`game mode-${mode}${tool ? ' tool-active' : ''}`}>
+    <div ref={gameRef} className={`game mode-${mode}${tool ? ' tool-active' : ''}${gesturing ? ' gesturing' : ''}`}>
       <Stage inset={inset} focusRoom={focusRoom} />
       {phase === 'onboarding' ? (
         <Onboarding />
@@ -103,7 +107,10 @@ function GameApp() {
             <div
               className={`hud-drawer-slot${pickingStyle ? ' tucked' : ''}${drawerExpanded ? ' expanded' : ''}`}
               onClickCapture={(e) => {
-                if (e.target instanceof Element && e.target.closest('.buy-tab.on')) setDrawerExpanded((x) => !x)
+                if (!(e.target instanceof Element)) return
+                // With a piece selected, a tab is the way back to shopping: it lets the piece go.
+                if (e.target.closest('.buy-tab') && useStore.getState().selection) useStore.getState().select(null)
+                else if (e.target.closest('.buy-tab.on')) setDrawerExpanded((x) => !x)
               }}
             >
               <BuyDrawer top={selection ? <ContextBar slim /> : null} />
@@ -199,7 +206,50 @@ function useFocusRoom(drawer: boolean, placementId: string | null): string | nul
   }, [phone, drawer, placementId])
 }
 
+/** The drawer card being dragged (its data can't be read during dragover, so it's noted at dragstart). */
+type Dragged = { itemId: string; cat: string }
+function draggedItem(d: Dragged): Item | null {
+  if (d.itemId) return useStore.getState().doc.items.find((i) => i.id === d.itemId) ?? null
+  return d.cat ? itemFromCatalog(catalogEntry(d.cat), 'drop-ghost') : null
+}
+/** Where a drawer card dropped at a screen point lands, or null to fall back to smart placement. */
+function dropAt(item: Item, clientX: number, clientY: number): PlaceAt | null {
+  const pt = viewFrame.toFloor?.(clientX, clientY)
+  return pt ? dropSpotAt(item, pt) : null
+}
+/** The landing footprint's corners in stage pixels. */
+function ghostPoints(item: Item, at: PlaceAt, stage: HTMLElement | null) {
+  const toScreen = viewFrame.toScreen
+  if (!toScreen || !stage) return null
+  const doc = useStore.getState().doc
+  const host = at.on ? activeLayout(doc).placements.find((p) => p.id === at.on) : undefined
+  const h = host ? (doc.items.find((i) => i.id === host.itemId)?.height ?? 0) : 0
+  const r = stage.getBoundingClientRect()
+  const pts = orientedRect(v(at.x, at.y), item.width / 2, item.depth / 2, at.rotation ?? 0).map((c) => toScreen(c, h))
+  return pts.every((q) => q) ? pts.map((q) => ({ x: q!.x - r.left, y: q!.y - r.top })) : null
+}
+
 function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | null }) {
+  const stageRef = useRef<HTMLDivElement>(null)
+  const dragged = useRef<Dragged | null>(null)
+  const [ghost, setGhost] = useState<{ x: number; y: number }[] | null>(null)
+  useEffect(() => {
+    // The drawer sets the card's data in its own dragstart handler, which runs before this one.
+    const start = (e: DragEvent) => {
+      const dt = e.dataTransfer
+      dragged.current = dt ? { itemId: dt.getData('application/x-apt-item'), cat: dt.getData('application/x-apt-catalog') } : null
+    }
+    const end = () => {
+      dragged.current = null
+      setGhost(null)
+    }
+    window.addEventListener('dragstart', start)
+    window.addEventListener('dragend', end)
+    return () => {
+      window.removeEventListener('dragstart', start)
+      window.removeEventListener('dragend', end)
+    }
+  }, [])
   const view = useStageView()
   const phase = useGame((s) => s.phase)
   const mode = useGame((s) => s.mode)
@@ -222,20 +272,46 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
   )
   return (
     <div
+      ref={stageRef}
       className={`hud-stage view-${view}`}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.some((t) => t.startsWith('application/x-apt-'))) e.preventDefault()
+        if (!e.dataTransfer.types.some((t) => t.startsWith('application/x-apt-'))) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+        const d = dragged.current
+        const item = d && draggedItem(d)
+        const spot = item ? dropAt(item, e.clientX, e.clientY) : null
+        setGhost(item && spot ? ghostPoints(item, spot, stageRef.current) : null)
+      }}
+      onDragLeave={(e) => {
+        if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) setGhost(null)
       }}
       onDrop={(e) => {
         const itemId = e.dataTransfer.getData('application/x-apt-item')
         const cat = e.dataTransfer.getData('application/x-apt-catalog')
+        setGhost(null)
         if (!itemId && !cat) return
         e.preventDefault()
-        if (itemId) useStore.getState().placeItem(itemId)
-        else useStore.getState().addItemFromCatalog(catalogEntry(cat))
+        const st = useStore.getState()
+        const item = draggedItem({ itemId, cat })
+        // Dropped on a room: it lands under the pointer (snapped, nudged clear). Elsewhere it goes
+        // to a spot that suits it, as a tap on the card does.
+        const at = item ? dropAt(item, e.clientX, e.clientY) : null
+        const res = itemId ? st.placeItem(itemId, at ?? undefined) : st.addItemFromCatalog(catalogEntry(cat), at ?? undefined)
+        if (res.ok && item) {
+          const doc = useStore.getState().doc
+          const p = activeLayout(doc).placements.find((x) => x.id === res.placementId)
+          const room = res.roomName ?? (p && doc.rooms.find((r) => pointInPolygon(v(p.x, p.y), r.polygon))?.name)
+          st.notify(`Placed ${itemId ? `“${item.name}”` : `${/^[aeiou]/i.test(item.name) ? 'an' : 'a'} ${item.name.toLowerCase()}`}${room ? ` in the ${room}` : ''}.`)
+        }
       }}
     >
       {phase === 'onboarding' ? null : view === '3d' ? <Scene3D control={control} /> : <PlanView inset={inset} />}
+      {ghost && (
+        <svg className="hud-drop-ghost" aria-hidden>
+          <polygon points={ghost.map((q) => `${q.x},${q.y}`).join(' ')} />
+        </svg>
+      )}
     </div>
   )
 }
@@ -762,7 +838,11 @@ function ContextBar({ slim = false }: { slim?: boolean }) {
               aria-label={`Color ${c}`}
               onClick={() => {
                 const p = layout.placements.find((x) => x.id === sel.id)
-                if (p) s.updateItem(p.itemId, { color: c })
+                if (!p) return
+                s.updateItem(p.itemId, { color: c })
+                // Painting teaches the drawer the player's taste: the next picks lead with this colour.
+                const fam = familyOf(doc.items.find((i) => i.id === p.itemId)?.category ?? '')
+                if (fam) useGame.getState().setTaste(fam, c)
               }}
             />
           ))}
@@ -1107,6 +1187,8 @@ function useGameShortcuts() {
         return
       }
       if (k === 'Escape' && useShortcutHelp.get()) return useShortcutHelp.set(false)
+      // Esc leaves Look for Furnish (the dock has no Done of its own there).
+      if (k === 'Escape' && g.mode === 'look') return switchMode('buy')
       if (st.mode !== 'select') return
       const lower = k.toLowerCase()
       const mode = MODES.find((m) => m.key.toLowerCase() === lower)

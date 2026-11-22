@@ -82,7 +82,11 @@ export function useShortcuts() {
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return
       const s = useStore.getState()
       const mod = e.metaKey || e.ctrlKey
-      if (mod && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y')) flushEditRun()
+      // Only more turns (R , .) and nudges (arrows) extend a run of edits into one undo step; any
+      // other key (undo, duplicate, delete...) closes it first, so each stays its own step.
+      const runKey = !mod && !e.altKey && (e.key.toLowerCase() === 'r' || ',.<>'.includes(e.key) || e.key.startsWith('Arrow'))
+      const modifier = e.key === 'Shift' || e.key === 'Control' || e.key === 'Meta' || e.key === 'Alt'
+      if (!runKey && !modifier) flushEditRun()
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) s.redo()

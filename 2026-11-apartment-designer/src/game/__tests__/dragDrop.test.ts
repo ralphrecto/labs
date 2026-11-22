@@ -48,3 +48,31 @@ describe('dropping a dragged piece', () => {
     expect(r).toEqual({ placement: start, bounced: true })
   })
 })
+
+describe('dropping a drawer card at a point', () => {
+  it('lands under the pointer in that room, clear of walls and pieces; off every room it falls back', async () => {
+    const { useStore, activeLayout } = await import('../../store')
+    const { sampleDoc } = await import('../../model/sample')
+    const { catalogEntry, itemFromCatalog } = await import('../../model/catalog')
+    const { centroid, orientedRect, pointInPolygon, polygonInsideRoom } = await import('../../model/geometry')
+    const { dropSpotAt } = await import('../editActions')
+    useStore.getState().replaceDoc(sampleDoc({ settled: true }))
+    const doc = useStore.getState().doc
+    const plant = itemFromCatalog(catalogEntry('plant'), 'drop-test')
+    for (const room of doc.rooms) {
+      const pt = centroid(room.polygon)
+      const spot = dropSpotAt(plant, pt)
+      if (!spot) continue
+      expect(pointInPolygon(v(spot.x, spot.y), room.polygon)).toBe(true)
+      expect(Math.hypot(spot.x - pt.x, spot.y - pt.y)).toBeLessThan(1.5)
+      expect(polygonInsideRoom(orientedRect(v(spot.x, spot.y), plant.width / 2, plant.depth / 2, spot.rotation ?? 0), room.polygon)).toBe(true)
+    }
+    expect(doc.rooms.some((r) => dropSpotAt(plant, centroid(r.polygon)))).toBe(true)
+    expect(dropSpotAt(plant, v(-100, -100))).toBeNull()
+    // A table lamp dropped on a side table's top stands on it.
+    const lamp = itemFromCatalog(catalogEntry('table-lamp'), 'lamp-test')
+    const layout = activeLayout(doc)
+    const host = layout.placements.find((p) => ['nightstand', 'side-table', 'desk'].includes(doc.items.find((i) => i.id === p.itemId)?.category ?? ''))
+    if (host) expect(dropSpotAt(lamp, v(host.x, host.y))?.on).toBe(host.id)
+  })
+})

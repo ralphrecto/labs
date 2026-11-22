@@ -1,11 +1,11 @@
 // Keyboard and selection-bar edits on the selected piece: rotating (with a re-snap so it stays
 // flush and clear of its neighbours) and nudging (along the screen in 3D). A run of nudges or
 // turns is one undo step.
-import { add, orientedRect, polygonInsideRoom, polygonsOverlap, rot, v } from '../model/geometry'
-import { clampOnHost } from '../model/placement'
+import { add, orientedRect, pointInPolygon, polygonInsideRoom, polygonsOverlap, rot, v } from '../model/geometry'
+import { clampOnHost, HOSTED, hostAt } from '../model/placement'
 import { snapPlacement } from '../model/snapping'
 import type { Item, Placement, Room, Vec2 } from '../model/types'
-import { activeLayout, useStore } from '../store'
+import { activeLayout, useStore, type PlaceAt } from '../store'
 import { viewFrame } from '../three/viewFrame'
 
 const IDLE_MS = 600
@@ -178,4 +178,35 @@ export function nudgePlacement(id: string, screen: Vec2, step: number) {
     }
   }
   inEditRun(() => useStore.getState().updatePlacement(id, { x: to.x, y: to.y }))
+}
+
+/**
+ * Where a piece dragged in from the drawer lands when it's let go at `pt` (plan meters): snapped
+ * like a moved piece, and nudged (up to a metre) to the nearest spot clear of walls and
+ * neighbours. A table lamp goes on the top under the pointer. Null when the point is outside every
+ * room (or nothing near it fits): the caller falls back to the usual smart placement.
+ */
+export function dropSpotAt(item: Item, pt: Vec2): PlaceAt | null {
+  const s = useStore.getState()
+  const doc = s.doc
+  const layout = activeLayout(doc)
+  if (HOSTED.has(item.category)) {
+    const host = hostAt(doc, layout, pt, item)
+    if (!host) return null
+    const c = clampOnHost(host, item, pt)
+    return { x: c.x, y: c.y, rotation: host.p.rotation, on: host.id }
+  }
+  const room = doc.rooms.find((r) => pointInPolygon(pt, r.polygon))
+  if (!room) return null
+  const byId = new Map(doc.items.map((i) => [i.id, i]))
+  const others: Others = layout.placements.flatMap((o) => {
+    const it = byId.get(o.itemId)
+    return it && !o.on ? [{ id: o.id, item: it, p: o }] : []
+  })
+  const proposed: Placement = { id: '', itemId: item.id, x: pt.x, y: pt.y, rotation: 0 }
+  const snapped = { ...proposed, ...snapPlacement(item, proposed, doc.rooms, others, s.snap).placement }
+  const clean: Conflicts = { outside: false, hits: new Set() }
+  const spot = fineAt(item, snapped, others, clean, doc.rooms) ? snapped : nearestFine(item, snapped, others, clean, false, doc.rooms, 20)
+  if (!spot || !pointInPolygon(v(spot.x, spot.y), room.polygon)) return null
+  return { x: spot.x, y: spot.y, rotation: spot.rotation }
 }

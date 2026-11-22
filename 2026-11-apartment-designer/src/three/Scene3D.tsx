@@ -490,6 +490,7 @@ function PlacedItem({
   selected,
   flag,
   onGrab,
+  onHover,
   dragOk,
   wobble = 0,
   lift = 0,
@@ -501,6 +502,8 @@ function PlacedItem({
   selected: boolean
   flag?: 'error' | 'warning'
   onGrab: (e: ThreeEvent<PointerEvent>, p: Placement) => void
+  /** The pointer came over the piece (true) or left it (false): drives the grab cursor. */
+  onHover?: (on: boolean) => void
   /** Set while this piece is being dragged: whether it fits where it is. */
   dragOk?: boolean
   wobble?: number
@@ -512,7 +515,13 @@ function PlacedItem({
   const highlight = selected ? SELECT_LINE : tint && flag === 'error' ? '#d64545' : tint && flag === 'warning' ? '#d68a1f' : undefined
   const h = Math.max(item.height, 0.02)
   return (
-    <group position={[p.x, lift, p.y]} rotation={[0, -p.rotation, 0]} onPointerDown={(e) => onGrab(e, p)}>
+    <group
+      position={[p.x, lift, p.y]}
+      rotation={[0, -p.rotation, 0]}
+      onPointerDown={(e) => onGrab(e, p)}
+      onPointerOver={onHover && ((e) => (e.stopPropagation(), onHover(true)))}
+      onPointerOut={onHover && (() => onHover(false))}
+    >
       <Wobble kick={wobble}>
       <Hop on={selected}>
         <Pop id={p.id}>
@@ -613,6 +622,18 @@ function Scene({
     return e.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), pt) ? v(pt.x, pt.z) : null
   }
 
+  // The canvas cursor: an open hand over a piece, a closed one while a piece is being dragged.
+  const gl = useThree((s) => s.gl)
+  const hovered = useRef(false)
+  const setCursor = () => {
+    gl.domElement.style.cursor = drag.current?.moved ? 'grabbing' : hovered.current && !eye ? 'grab' : ''
+  }
+  const onHover = (on: boolean) => {
+    hovered.current = on
+    setCursor()
+  }
+  useEffect(() => () => void (gl.domElement.style.cursor = ''), [gl])
+
   const onGrab = (e: ThreeEvent<PointerEvent>, p: Placement) => {
     // Walking around is for looking: furniture isn't picked up, and taps go to walking.
     if (e.button !== 0 || eye) return
@@ -647,6 +668,7 @@ function Scene({
         if (Math.hypot(e.nativeEvent.clientX - d.sx, e.nativeEvent.clientY - d.sy) < d.slop) return
         s.beginGesture()
         d.moved = true
+        setCursor()
       }
       const pt = sub(wl, d.grab)
       const layoutNow = activeLayout(s.doc)
@@ -671,6 +693,7 @@ function Scene({
       if (Math.hypot(e.nativeEvent.clientX - d.sx, e.nativeEvent.clientY - d.sy) < d.slop) return
       s.beginGesture()
       d.moved = true
+      setCursor()
       d.base = dragConflictBase(item, cur, solid, s.doc.rooms)
     }
     // The grab point stays under the pointer, so the piece tracks the finger 1:1 on the floor.
@@ -720,6 +743,7 @@ function Scene({
     }
     if (dragFx) setDragFx(null)
     drag.current = null
+    setCursor()
     if (controls.current) controls.current.enabled = true
     if (d && !d.moved && d.again && isPackedBox(d.id)) unpackAndCelebrate(d.id)
   }
@@ -852,6 +876,7 @@ function Scene({
             selected={selection?.kind === 'placement' && selection.id === p.id}
             flag={hideFlags ? undefined : analysis.flagged.get(p.id)}
             onGrab={onGrab}
+            onHover={onHover}
             dragOk={dragFx?.id === p.id ? dragFx.ok : undefined}
             wobble={wobbles[p.id]}
             lift={lift(p)}
@@ -859,6 +884,7 @@ function Scene({
         ))}
       </group>
       <UnpackBurst />
+      <ScreenFloor />
       {!eye && <FitCamera key={(doc.scans ?? []).length} inset={inset} spin={autoRotate} focus={focusRoom} full={fullFrame} />}
       <ViewOffset inset={eye ? undefined : inset} full={fullFrame} />
       {eye ? (
@@ -1053,6 +1079,38 @@ function fitView(
  * drawer and selection bar come and go (easing over about 300 ms), until the player moves the
  * camera themselves. Recentering (a new Canvas) starts it again.
  */
+/** Lets the HUD map screen points to the floor and back through this camera (drawer drag and drop). */
+function ScreenFloor() {
+  const camera = useThree((s) => s.camera)
+  const gl = useThree((s) => s.gl)
+  useEffect(() => {
+    const ray = new THREE.Raycaster()
+    const ndc = (x: number, y: number) => {
+      const r = gl.domElement.getBoundingClientRect()
+      return new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1)
+    }
+    const toFloor = (x: number, y: number) => {
+      ray.setFromCamera(ndc(x, y), camera)
+      const pt = new THREE.Vector3()
+      return ray.ray.intersectPlane(FLOOR, pt) ? v(pt.x, pt.z) : null
+    }
+    const toScreen = (p: Vec2, h = 0) => {
+      const q = new THREE.Vector3(p.x, h, p.y).project(camera)
+      if (q.z > 1) return null
+      const r = gl.domElement.getBoundingClientRect()
+      return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height }
+    }
+    viewFrame.toFloor = toFloor
+    viewFrame.toScreen = toScreen
+    // The 3D view unmounts on its own schedule: leave the plan's mapping alone if it's already in.
+    return () => {
+      if (viewFrame.toFloor === toFloor) viewFrame.toFloor = null
+      if (viewFrame.toScreen === toScreen) viewFrame.toScreen = null
+    }
+  }, [camera, gl])
+  return null
+}
+
 function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: boolean; focus?: string | null; full?: boolean }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
