@@ -351,3 +351,37 @@ Rolled over:
 - The make-room goal doesn't suggest a smaller variant.
 
 243 tests pass.
+
+## Round 12 (2026-11-22 15:39-16:45 UTC)
+
+Reviewers: a player over four simulated days (visitor and album), a desktop mouse-and-keyboard player, and a free decorator who ignores the Next chip.
+
+Shipped:
+- **Visitor:** today's visitor is picked after the move-in boxes, so the first one is met on purpose. The Cozy level-up shows both lines. The welcome-back card says who went home and who is coming, and adds "(once this design is Cozy)" when Next won't offer them yet. The visitor can lead when it's one pick away. The Designs sheet and album count the visitor's stars, so all star counts agree.
+- **Welcome-back card:** sized to its content (up to 440px) instead of a 184px column.
+- **Next and blockers:** when the stars are already in, Next goes to the core goal that holds the level. `levelBlocker` mentions a gate.
+- **Goals sheet:** open goal rows are buttons that act like the Next chip.
+- **Your palette:** a new +1★ style bonus for three painted pieces in a coherent palette, named from the colours (e.g. "Sage & Terracotta"). Painting also teaches your taste.
+- **Gentler free decorating:** the coffee table counts at 35-60 cm (and no longer blocks a seat's front clearance), the living-room density cap is 40%, and loss pills wait 3 s and hide mid-gesture.
+- **Desktop:**
+  - Drag and drop lands where you let go, in 3D and Plan, with a footprint preview and a copy cursor.
+  - Grab and grabbing cursors on pieces.
+  - Undo no longer merges a copy or delete into a run of turns.
+  - Esc leaves Look, and the focus ring uses the game's coral.
+  - Pick cards sit beside the side drawer.
+- **Album:** a visitor sticker and a 🌙 for evening on polaroids, and 480px photos.
+- **Designs sheet:** the twist picker scrolls into view, and a new remix says "Just started".
+- **Dream card:** stays visible and no longer leaves an invisible click-eating layer.
+- **Colours:** painted colours in Cartoon now match their swatches.
+- **Catalog:** size chips expose recliner, swivel, accent, round and small coffee tables, pouf, storage ottoman and C-shape side table.
+- **Placement:** dining chairs never pull out through a wall, and the sofa and coffee table pair up better.
+- **Phone:** drawer tabs stay while a piece is selected (a tap deselects).
+- **Plan view:** lamps can move from one top to another.
+
+Rolled over:
+- The star number still changes live during a drag; holding the score until the gesture ends would need a change in `Goals.tsx`.
+- Coffee tables aren't lamp surfaces.
+- Wall art, mirrors and curtains are missing from the catalog.
+- The sofa can sit off-centre from its coffee table in big rooms.
+
+257 tests pass.
