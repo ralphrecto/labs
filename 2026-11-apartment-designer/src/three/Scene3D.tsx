@@ -9,7 +9,7 @@ import { bounds, centroid, dist, norm, openingEndpoints, pointInPolygon, polygon
 import { clampOnHost, HOSTED, hostAt } from '../model/placement'
 import { snapPlacement } from '../model/snapping'
 import { isWallDecor, mountBottom, snapToWall } from '../model/wallDecor'
-import type { Item, Opening, Placement, Room, Vec2 } from '../model/types'
+import type { Doc, Item, Opening, Placement, Room, Vec2 } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { ItemModel } from './ItemModel'
 import { viewFrame } from './viewFrame'
@@ -498,6 +498,19 @@ function DragFootprint({ w, d, ok }: { w: number; d: number; ok: boolean }) {
   )
 }
 
+/**
+ * Whether a camera at `cam` sees the wall piece at `p` from behind its wall, where the dollhouse
+ * view cuts that wall away. The wall it hangs on: its back faces out of the room (front is
+ * rot((0, 1), rotation)).
+ */
+function behindWall(p: Pick<Placement, 'x' | 'y' | 'rotation'>, depth: number, cam: { x: number; z: number }): boolean {
+  const nx = Math.sin(p.rotation)
+  const nz = -Math.cos(p.rotation)
+  const ox = p.x + nx * (depth / 2)
+  const oz = p.y + nz * (depth / 2)
+  return (cam.x - ox) * nx + (cam.z - oz) * nz > 0
+}
+
 function PlacedItem({
   item,
   p,
@@ -533,17 +546,17 @@ function PlacedItem({
   const h = Math.max(item.height, 0.02)
   const onWall = isWallDecor(item.category)
   const groupRef = useRef<THREE.Group>(null)
+  const modelRef = useRef<THREE.Group>(null)
+  const ghostRef = useRef<THREE.Mesh>(null)
   useFrame(({ camera }) => {
     const g = groupRef.current
     if (!g || !onWall) return
-    // The wall it hangs on: its back faces out of the room (front is rot((0, 1), rotation)).
-    const nx = Math.sin(p.rotation)
-    const nz = -Math.cos(p.rotation)
-    const ox = p.x + nx * (item.depth / 2)
-    const oz = p.y + nz * (item.depth / 2)
     // Seen from behind its wall it would show through (or float where the wall is cut): hide it.
-    const outside = (camera.position.x - ox) * nx + (camera.position.z - oz) * nz > 0
-    g.visible = !(wallMode === 'low' || (wallMode === 'auto' && outside))
+    // A selected piece stays findable as a ghost outline where it hangs.
+    const cut = wallMode === 'low' || (wallMode === 'auto' && behindWall(p, item.depth, camera.position))
+    g.visible = !cut || selected
+    if (modelRef.current) modelRef.current.visible = !cut
+    if (ghostRef.current) ghostRef.current.visible = cut && selected
   })
   return (
     <group
@@ -556,9 +569,18 @@ function PlacedItem({
     >
       <Wobble kick={wobble}>
       <Hop on={selected}>
+        <group ref={modelRef}>
         <Pop id={p.id}>
         <ItemModel item={item} highlight={highlight} />
         </Pop>
+        </group>
+        {onWall && selected && (
+          <mesh ref={ghostRef} visible={false} position={[0, mountBottom(item) + h / 2, 0]} renderOrder={5}>
+            <boxGeometry args={[item.width, h, Math.max(item.depth, 0.02)]} />
+            <meshBasicMaterial color={SELECT_LINE} transparent opacity={0.18} depthWrite={false} depthTest={false} />
+            <Edges color={SELECT_LINE} lineWidth={2} raycast={noRaycast} renderOrder={6} />
+          </mesh>
+        )}
         {/* Models from a URL draw their own materials, so their outline is the bounding box. */}
         {selected && item.glbUrl && !tint && (
           <mesh position={[0, h / 2, 0]} raycast={noRaycast}>
@@ -734,8 +756,26 @@ function Scene({
         d.moved = true
         setCursor()
       }
-      const spot = snapToWall(s.doc, activeLayout(s.doc), item, sub(ww, d.grab), d.id)
+      const at = sub(ww, d.grab)
+      let spot = snapToWall(s.doc, activeLayout(s.doc), item, at, d.id)
       if (!spot) return
+      // The wall nearest the pointer may be the one cut away from this camera, where the piece
+      // would vanish mid-drag: nudge the pointer into the room for a wall that shows, if one is
+      // near, or else keep the piece where it shows (orbiting round reveals that wall to hang on).
+      const cam = e.camera.position
+      if (wallMode === 'auto' && behindWall(spot, item.depth, cam)) {
+        const n = v(Math.sin(spot.rotation), -Math.cos(spot.rotation))
+        let alt: typeof spot | null = null
+        for (const k of [0.35, 0.7, 1.1]) {
+          const a = snapToWall(s.doc, activeLayout(s.doc), item, sub(at, scale(n, k)), d.id)
+          if (a && !behindWall(a, item.depth, cam) && dist(a, at) < k + 0.9) {
+            alt = a
+            break
+          }
+        }
+        if (alt) spot = alt
+        else if (!behindWall(cur, item.depth, cam)) return
+      }
       d.lastClean = { ...cur, x: spot.x, y: spot.y, rotation: spot.rotation }
       s.updatePlacement(d.id, { x: spot.x, y: spot.y, rotation: spot.rotation })
       return
@@ -943,8 +983,9 @@ function Scene({
       <UnpackBurst />
       <ScreenFloor />
       <CameraSpot eye={eye} eyeFov={eyeFov} />
-      <DemandFrames />
+      <DemandFrames spin={autoRotate} />
       {!eye && <KeyOrbit />}
+      {!eye && <FaceWall wallMode={wallMode} />}
       {!eye && <FitCamera key={`${(doc.scans ?? []).length}:${resetKey}`} inset={inset} spin={autoRotate} focus={focusRoom} full={fullFrame} />}
       <ViewOffset inset={eye ? undefined : inset} full={fullFrame} />
       {eye ? (
@@ -1193,6 +1234,8 @@ function CameraSpot({ eye, eyeFov }: { eye: EyeSpot | null; eyeFov: number }) {
 
 /** How long after a change in the stores the scene keeps drawing (effects settle, HUD insets ease). */
 const SETTLE_MS = 450
+/** How long OrbitControls' damping takes to come to rest after a release (dampingFactor 0.05). */
+const DAMP_MS = 1500
 
 /**
  * The canvas draws on demand. Any change to the home or the game state (a drag, a placement, a
@@ -1200,33 +1243,139 @@ const SETTLE_MS = 450
  * while, so effects that set three.js state directly are drawn too. Also gives photo capture a
  * synchronous render (capture.ts).
  */
-function DemandFrames() {
+function DemandFrames({ spin }: { spin?: boolean }) {
   const gl = useThree((s) => s.gl)
   const scene = useThree((s) => s.scene)
   const camera = useThree((s) => s.camera)
+  const controls = useThree((s) => s.controls) as OrbitControlsImpl | null
   const until = useRef(0)
-  const kick = () => {
-    until.current = performance.now() + SETTLE_MS
+  const kick = (ms = SETTLE_MS) => {
+    until.current = Math.max(until.current, performance.now() + ms)
     invalidate()
   }
-  useEffect(kick)
+  useEffect(() => kick())
   useEffect(() => {
-    const offs = [useStore.subscribe(kick), useGame.subscribe(kick)]
-    window.addEventListener('resize', kick)
-    document.addEventListener('visibilitychange', kick)
+    const k = () => kick()
+    const offs = [useStore.subscribe(k), useGame.subscribe(k)]
+    // A lost and restored WebGL context, or a page back from the bfcache, needs a fresh frame or the canvas stays blank.
+    const canvas = gl.domElement
+    canvas.addEventListener('webglcontextrestored', k)
+    window.addEventListener('resize', k)
+    window.addEventListener('pageshow', k)
+    document.addEventListener('visibilitychange', k)
     return () => {
       offs.forEach((f) => f())
-      window.removeEventListener('resize', kick)
-      document.removeEventListener('visibilitychange', kick)
+      canvas.removeEventListener('webglcontextrestored', k)
+      window.removeEventListener('resize', k)
+      window.removeEventListener('pageshow', k)
+      document.removeEventListener('visibilitychange', k)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [gl])
+  // Letting go of an orbit (or stopping the spin) leaves the controls damping to a stop: draw the tail.
+  useEffect(() => {
+    if (!controls) return
+    const end = () => kick(DAMP_MS)
+    controls.addEventListener('end', end)
+    return () => controls.removeEventListener('end', end)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controls])
+  const spun = useRef(spin)
+  useEffect(() => {
+    if (spun.current && !spin) kick(DAMP_MS)
+    spun.current = spin
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spin])
   useEffect(() => {
     setCaptureRenderer(() => gl.render(scene, camera))
     return () => setCaptureRenderer(null)
   }, [gl, scene, camera])
   useFrame(({ invalidate: more }) => {
     if (performance.now() < until.current) more()
+  })
+  return null
+}
+
+/** Smallest signed angle from `a` to `b`. */
+const turnTo = (a: number, b: number) => Math.atan2(Math.sin(b - a), Math.cos(b - a))
+
+/**
+ * Selecting (or buying) a wall piece whose wall the dollhouse view has cut away eases the camera
+ * round the home so that wall is seen from inside the room, rather than leaving the new piece hidden.
+ */
+function FaceWall({ wallMode }: { wallMode: WallMode }) {
+  const controls = useThree((s) => s.controls) as OrbitControlsImpl | null
+  const camera = useThree((s) => s.camera)
+  const goal = useRef<number | null>(null)
+  const self = useRef(false)
+  const emit = (type: 'start' | 'change' | 'end') => {
+    if (!controls) return
+    self.current = true
+    controls.dispatchEvent({ type } as never)
+    self.current = false
+  }
+  useEffect(() => {
+    if (!controls || wallMode !== 'auto') return
+    let last: string | null = null
+    const check = (st: ReturnType<typeof useStore.getState>) => {
+      const sel = st.selection
+      const id = sel?.kind === 'placement' ? sel.id : null
+      if (id === last) return
+      last = id
+      if (!id) return
+      const p = activeLayout(st.doc)?.placements.find((x) => x.id === id)
+      const item = p && st.doc.items.find((i) => i.id === p.itemId)
+      if (!p || !item || !isWallDecor(item.category) || !behindWall(p, item.depth, camera.position)) return
+      // Face the wall from inside the room (the camera's offset along the wall's inward normal),
+      // turned a little towards where the camera already is, for a three-quarter view.
+      const face = -p.rotation
+      const off = camera.position.clone().sub(controls.target)
+      const az = Math.atan2(off.x, off.z)
+      const to = face + Math.sign(turnTo(face, az) || 1) * 0.45
+      if (reduceMotion) {
+        emit('start')
+        off.applyAxisAngle(UP, turnTo(az, to))
+        camera.position.copy(controls.target).add(off)
+        controls.update()
+        emit('change')
+        emit('end')
+        invalidate()
+        return
+      }
+      goal.current = to
+      emit('start')
+      invalidate()
+    }
+    check(useStore.getState())
+    const off = useStore.subscribe(check)
+    // The player taking hold of the view lets go of the turn.
+    const cancel = () => {
+      if (!self.current) goal.current = null
+    }
+    controls.addEventListener('start', cancel)
+    return () => {
+      off()
+      controls.removeEventListener('start', cancel)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controls, camera, wallMode])
+  useFrame((_, dt) => {
+    const g = goal.current
+    if (g === null || !controls) return
+    invalidate()
+    const off = camera.position.clone().sub(controls.target)
+    const az = Math.atan2(off.x, off.z)
+    const left = turnTo(az, g)
+    const k = 1 - Math.exp(-Math.min(dt, 0.05) * 6)
+    const step = Math.abs(left) < 0.003 ? left : left * k
+    off.applyAxisAngle(UP, step)
+    camera.position.copy(controls.target).add(off)
+    controls.update()
+    emit('change')
+    if (step === left) {
+      goal.current = null
+      emit('end')
+    }
   })
   return null
 }
@@ -1263,6 +1412,37 @@ function KeyOrbit() {
     return () => window.removeEventListener('keydown', onKey)
   }, [controls, camera])
   return null
+}
+
+/**
+ * The overview direction, turned in quarter turns round the home to the side that shows the most
+ * wall pieces from inside their room, so a fresh view or a photo doesn't miss the gallery wall
+ * (counted by piece, so one big pair of curtains doesn't outweigh a wall of frames, and weighted
+ * by how squarely each wall faces the camera; area breaks ties). With no decor, or a tie, the
+ * usual overview.
+ */
+export function decoratedDir(doc: Doc): THREE.Vector3 {
+  const layout = activeLayout(doc)
+  const byId = new Map(doc.items.map((i) => [i.id, i]))
+  const pieces = (layout?.placements ?? []).flatMap((p) => {
+    const it = byId.get(p.itemId)
+    // One per piece, plus a hair for its area (a big piece wins a tie).
+    return it && isWallDecor(it.category) ? [{ p, a: 1 + Math.min(it.width * it.height, 10) * 1e-3 }] : []
+  })
+  let best = OVERVIEW_DIR.clone()
+  let bestScore = -1
+  for (let q = 0; q < 4; q++) {
+    const dir = OVERVIEW_DIR.clone().applyAxisAngle(UP, (q * Math.PI) / 2)
+    // Seen from far off along `dir`: a piece shows when its wall's outward normal faces away from
+    // the camera, and reads better the more squarely its wall faces the camera.
+    const h = Math.hypot(dir.x, dir.z)
+    const score = pieces.reduce((sum, { p, a }) => sum + a * Math.max(0, (Math.cos(p.rotation) * dir.z - Math.sin(p.rotation) * dir.x) / h), 0)
+    if (score > bestScore + 1e-6) {
+      best = dir
+      bestScore = score
+    }
+  }
+  return best
 }
 
 function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: boolean; focus?: string | null; full?: boolean }) {
@@ -1313,7 +1493,7 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
     }
     const pts = framePoints(useStore.getState().doc, focus)
     if (!pts.length) return
-    const dir = placed.current ? camera.position.clone().sub(controls.target).normalize() : OVERVIEW_DIR.clone()
+    const dir = placed.current ? camera.position.clone().sub(controls.target).normalize() : decoratedDir(useStore.getState().doc)
     // Look mode has no drawer: the home fills the screen between the look bar and the mode bar
     // (the game passes their inset), or the whole screen when there is no HUD.
     const frame = lookInset(inset, full, size.width, size.height)

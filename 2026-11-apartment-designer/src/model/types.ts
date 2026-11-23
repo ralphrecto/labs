@@ -68,6 +68,8 @@ export interface Item {
   height: number
   clearance: Clearance
   color: string
+  /** Frame finish for framed wall pieces (wall art, mirrors); the model's wood frame when unset. */
+  frameColor?: string
   /** Rugs and other floor coverings can sit under other items. */
   floorLevel?: boolean
   /** Optional model; the box is still used for collisions and snapping. */

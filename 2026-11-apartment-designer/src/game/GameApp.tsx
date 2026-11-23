@@ -330,6 +330,8 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
 const BOTTOM_HUD = ['.buy-drawer', '.hud-ctx-wrap', '.hud-tray', '.hud-dock', '.hud-review']
 /** After a framing change, how long the HUD may settle (pieces mounting) before the inset is held. */
 const INSET_SETTLE_MS = 700
+/** How long after the window closes a late HUD change (fonts, drawer layout) may still be measured. */
+const LATE_SETTLE_MS = 1500
 const TOP_HUD = ['.hud-top', '.goal-next', '.hud-look-bar']
 /** When the furniture drawer is a right-hand column (keep in step with buy.css). */
 const DESKTOP_SIDE_DRAWER = '(min-width: 1100px) and (min-height: 700px), (min-width: 1000px) and (min-height: 640px) and (orientation: landscape)'
@@ -399,17 +401,48 @@ function useHudInset(root: RefObject<HTMLDivElement | null>, frameKey: string): 
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(measure)
     }
+    // A resize event only reopens the measuring window when the stage's size really changed
+    // (mobile browsers and devtools fire plain resizes that would otherwise reframe the camera).
+    let size = `${game.clientWidth}x${game.clientHeight}`
     const onResize = () => {
+      const now = `${game.clientWidth}x${game.clientHeight}`
+      if (now === size) return
+      size = now
       openUntil.current = performance.now() + INSET_SETTLE_MS
       schedule()
     }
+    // The HUD can settle after the window closes: web fonts loading late, or the drawer still
+    // laying out. Measure again then (shortly after a framing change only, so a drawer that opens
+    // or grows later still doesn't move the camera).
+    const reopen = () => {
+      if (performance.now() > openUntil.current + LATE_SETTLE_MS) return
+      openUntil.current = Math.max(openUntil.current, performance.now() + 200)
+      schedule()
+    }
+    let live = true
+    document.fonts?.ready.then(() => live && reopen())
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(reopen)
+    let watched: Element | null = null
+    const watchDrawer = () => {
+      const el = game.querySelector('.buy-drawer')
+      if (el === watched || !ro) return
+      if (watched) ro.unobserve(watched)
+      watched = el
+      if (el) ro.observe(el)
+    }
     remeasure.current = schedule
     measure()
-    const mo = new MutationObserver(schedule)
+    watchDrawer()
+    const mo = new MutationObserver(() => {
+      watchDrawer()
+      schedule()
+    })
     mo.observe(game, { childList: true, subtree: true })
     window.addEventListener('resize', onResize)
     return () => {
+      live = false
       mo.disconnect()
+      ro?.disconnect()
       window.removeEventListener('resize', onResize)
       if (raf) cancelAnimationFrame(raf)
     }
@@ -749,6 +782,14 @@ function ToolBanner() {
 
 // ---------------------------------------------------------------- selection
 
+/** Frame finishes for framed wall pieces (wall art, mirrors): written to item.frameColor. */
+const FRAME_FINISHES = [
+  { name: 'Black', color: '#2b2a28' },
+  { name: 'White', color: '#f2efe8' },
+  { name: 'Oak', color: '#b88a5a' },
+  { name: 'Brass', color: '#c9a24a' },
+]
+const FRAMED = new Set(['wall-art', 'mirror'])
 const SWATCHES = ['#7d8fa3', '#a3907d', '#c9c3b6', '#8a6b4f', '#3d3d3d', '#5f8f5a', '#c7a98a', '#e2d6b8', '#b5534a', '#e0b04f', '#5b7bb5', '#f2efe8']
 
 function ContextBar({ slim = false }: { slim?: boolean }) {
@@ -761,6 +802,9 @@ function ContextBar({ slim = false }: { slim?: boolean }) {
   const open = useGame((g) => g.openSheet)
   const units = doc.apartment.units
   useEffect(() => setPaint(false), [sel])
+  const selPlacement = sel.kind === 'placement' ? layout.placements.find((x) => x.id === sel.id) : undefined
+  const selItem = selPlacement && doc.items.find((i) => i.id === selPlacement.itemId)
+  const framedItem = selItem && FRAMED.has(selItem.category) ? selItem : undefined
 
   let thumb: ReactNode = null
   let title = ''
@@ -898,6 +942,21 @@ function ContextBar({ slim = false }: { slim?: boolean }) {
               }}
             />
           ))}
+          {framedItem && (
+            <div className="hud-paint-frames" role="group" aria-label="Frame finish" style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, paddingTop: 4 }}>
+              <small style={{ flex: 1, fontWeight: 600, opacity: 0.75 }}>Frame</small>
+              {FRAME_FINISHES.map((f) => (
+                <button
+                  key={f.name}
+                  style={{ background: f.color, borderRadius: 8, outline: framedItem.frameColor === f.color ? '2px solid #e0603a' : undefined }}
+                  aria-label={`${f.name} frame`}
+                  aria-pressed={framedItem.frameColor === f.color}
+                  title={`${f.name} frame`}
+                  onClick={() => s.updateItem(framedItem.id, { frameColor: f.color })}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
       <div className="hud-ctx g-card" role="toolbar" aria-label="Selected">
