@@ -13,11 +13,11 @@ import { formatLength, parseLength, unitLabel } from '../model/units'
 import { toScanData } from '../scan/align'
 import { scanEntry } from '../scan/runtime'
 import { useScanUI } from '../scan/scanUi'
-import { activeLayout, loadSample, openDocAsHome, useStore, type PlaceAt } from '../store'
+import { activeLayout, openDocAsHome, useStore, type PlaceAt } from '../store'
 import { DesignsSheetBody, RemixPicker } from './Designs'
 import { downloadJSON, parseDoc } from '../storage'
 import { camMoved, Scene3D, type SceneInset, type WallMode } from '../three/Scene3D'
-import { BuyDrawer, CATEGORY_GROUPS, ShopSheet } from './BuyDrawer'
+import { BuyDrawer, ShopSheet, visibleGroups } from './BuyDrawer'
 import { dropSpotAt, flushEditRun, rotatePlacementSmart } from './editActions'
 import { isWallDecor } from '../model/wallDecor'
 import { ItemThumb } from './ItemThumb'
@@ -28,7 +28,7 @@ import { familyOf } from './swatches'
 import * as I from './icons'
 import { Onboarding } from './Onboarding'
 import { PhotoShutter } from './PhotoShutter'
-import { StylePicker, useStylePicker } from './StylePicker'
+import { StylePicker, useStylePicker, useStylesUnlocked } from './StylePicker'
 import { useModal } from './useModal'
 import { announce, LiveRegion } from './announce'
 import { reduceMotion } from '../motion'
@@ -74,6 +74,7 @@ function GameApp() {
   }, [])
 
   const pickingStyle = useStylePicker((s) => s.open)
+  const stylesOk = useStylesUnlocked()
   // Phones show a compact drawer (one row of small thumbnails); tapping the open tab again
   // expands it to the full cards and back (hud.css). The camera isn't refitted for it.
   const [drawerExpanded, setDrawerExpanded] = useState(false)
@@ -107,7 +108,7 @@ function GameApp() {
         <>
           {mode === 'look' && <LookControls />}
           {mode === 'look' && <PhotoShutter />}
-          {mode === 'look' && <StylePicker className="sty-look" />}
+          {mode === 'look' && stylesOk && <StylePicker className="sty-look" />}
           <CameraControls />
           {showDrawer && (
             // The drawer steps aside while the style picker is open, so on a phone the style tiles
@@ -678,6 +679,7 @@ function CameraControls() {
   const mode = useGame((s) => s.mode)
   const tool = useStore((s) => s.mode !== 'select')
   const [labels, seen] = useFirstRunLabels()
+  const stylesOk = useStylesUnlocked()
   const moved = useSyncExternalStore(subscribeCamMoved, () => camMoved.value)
   if (mode === 'look' || tool) return null
   // One View button: it swaps 3D and the plan, but once the player has dragged the 3D view away
@@ -697,7 +699,7 @@ function CameraControls() {
           {recenterFirst ? <I.IconCrosshair /> : view === '3d' ? <I.IconMap /> : <I.IconCube />}
         </button>
       </div>
-      {view === '3d' && (
+      {view === '3d' && stylesOk && (
         <div className="hud-cam-row">
           {labels && <span className="hud-cam-label">Style</span>}
           <StylePicker />
@@ -1014,7 +1016,7 @@ function DetailsSheet() {
   }, [sel])
   return (
     <Sheet title="Details" sub="Exact sizes and the fine print." className="hud-classic">
-      <Inspector />
+      <Inspector game />
     </Sheet>
   )
 }
@@ -1129,21 +1131,22 @@ function DesignsSheet() {
           <I.IconPlus width={18} height={18} /> New empty design
         </button>
       </div>
+      <HomeFileLinks />
     </Sheet>
   )
 }
 
+/** Whether the URL asks for the Classic editor door (`?classic`): the full tool kit stays out of the game's way. */
+const CLASSIC_DOOR = typeof location !== 'undefined' && new URLSearchParams(location.search).has('classic')
+/** A mouse and keyboard: the shortcut list is worth offering. */
+const HAS_KEYBOARD = typeof matchMedia !== 'undefined' && matchMedia('(hover: hover) and (pointer: fine)').matches
+
 function SettingsSheet() {
   const units = useStore((s) => s.doc.apartment.units)
-  const snap = useStore((s) => s.snap)
-  const showClearance = useStore((s) => s.showClearance)
-  const showPath = useStore((s) => s.showPath)
   const scan3d = useStore((s) => s.scan3d)
   const hasScans = useStore((s) => (s.doc.scans ?? []).length > 0)
-  const cam = useCam()
   const s = useStore.getState()
   const g = useGame.getState()
-  const fileRef = useRef<HTMLInputElement>(null)
   return (
     <Sheet title="Settings">
       <div className="hud-settings">
@@ -1156,36 +1159,6 @@ function SettingsSheet() {
             <button className={units === 'metric' ? 'on' : ''} onClick={() => s.setUnits('metric')}>
               cm / m
             </button>
-          </span>
-        </div>
-        <label className="g-toggle">
-          Show space each piece needs
-          <input type="checkbox" checked={showClearance} onChange={(e) => s.setUI({ showClearance: e.target.checked })} />
-        </label>
-        <label className="g-toggle">
-          Show walking paths
-          <input type="checkbox" checked={showPath} onChange={(e) => s.setUI({ showPath: e.target.checked })} />
-        </label>
-        <label className="g-toggle">
-          Snap furniture to walls
-          <input type="checkbox" checked={snap.walls} onChange={(e) => s.setSnap({ walls: e.target.checked })} />
-        </label>
-        <label className="g-toggle">
-          Line up with other furniture
-          <input type="checkbox" checked={snap.items} onChange={(e) => s.setSnap({ items: e.target.checked })} />
-        </label>
-        <label className="g-toggle">
-          Snap to a 5 cm grid
-          <input type="checkbox" checked={snap.grid > 0} onChange={(e) => s.setSnap({ grid: e.target.checked ? 0.05 : 0 })} />
-        </label>
-        <div className="g-toggle">
-          Walls in 3D
-          <span className="hud-seg">
-            {(['auto', 'low', 'full'] as WallMode[]).map((w) => (
-              <button key={w} className={cam.wallMode === w ? 'on' : ''} onClick={() => setCam({ wallMode: w })}>
-                {w === 'auto' ? 'Cutaway' : w === 'low' ? 'Low' : 'Full'}
-              </button>
-            ))}
           </span>
         </div>
         {hasScans && (
@@ -1206,34 +1179,44 @@ function SettingsSheet() {
             </span>
           </div>
         )}
-      </div>
-      <h3 className="hud-h3">Home</h3>
-      <div className="hud-settings-btns">
-        <button className="g-btn" onClick={() => g.setPhase('onboarding')}>
-          <I.IconScan width={18} height={18} /> Move into a new place
-        </button>
-        <button
-          className="g-btn"
-          onClick={() => {
-            loadSample()
-            g.openSheet(null)
-            s.notify('Moved into the sample home!')
-          }}
-        >
-          <I.IconHome width={18} height={18} /> Load the sample home
-        </button>
-        {!EMBEDDED && (
-          <button className="g-btn" onClick={() => downloadJSON(useStore.getState().doc)}>
-            Save to a file
+        {HAS_KEYBOARD && (
+          <button
+            className="g-toggle hud-settings-row"
+            onClick={() => {
+              g.openSheet(null)
+              useShortcutHelp.set(true)
+            }}
+          >
+            Keyboard shortcuts <kbd>?</kbd>
           </button>
         )}
-        <button className="g-btn" onClick={() => fileRef.current?.click()}>
-          Open a saved file
-        </button>
-        <button className="g-btn ghost" onClick={() => g.setClassic(true)}>
-          <I.IconLayers width={18} height={18} /> Classic editor (all the tools)
-        </button>
       </div>
+      {CLASSIC_DOOR && (
+        <div className="hud-settings-btns">
+          <button className="g-btn ghost" onClick={() => g.setClassic(true)}>
+            <I.IconLayers width={18} height={18} /> Classic editor (all the tools)
+          </button>
+        </div>
+      )}
+    </Sheet>
+  )
+}
+
+/** Save the home to a file, or open one: two quiet links at the foot of Your designs. */
+function HomeFileLinks() {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const s = useStore.getState()
+  const g = useGame.getState()
+  return (
+    <div className="dz-file-links">
+      {!EMBEDDED && (
+        <button className="g-link" onClick={() => downloadJSON(useStore.getState().doc)}>
+          Save to a file
+        </button>
+      )}
+      <button className="g-link" onClick={() => fileRef.current?.click()}>
+        Open a saved file
+      </button>
       <input
         ref={fileRef}
         type="file"
@@ -1254,7 +1237,7 @@ function SettingsSheet() {
           e.target.value = ''
         }}
       />
-    </Sheet>
+    </div>
   )
 }
 
@@ -1309,7 +1292,10 @@ function useGameShortcuts() {
       else if (k === 'Home') {
         e.preventDefault()
         setCam({ resetKey: camState.resetKey + 1 })
-      } else if (/^[1-7]$/.test(k) && g.mode === 'buy') g.setBuyTab(CATEGORY_GROUPS[Number(k) - 1].key)
+      } else if (/^[1-7]$/.test(k) && g.mode === 'buy') {
+        const tab = visibleGroups(st.doc.items, g.buyTab)[Number(k) - 1]
+        if (tab) g.setBuyTab(tab.key)
+      }
       else if (k === 'Enter' && st.selection && t.tagName !== 'BUTTON' && t.tagName !== 'A') st.select(null)
     }
     window.addEventListener('keydown', onKey)
@@ -1341,17 +1327,11 @@ function createFlag() {
   return Object.assign(useFlag, { get: () => on, set, toggle: () => set(!on) })
 }
 
-/** The "?" button (desktop only) and the list of keys it opens. */
+/** The list of keys, opened with "?" or from Settings (desktop). */
 function ShortcutHelp() {
   const open = useShortcutHelp()
-  const mode = useGame((s) => s.mode)
   return (
     <>
-      {mode !== 'look' && (
-        <button className="hud-keys-btn g-icon sm" onClick={() => useShortcutHelp.toggle()} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" aria-expanded={open}>
-          ?
-        </button>
-      )}
       {open && (
         <div className="hud-keys g-card" role="dialog" aria-label="Keyboard shortcuts" onClick={() => useShortcutHelp.set(false)}>
           <strong>Keyboard shortcuts</strong>

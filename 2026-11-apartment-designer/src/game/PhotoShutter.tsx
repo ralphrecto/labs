@@ -163,6 +163,7 @@ export function PhotoShutter() {
           <circle cx="12" cy="13.2" r="3.4" />
         </svg>
       </button>}
+      {/* Evening appears when it unlocks (Cozy): the level-up card announces it. */}
       {!snap &&
         (eveningOpen ? (
           <button
@@ -175,18 +176,7 @@ export function PhotoShutter() {
             <span aria-hidden>{evening ? '☾' : '☀'}</span>
             {evening ? 'Evening' : 'Day'}
           </button>
-        ) : (
-          <button
-            type="button"
-            className="photo-evening locked"
-            disabled
-            aria-label="Evening light is locked. Reach Cozy to unlock evening"
-            title="Reach Cozy to unlock evening"
-          >
-            <span aria-hidden>☾</span>
-            <span aria-hidden className="photo-evening-text">At Cozy</span>
-          </button>
-        ))}
+        ) : null)}
       {flash > 0 && <div key={flash} className="photo-flash" aria-hidden />}
       {snap && (
         <div className="photo-sheet" role="dialog" aria-label="Your photo" onClick={() => setSnap(null)}>

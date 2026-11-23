@@ -29,6 +29,15 @@ export const CATEGORY_GROUPS: { key: string; label: string; emoji?: string; cate
   { key: 'mine', label: 'Mine', emoji: '⭐', categories: [] },
 ]
 
+/**
+ * The drawer's tabs right now: "Mine" joins once you own a piece of your own (placed or waiting,
+ * moving boxes aside) or it is the open tab. Number keys 1 to n follow this list.
+ */
+export function visibleGroups(items: Item[], tab?: string) {
+  const hasMine = tab === 'mine' || items.some((i) => isMine(i) && !i.unpack?.length)
+  return hasMine ? CATEGORY_GROUPS : CATEGORY_GROUPS.filter((g) => g.key !== 'mine')
+}
+
 /** The category drawn on each tab chip. */
 const TAB_ICON: Record<string, string> = { living: 'sofa', bedroom: 'bed', dining: 'dining-chair', work: 'desk', decor: 'plant', wall: 'wall-art' }
 
@@ -307,7 +316,8 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   }, [placements])
   const waiting = useMemo(() => waitingCount(items, (id) => !!counts.get(id)), [items, counts])
 
-  const group = CATEGORY_GROUPS.find((g) => g.key === tab) ?? CATEGORY_GROUPS[0]
+  const groups = useMemo(() => visibleGroups(items, tab), [items, tab])
+  const group = groups.find((g) => g.key === tab) ?? groups[0]
   const gridRef = useRef<HTMLDivElement>(null)
   // Bring the card the "Next" chip pointed at into view.
   useEffect(() => {
@@ -424,18 +434,18 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
       <div className="buy-tabs" role="tablist" aria-label="Furniture categories" onKeyDown={(e) => {
           // One tab stop for the strip; arrows (Home/End) move between categories and open them.
           const keys: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }
-          const n = CATEGORY_GROUPS.length
-          const at = CATEGORY_GROUPS.findIndex((g) => g.key === group.key)
+          const n = groups.length
+          const at = groups.findIndex((g) => g.key === group.key)
           const to = e.key in keys ? (at + keys[e.key] + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1
           if (to < 0) return
           e.preventDefault()
           // Not a nudge of the selected piece (App's window-level arrow keys).
           e.stopPropagation()
-          setTab(CATEGORY_GROUPS[to].key)
+          setTab(groups[to].key)
           if (hint) useGame.getState().setBuyHint(null)
           e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[to]?.focus()
         }}>
-        {CATEGORY_GROUPS.map((g, gi) => (
+        {groups.map((g, gi) => (
           <button key={g.key} role="tab" tabIndex={g.key === group.key ? 0 : -1} aria-selected={g.key === group.key} aria-label={g.label} title={`${g.label} (${gi + 1})`} className={`buy-tab ${g.key === group.key ? 'on' : ''}`} onClick={() => {
               setTab(g.key)
               if (hint) useGame.getState().setBuyHint(null)

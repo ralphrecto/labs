@@ -253,6 +253,13 @@
 .hud-settings .g-toggle + .g-toggle { border-top: 1px solid var(--g-line); }
 .hud-settings-btns { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
 .hud-settings-btns .g-btn { justify-content: flex-start; }
+.hud-settings-row { width: 100%; border: none; border-radius: 0; background: none; color: var(--g-ink); font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
+.hud-settings-row kbd { font: 800 0.8125rem/1 var(--g-font); padding: 4px 8px; border-radius: 6px; background: var(--g-paper-2); }
+.dz-file-links { display: flex; justify-content: center; gap: 18px; margin-top: 14px; }
+.g-link { border: none; background: none; padding: 6px 2px; color: var(--g-ink-2); font: 700 0.8125rem/1.2 var(--g-font); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.g-link:hover { color: var(--g-ink); }
+.dz-home.dz-home-add { gap: 6px; padding: 8px 14px; border: 2px dashed var(--g-line); background: none; color: var(--g-ink-2); font: 800 0.8125rem/1 var(--g-font); cursor: pointer; }
+.dz-home.dz-home-add:hover { color: var(--g-ink); border-color: var(--g-coral); }
 .hud-seg { display: inline-flex; background: var(--g-paper-2); border-radius: 999px; padding: 3px; }
 .hud-seg button { border: none; background: transparent; border-radius: 999px; padding: 6px 12px; font: 800 0.8125rem var(--g-font); color: var(--g-ink-2); cursor: pointer; }
 .hud-seg button.on { background: #fff; color: var(--g-ink); box-shadow: var(--g-shadow-sm); }

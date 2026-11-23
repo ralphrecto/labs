@@ -115,6 +115,12 @@ function usePhone() {
 
 /** The goal that earned the latest level, shown in the level-up ("+2★ A cozy corner to sleep"). */
 let levelGoalLine = ''
+/** What each level opens up, said on its level-up card (and to screen readers). */
+const UNLOCK_LINE: Record<string, string | undefined> = {
+  'Moving in': 'Styles unlocked. Try one with the style button.',
+  Cozy: 'Evening light, visitors and bonus goals unlocked.',
+  'Designer home': 'Remix unlocked. Find it in Your designs.',
+}
 
 /** Goals finished in two steps (a desk, then a chair): the first step gets a "½" and a nudge. */
 const TWO_STEP = new Set(['work', 'eat', 'nook'])
@@ -419,7 +425,7 @@ export function VibeMeter() {
     if (!levelUp) return
     const dream = levelUp.index >= LEVELS.length - 1
     announce(
-      `${dream ? 'You did it! Dream home reached.' : `Level up! ${levelUp.name}, level ${levelUp.index + 1} of ${LEVELS.length}.`} ${levelGoalLine}${levelUp.name === 'Cozy' ? ' Evening light unlocked. Try it in Look.' : ''}`,
+      `${dream ? 'You did it! Dream home reached.' : `Level up! ${levelUp.name}, level ${levelUp.index + 1} of ${LEVELS.length}.`} ${levelGoalLine}${UNLOCK_LINE[levelUp.name] ? ` ${UNLOCK_LINE[levelUp.name]}` : ''}`,
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [levelUp?.key])
@@ -591,7 +597,7 @@ export function VibeMeter() {
             <small>Level up! {levelUp.index + 1} of {LEVELS.length}</small>
             {levelUp.name}
             {levelGoalLine && <em>{levelGoalLine}</em>}
-            {levelUp.name === 'Cozy' && <em>Evening light unlocked. Try it in Look.</em>}
+            {UNLOCK_LINE[levelUp.name] && <em>{UNLOCK_LINE[levelUp.name]}</em>}
           </span>
         </button>
       )}
@@ -620,7 +626,8 @@ function showGoal(g: Goal) {
       return
     }
     useStore.setState({ selection: { kind: 'placement', id: g.near } })
-    if (g.hint) st.notify(g.hint)
+    // The box is selected now, so the only step left is its bar's Unpack.
+    st.notify('Tap Unpack!')
     // Once that box is unpacked (from its bar), select the next packed box, if any.
     stopUnpackFlow()
     stopUnpackFlow = useGame.subscribe((s, prev) => {
@@ -778,6 +785,7 @@ export function LevelUpCard() {
               {dream ? `Every level reached: ${LEVELS.length} of ${LEVELS.length}` : `Level ${levelUp.index + 1} of ${LEVELS.length}`}
             </span>
             {levelGoalLine && <em className="goal-levelup-goal">{levelGoalLine}</em>}
+            {UNLOCK_LINE[levelUp.name] && <em className="goal-levelup-goal">{UNLOCK_LINE[levelUp.name]}</em>}
           </>
         )}
         {dream && (
@@ -911,7 +919,13 @@ export function GoalsSheet() {
   const twistInfo = twist ? TWISTS[twist.id.slice(6) as keyof typeof TWISTS] : undefined
   // Today's visitor: a pill under the level, its own section, and the stickers collected so far.
   const { visit: visitDef, stickers } = useVisit()
-  const visitGoal = score.goals.find((g) => g.visit)
+  // Visitors and stickers arrive with Cozy, as the Next chip has it.
+  const reached = Math.max(score.level.index, score.best)
+  const visitGoal = reached >= VISIT_LEVEL ? score.goals.find((g) => g.visit) : undefined
+  // Before Cozy the open bonus goals wait behind one "Bonus goals (n)" row, unless one is being shown.
+  const [bonusOpen, setBonusOpen] = useState(false)
+  const foldBonus = reached < VISIT_LEVEL && !bonusOpen && !focused?.bonus
+  const folded = foldBonus ? score.goals.filter((g) => g.bonus && !g.done && !g.visit && !g.urgent && g !== twist) : []
   return (
     <div className="g-scrim" onClick={close}>
       <div ref={sheetRef} className="g-sheet goal-sheet" role="dialog" aria-modal="true" aria-label="Goals" onClick={(e) => e.stopPropagation()}>
@@ -997,7 +1011,7 @@ export function GoalsSheet() {
           </section>
         )}
         {CATEGORY_ORDER.map((cat) => {
-          const goals = score.goals.filter((g) => g.category === cat && g !== twist && !g.visit)
+          const goals = score.goals.filter((g) => g.category === cat && g !== twist && !g.visit && !folded.includes(g))
           if (!goals.length) return null
           const locked = goals.filter((g) => g.locked && !g.done)
           const rows = locked.length > 1 ? [...goals.filter((g) => !locked.includes(g) && !g.done), lockedRow(locked), ...goals.filter((g) => g.done)] : goals
@@ -1012,6 +1026,22 @@ export function GoalsSheet() {
             </section>
           )
         })}
+        {folded.length > 0 && (
+          <section className="goal-group goal-cat-bonus">
+            <ul>
+              <li className="goal-row-item">
+                <button type="button" className="goal-row open goal-bonus-fold" onClick={() => setBonusOpen(true)} aria-expanded={false}>
+                  <span className="goal-check" />
+                  <span className="goal-main">
+                    <span className="goal-title">Bonus goals ({folded.length})</span>
+                    <span className="goal-hint">{folded.map((g) => g.title).join(' · ')}</span>
+                  </span>
+                  <Stars n={folded.reduce((a, g) => a + g.stars, 0)} filled={false} />
+                </button>
+              </li>
+            </ul>
+          </section>
+        )}
       </div>
     </div>
   )
