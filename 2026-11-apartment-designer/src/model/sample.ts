@@ -53,7 +53,10 @@ export function sampleDoc(opts: { settled?: boolean } = {}): Doc {
   const bath = rectRoom('Bathroom', 5.32, 3.52, 3.6, 2.0)
   living.openings.push(
     { id: uid(), kind: 'door', wall: 2, offset: 0.4, width: 0.9, height: 2.1, sill: 0, hinge: 'end', swing: 'in', entrance: true },
-    { id: uid(), kind: 'window', wall: 0, offset: 1.2, width: 1.6, height: 1.4, sill: 0.8 },
+    // The living-room window is off to the dining end of the north wall: the TV stands on the
+    // solid wall beside it (a screen under a window fights the glare), and the sofa across the
+    // room still looks out of it.
+    { id: uid(), kind: 'window', wall: 0, offset: 3.3, width: 1.6, height: 1.4, sill: 0.8 },
     { id: uid(), kind: 'door', wall: 1, offset: 2.3, width: 0.8, height: 2.1, sill: 0, hinge: 'end', swing: 'out' },
   )
   bedroom.openings.push(

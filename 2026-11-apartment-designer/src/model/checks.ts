@@ -8,9 +8,14 @@ import {
   doorSwing,
   footprint,
   openingEndpoints,
+  dot,
+  norm,
+  openingEndpoints as windowEnds,
   pointInPolygon,
   polygonInsideRoom,
+  rot,
   scale,
+  sub,
   v,
   wallInwardNormal,
 } from './geometry'
@@ -23,7 +28,7 @@ export type Severity = 'error' | 'warning' | 'info'
 export interface Issue {
   id: string
   severity: Severity
-  kind: 'overlap' | 'wall' | 'clearance' | 'door' | 'path'
+  kind: 'overlap' | 'wall' | 'clearance' | 'door' | 'path' | 'window'
   message: string
   placementIds: string[]
   /** Area to highlight on the plan. */
@@ -170,6 +175,21 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
     }
   }
 
+  // A TV backed onto a window: the daylight behind the screen washes it out (and blocks the view).
+  for (const x of solid) {
+    if (x.item.category !== 'tv-stand') continue
+    const w = backAgainstWindow(doc.rooms, x.item, x.p)
+    if (w)
+      issues.push({
+        id: `window:${x.p.id}:${w.openingId}`,
+        severity: 'warning',
+        kind: 'window',
+        message: `${x.item.name} sits under a window, where the glare washes out the screen; move it to a solid wall`,
+        placementIds: [x.p.id],
+        area: x.body,
+      })
+  }
+
   // Door swings blocked.
   for (const s of doorSwings(doc.rooms)) {
     for (const x of solid) {
@@ -186,6 +206,44 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   }
 
   return issues
+}
+
+/** How close (m) a piece's back must be to a wall to count as backed onto it. */
+export const BACK_TO_WALL = 0.2
+
+/**
+ * The window a piece's back is pushed against (its back edge on that window's wall and overlapping
+ * the window by more than a few cm), or null. A TV under a window fights the glare: checkLayout
+ * flags it, and auto-placement steers clear of it.
+ */
+export function backAgainstWindow(
+  rooms: Room[],
+  item: Pick<Item, 'width' | 'depth'>,
+  p: Pick<Placement, 'x' | 'y' | 'rotation'>,
+): { roomId: string; openingId: string } | null {
+  const c = v(p.x, p.y)
+  const hw = item.width / 2
+  const hd = item.depth / 2
+  const back = add(c, rot(v(0, -hd), p.rotation))
+  const left = add(c, rot(v(-hw, -hd), p.rotation))
+  const right = add(c, rot(v(hw, -hd), p.rotation))
+  const out = rot(v(0, -1), p.rotation)
+  for (const room of rooms) {
+    if (!pointInPolygon(c, room.polygon)) continue
+    for (const o of room.openings) {
+      if (o.kind !== 'window') continue
+      const [a, b] = windowEnds(room, o)
+      const dir = norm(sub(b, a))
+      // Square to the wall (the back faces it), and touching it.
+      if (Math.abs(dot(out, dir)) > 0.5 || dot(out, wallInwardNormal(room, o.wall)) > -0.5) continue
+      if (Math.abs(dot(sub(back, a), wallInwardNormal(room, o.wall))) > BACK_TO_WALL) continue
+      const t0 = Math.min(dot(sub(left, a), dir), dot(sub(right, a), dir))
+      const t1 = Math.max(dot(sub(left, a), dir), dot(sub(right, a), dir))
+      const len = Math.hypot(b.x - a.x, b.y - a.y)
+      if (Math.min(t1, len) - Math.max(t0, 0) > 0.05) return { roomId: room.id, openingId: o.id }
+    }
+  }
+  return null
 }
 
 /**

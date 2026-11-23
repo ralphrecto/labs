@@ -22,7 +22,18 @@ const CURTAIN_GAP = 0.03
 /** How far a piece keeps from a door, a window or another frame on the same wall. */
 const GAP = 0.05
 /** Furniture a piece looks good hung over, with a little bonus when centred on it. */
-const OVER = new Set(['sofa', 'bed', 'desk', 'sideboard', 'dresser', 'console-table', 'tv-stand'])
+const OVER = new Set(['sofa', 'bed', 'desk', 'sideboard', 'dresser', 'console-table'])
+/** The big pieces art centres on exactly (a frame 10 cm off a sofa's middle reads as a mistake). */
+const CENTRE_ON = new Set(['sofa', 'bed'])
+
+/**
+ * How high a floor piece reaches against its wall (m): its own height, or for a TV stand the top
+ * of the screen standing on it (as ItemModel draws it), so no frame hangs behind the TV.
+ */
+export function wallTop(it: Pick<Item, 'category' | 'width' | 'height'>): number {
+  if (it.category === 'tv-stand') return it.height + 0.09 + Math.min(it.width * 0.78, 1.45) * 0.57
+  return it.height
+}
 
 /** Height of the bottom edge of a wall piece above the floor: its placement's own (a stacked frame) or the category's. */
 export function mountBottom(item: Pick<Item, 'category'> & { height?: number }, p?: Pick<Placement, 'mountY'>): number {
@@ -200,7 +211,7 @@ function stackOn(doc: Doc, layout: Layout, room: Room, wall: number, item: WallI
     const c = v(p.x, p.y)
     const r = Math.max(it.width, it.depth) / 2
     const o = dot(sub(c, a), n)
-    return o >= -0.05 && o <= r + 0.25 ? [{ t: dot(sub(c, a), d), r, top: it.height }] : []
+    return o >= -0.05 && o <= r + 0.25 ? [{ t: dot(sub(c, a), d), r, top: wallTop(it) }] : []
   })
   for (const p of layout.placements) {
     if (p.id === exclude) continue
@@ -281,6 +292,15 @@ export function findWallDrop(doc: Doc, layout: Layout, item: WallItem & { name?:
       const d = norm(sub(b, a))
       const n = wallInwardNormal(room, wall)
       const ts = curtains ? room.openings.filter((o) => o.kind === 'window' && o.wall === wall).map((o) => o.offset + o.width / 2) : Array.from({ length: Math.max(1, Math.floor(L / 0.2)) }, (_, i) => (i + 0.5) * (L / Math.max(1, Math.floor(L / 0.2))))
+      // Art over a sofa or bed hangs dead centre on it: try the spot square above each one's middle.
+      if (FRAMES.has(item.category))
+        for (const { p, it } of solids) {
+          if (!CENTRE_ON.has(it.category)) continue
+          const c = v(p.x, p.y)
+          const out = dot(sub(c, a), n)
+          const tc = dot(sub(c, a), d)
+          if (out > 0 && out < it.depth / 2 + 0.25 && tc > 0 && tc < L) ts.push(tc)
+        }
       for (const t0 of ts) {
         const r = bestOnWall(doc, layout, room, wall, t0, item)
         // (Curtains centre on their rod, which may sit off the window's centre near a corner or a door.)
@@ -294,9 +314,13 @@ export function findWallDrop(doc: Doc, layout: Layout, item: WallItem & { name?:
           const halfSpan = Math.max(it.width, it.depth) / 2
           if (out < 0 || out > Math.max(it.width, it.depth) / 2 + 0.25 || Math.abs(along) > halfSpan + item.width / 2) continue
           // Hidden behind something tall: no.
-          if (it.height > bottom + 0.1 && !curtains) score -= 80
+          if (wallTop(it) > bottom + 0.1 && !curtains) score -= 80
           else if (it.height > 1.0 && curtains) score -= 30
-          else if (OVER.has(it.category) && FRAMES.has(item.category)) score += 30 - 20 * Math.min(1, Math.abs(along) / Math.max(0.1, halfSpan))
+          else if (OVER.has(it.category) && FRAMES.has(item.category)) {
+            score += 30 - 20 * Math.min(1, Math.abs(along) / Math.max(0.1, halfSpan))
+            // Dead centre over a sofa or bed beats a spot a hand's width off it, by more than the corner nudge below.
+            if (CENTRE_ON.has(it.category) && Math.abs(along) < 0.01) score += 4
+          }
         }
         if (target) score -= 3 * dist(v(target.x, target.y), r.spot)
         if (opts.near) score -= 0.5 * dist(opts.near, r.spot)

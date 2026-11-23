@@ -343,8 +343,10 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
       // when no spot anywhere allows that may one long side go to the wall (a far worse score), so
       // a crowded living room still takes a table. Other pieces there only cost score.
       if (ownPullOuts) {
-        const open = tablePullOuts(item as Item, { id: '', itemId: '', x: c.x, y: c.y, rotation }).filter((z) => polygonInsideRoom(z, room.polygon, 0.01)).length
-        if (!open) return null
+        const inRoom = tablePullOuts(item as Item, { id: '', itemId: '', x: c.x, y: c.y, rotation }).filter((z) => polygonInsideRoom(z, room.polygon, 0.01))
+        if (!inRoom.length) return null
+        // (A side whose chairs would sit in the sofa's view of the TV is no more open than a wall.)
+        const open = inRoom.filter((z) => !viewZones.some((w) => w.tv && convexOverlap(z, w.poly, 0.005))).length
         if (open < 2) penalty = AGAINST_WALL
       }
     } else {
@@ -479,18 +481,31 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
           if (solids.some((o) => o !== t && !AT_TABLE.has(o.item.category) && convexOverlap(strip, o.body, 0.005))) break
           free = d
         }
-        return { n, along, off, long, free }
+        // The seats already pulled up to this side (table-local positions).
+        const seats = others.flatMap((o) => {
+          if (!AT_TABLE.has(o.item.category) || polygonGap(o.body, t.body) > CHAIR_REACH + 0.05) return []
+          const l = rot(sub(v(o.p.x, o.p.y), v(t.p.x, t.p.y)), -t.p.rotation)
+          return dot(l, n) > off - 0.05 && Math.abs(dot(l, v(-n.y, n.x))) < along + 0.1 ? [l] : []
+        })
+        return { n, along, off, long, free, seats }
       })
       const anyFree = sides.some((sd) => sd.free >= TABLE_PULL_OUT - 1e-6)
-      for (const { n, along, off, long, free } of sides) {
+      // A second chair goes across from the first (two people face each other over the table), not
+      // beside it on the same side: an empty side scores, straight across from a chair scores most.
+      const anySeated = sides.some((sd) => sd.seats.length > 0)
+      for (const { n, along, off, long, free, seats } of sides) {
+        const perpN = v(-n.y, n.x)
+        const across = sides.filter((sd) => sd.seats.length && dot(sd.n, n) < -0.5).flatMap((sd) => sd.seats.map((l) => dot(l, perpN)))
+        const company = (u: number) =>
+          !anySeated ? 0 : seats.length ? -4 * seats.length : across.length ? 10 - 4 * Math.min(1, Math.min(...across.map((a) => Math.abs(a - u)))) : 6
         const perp = v(-n.y, n.x)
-        for (const u of [0, -along / 2, along / 2, -along / 3, along / 3, -(along - hw), along - hw]) {
+        for (const u of [0, -along / 2, along / 2, -along / 3, along / 3, -(along - hw), along - hw, ...across]) {
           if (Math.abs(u) + hw > along + 0.1) continue
           const l = add(scale(n, off + 0.05 + hd), scale(perp, u))
           const nw = rot(n, t.p.rotation)
           // The side with the most free floor wins; a chair with no room to pull out is refused
           // outright while another side of the table is open.
-          consider(local(t, l), facing(scale(nw, -1)), 25 + (long ? 2 : 0) - Math.abs(u) + free * 8, cat === 'dining-chair' ? (anyFree ? chairBackBlocked : chairBackThroughWall) : undefined)
+          consider(local(t, l), facing(scale(nw, -1)), 25 + (long ? 2 : 0) - Math.abs(u) + free * 8 + company(u), cat === 'dining-chair' ? (anyFree ? chairBackBlocked : chairBackThroughWall) : undefined)
         }
       }
     }
@@ -573,13 +588,14 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
           const c = add(add(a, scale(dir, t)), scale(n, hd + 0.005))
           let bonus = wallBacked ? 6 : 1
           bonus -= Math.abs(t - L / 2) * 0.3
-          if (cat === 'bed') {
-            // Headboard against solid wall, not under a window.
+          if (cat === 'bed' || cat === 'tv-stand') {
+            // Headboard against solid wall, not under a window. A TV under a window fights the
+            // glare (checkLayout flags it): a solid wall the sofa faces beats it by far.
             for (const w of windows)
               if (w.room.id === room.id && w.wall === wi) {
                 const t0 = dot(sub(w.ends[0], a), dir)
                 const t1 = dot(sub(w.ends[1], a), dir)
-                if (Math.min(t0, t1) < t + hw && Math.max(t0, t1) > t - hw) bonus -= 6
+                if (Math.min(t0, t1) < t + hw - 0.05 && Math.max(t0, t1) > t - hw + 0.05) bonus -= cat === 'bed' ? 6 : 20
               }
           }
           if (cat === 'desk' && windows.some((w) => dist(c, scale(add(w.ends[0], w.ends[1]), 0.5)) - hd < 1.5)) bonus += 6

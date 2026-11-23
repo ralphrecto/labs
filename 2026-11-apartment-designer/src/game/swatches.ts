@@ -105,6 +105,13 @@ export const PICKS: Record<string, Pick[]> = {
     { id: 'plant-md', label: 'Medium', color: sage, look: { scale: 0.7 } },
     { id: 'plant-lg', label: 'Tall', color: sage },
   ],
+  // Art goes up over the sofa or the bed, where a designer hangs about two thirds of its width:
+  // the large canvas first, a framed print and a landscape print for a narrower wall.
+  'wall-art': [
+    { id: 'art-lg', label: 'Large', color: '#7fa7c9', look: { wide: true } },
+    { id: 'art-md', label: 'Framed', color: '#e8a27c' },
+    { id: 'art-land', label: 'Landscape', color: '#8fae84', look: { wide: true, scale: 0.8 } },
+  ],
   sofa: [
     { id: 'sofa-apt', label: 'Compact', color: taupe },
     { id: 'sofa-3', label: '3-seat', color: sage },

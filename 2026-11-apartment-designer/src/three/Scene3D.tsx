@@ -1,6 +1,6 @@
 import { ContactShadows, Edges, Html, OrbitControls } from '@react-three/drei'
 import { Canvas, invalidate, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { setCaptureRenderer } from './capture'
+import { captureCamera, setCaptureFraming, setCaptureRenderer } from './capture'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -16,6 +16,7 @@ import { viewFrame } from './viewFrame'
 import { scanCenter, scanCorners, useScanRuntime } from '../scan/runtime'
 import { POP_MS, POP_STAGGER_MS, reduceMotion } from '../motion'
 import { useGame } from '../game/gameStore'
+import { LEVELS } from '../game/goals'
 import { isPackedBox, unpackAndCelebrate } from '../game/unpack'
 
 // The scan backdrop pulls in the splat renderer, so it loads on first use.
@@ -1083,6 +1084,10 @@ const visibleHeight = (h: number, inset?: SceneInset) => Math.max(h * 0.25, h - 
 
 /** How much of the visible stage the home spans across its tighter direction: about a 10% margin each side. */
 const FILL = 0.8
+/** A photo's home fills this much of the narrower crop (the polaroid's near-square window). */
+const CAPTURE_FILL = 0.94
+/** The crops a photo is read through (width / height): the polaroid's photo window and the album's 4:3 copy. */
+const CAPTURE_ASPECT = [1 / 0.92, 4 / 3] as const
 /** Phones (portrait, narrow): the stage is small, so the home runs closer to its edges. */
 const PHONE_FILL = 0.88
 /** Look mode: nearly edge to edge. */
@@ -1302,7 +1307,7 @@ function DemandFrames({ spin }: { spin?: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spin])
   useEffect(() => {
-    setCaptureRenderer(() => gl.render(scene, camera))
+    setCaptureRenderer(() => gl.render(scene, captureCamera(camera)))
     return () => setCaptureRenderer(null)
   }, [gl, scene, camera])
   useFrame(({ invalidate: more }) => {
@@ -1460,6 +1465,19 @@ export function decoratedDir(doc: Doc): THREE.Vector3 {
   return best
 }
 
+/** Things asking the overview to ease back to the whole home (see showWholeHome). */
+const wholeHomeListeners = new Set<() => void>()
+
+/**
+ * Ease the 3D overview back to the best whole-home view (decoratedDir, framed as on first load),
+ * from wherever the camera was left (facing a wall it just hung art on, say). Store-free, so any
+ * celebration or capture can call it; does nothing when no overview is showing. The Dream home
+ * level-up (and with it the Remix complete card) already triggers it from FitCamera.
+ */
+export function showWholeHome() {
+  wholeHomeListeners.forEach((l) => l())
+}
+
 function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: boolean; focus?: string | null; full?: boolean }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
@@ -1468,7 +1486,10 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
   const scans = useStore((s) => s.doc.scans)
   const touched = useRef(false)
   const placed = useRef(false)
-  const goal = useRef<{ target: THREE.Vector3; dist: number } | null>(null)
+  const [reframes, setReframes] = useState(0)
+  const goal = useRef<{ target: THREE.Vector3; dist: number; dir?: THREE.Vector3 } | null>(null)
+  /** The direction a whole-home reframe is turning to, kept until reached (refits on the way keep it). */
+  const turning = useRef<THREE.Vector3 | null>(null)
   // Focusing on a room (or back on the whole home) is a deliberate reframe, even after orbiting.
   const lastFocus = useRef(focus)
   if (lastFocus.current !== focus) {
@@ -1480,6 +1501,7 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
     const stop = () => {
       touched.current = true
       goal.current = null
+      turning.current = null
     }
     // A drag (not just a tap) moves the view off its framing: the View button then recenters.
     let dragging = false
@@ -1508,7 +1530,7 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
     }
     const pts = framePoints(useStore.getState().doc, focus)
     if (!pts.length) return
-    const dir = placed.current ? camera.position.clone().sub(controls.target).normalize() : decoratedDir(useStore.getState().doc)
+    const dir = turning.current ?? (placed.current ? camera.position.clone().sub(controls.target).normalize() : decoratedDir(useStore.getState().doc))
     // Look mode has no drawer: the home fills the screen between the look bar and the mode bar
     // (the game passes their inset), or the whole screen when there is no HUD.
     const frame = lookInset(inset, full, size.width, size.height)
@@ -1521,10 +1543,69 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
       camera.lookAt(fit.target)
       controls.update()
       goal.current = null
-    } else goal.current = fit
+    } else goal.current = turning.current ? { ...fit, dir: turning.current } : fit
     invalidate()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [camera, controls, size.width, size.height, inset?.top, inset?.bottom, inset?.right, rooms, scans, spin, focus, full])
+  }, [camera, controls, size.width, size.height, inset?.top, inset?.bottom, inset?.right, rooms, scans, spin, focus, full, reframes])
+  // A photo frames the home itself: fitted to its bounds in the middle of the canvas (the part the
+  // polaroid and album crops keep), from the direction the player is looking, with no HUD offset.
+  // A player who zoomed in closer than that keeps their own shot.
+  useEffect(() => {
+    if (!controls) return
+    setCaptureFraming(<C,>(live: C): C => {
+      const cam = live as unknown as THREE.PerspectiveCamera
+      if (!(cam instanceof THREE.PerspectiveCamera)) return live
+      const pts = framePoints(useStore.getState().doc, focus)
+      if (!pts.length) return live
+      const off = cam.position.clone().sub(controls.target)
+      const dir = off.clone().normalize()
+      // The middle of the canvas that both crops keep (each a centred cover crop of its aspect).
+      const W = Math.max(1, size.width)
+      const H = Math.max(1, size.height)
+      const crop = (a: number) => (W / H > a ? [H * a, H] : [W, W / a])
+      const [pw, ph] = crop(CAPTURE_ASPECT[0])
+      const [aw, ah] = crop(CAPTURE_ASPECT[1])
+      const bw = Math.min(pw, aw)
+      const bh = Math.min(ph, ah)
+      const fit = fitView(pts, dir, cam.fov, bw, bh, undefined, false, (CAPTURE_FILL * bh) / H)
+      if (off.length() < fit.dist * 0.98) return live
+      const shot = cam.clone()
+      shot.clearViewOffset()
+      shot.position.copy(fit.target).addScaledVector(dir, fit.dist)
+      shot.lookAt(fit.target)
+      shot.updateProjectionMatrix()
+      shot.updateMatrixWorld(true)
+      return shot as unknown as C
+    })
+    return () => setCaptureFraming(null)
+  }, [controls, focus, size.width, size.height])
+  // Dream home (and the Remix complete card with it) is celebrated over the whole home, not over
+  // the wall the camera last turned to for a piece of art (the house's cut-away back).
+  useEffect(() => {
+    if (!controls) return
+    const go = () => {
+      if (focus) return
+      // Reads as a move of the view's own: any turn under way (FaceWall's) lets go of the camera.
+      controls.dispatchEvent({ type: 'start' } as never)
+      controls.dispatchEvent({ type: 'end' } as never)
+      touched.current = false
+      turning.current = decoratedDir(useStore.getState().doc)
+      if (reduceMotion) {
+        placed.current = false
+        turning.current = null
+      }
+      setReframes((n) => n + 1)
+    }
+    wholeHomeListeners.add(go)
+    const off = useGame.subscribe((st, prev) => {
+      const lv = st.levelUp
+      if (lv && lv.key !== prev.levelUp?.key && lv.index >= LEVELS.length - 1) go()
+    })
+    return () => {
+      wholeHomeListeners.delete(go)
+      off()
+    }
+  }, [controls, focus])
   // The game's arrow keys follow this view (see viewFrame); the classic editor (no inset) keeps plan axes.
   useEffect(() => () => void (viewFrame.azimuth = null), [])
   useFrame((_, dt) => {
@@ -1532,13 +1613,30 @@ function FitCamera({ inset, spin, focus, full }: { inset?: SceneInset; spin?: bo
     const g = goal.current
     if (!g || !controls) return
     invalidate()
-    const k = 1 - Math.exp(-Math.min(dt, 0.05) * 12)
+    // A turn round the home eases slower than a reframe, so it reads as the camera stepping back.
+    const k = 1 - Math.exp(-Math.min(dt, 0.05) * (g.dir ? 5 : 12))
     const off = camera.position.clone().sub(controls.target)
     const d = off.length()
     const nd = d + (g.dist - d) * k
     controls.target.lerp(g.target, k)
+    let aimed = true
+    if (g.dir) {
+      // Round the home (azimuth by the short way) and up or down to the overview's pitch.
+      const now = new THREE.Spherical().setFromVector3(off)
+      const to = new THREE.Spherical().setFromVector3(g.dir)
+      const dTheta = turnTo(now.theta, to.theta)
+      const dPhi = to.phi - now.phi
+      aimed = Math.abs(dTheta) < 0.002 && Math.abs(dPhi) < 0.002
+      now.theta += aimed ? dTheta : dTheta * k
+      now.phi += aimed ? dPhi : dPhi * k
+      now.radius = 1
+      off.setFromSpherical(now)
+    }
     camera.position.copy(controls.target).addScaledVector(off.normalize(), nd)
-    if (Math.abs(nd - g.dist) < 1e-3 && controls.target.distanceTo(g.target) < 1e-3) goal.current = null
+    if (aimed && Math.abs(nd - g.dist) < 1e-3 && controls.target.distanceTo(g.target) < 1e-3) {
+      goal.current = null
+      turning.current = null
+    }
     controls.update()
   })
   return null
