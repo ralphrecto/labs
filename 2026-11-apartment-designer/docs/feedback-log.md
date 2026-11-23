@@ -505,3 +505,28 @@ Rolled over:
 - Older iOS can still pinch-zoom (no gesturestart guard).
 
 314 tests pass.
+
+## Round 16 (2026-11-23 18:56-20:20 UTC)
+
+Playthrough: phone and desktop pass (only the known headless Scan-style flake). Reviewers: first-time phone player, cozy gamer (long desktop session with two remixes), interior designer and art director.
+
+Shipped:
+- **Round 15 leftovers:** phone buy tabs split the row evenly so "Mine" fits at 360-390 px; plan wall lengths move clear of decor badges (`wallLabelSpot`, `decorBadgeCenter`); iOS pinch guard (`src/gestureGuard.ts`); the Next chip can finish Open floor and Fresh start twists by moving a piece (`twistMove`); the drag lesson earns a one-time "Drag like a pro" star (`perks`, `awardDragStar`).
+- **Next chip never loops or costs stars:** a pick goal that a placement doesn't advance is skipped for the design; nightstands only go beside the pillows (`bedsidePick`); `keepStars`/`starMove` avoid star-losing spots; the drag lesson's spot can't pinch a walkway and the loss pill hides during the lesson; a tapped chip comes back after 8 s or when the sheet closes.
+- **Clear walkways is playable:** the goal points at the piece by the pinch, the chip selects it with paths and a pulsing ring (`PinchMarker`), and `goalMove` moves it to a clean spot when one exists.
+- **Remixes feel different:** a goals-done tick on the remix pill, "✓ goal" toasts instead of "+1★", the twist leads, bonus order varies per remix, friendly twist copy without distances, and owned decor is reused instead of bought again.
+- **Unlocks:** each unlock line shows once across homes; newly unlocked buttons glow with "New" until used; Remix copy points at the glowing designs button; Unpack keeps a label. After the Dream photo, the game returns to Furnish.
+- **Room sense:** the sample's window moved so the TV sits on solid wall; a TV stand against a window is a warning and auto-placement avoids it; dining chairs face each other; art over a sofa or bed snaps to its centre, never behind the TV, with a Large canvas pick card; bathrooms are left out of "Every room has something".
+- **Dream moments and photos:** the top-level celebration eases to the whole-home view; photos render through a camera fitted to the home.
+- **Art pass:** round dusk stars, rugs toned to contrast with the floor with a darker border, smooth blurred scan floors in Cartoon and more contrast in Lifelike, dark TV screen in Clay, no lamp-shade blob, the sun patch fades under furniture.
+
+Pacing: sample reaches Dream home in 19 Next steps, empty layout 23, open-floor remix 20. 342 tests pass.
+
+Rolled over:
+- Fresh start remix in the sample tops out at Designer home ("Make room for a desk" needs a move that costs a star).
+- Remixes don't yet filter out goals the original already finished.
+- Each chip move scores up to a dozen spots (0.3-2 s); time it on a real phone.
+- Lifelike scan rug still faint (scan sampling mixes floor points under the rug).
+- "Entrance" room label overlaps a wall length in the phone plan.
+- Pacing still feels like a checklist: add a choice that matters every few goals (mood, style) or a hand-placed piece.
+- Evening light unlock has no "New" glow.
