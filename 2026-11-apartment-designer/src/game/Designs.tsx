@@ -189,12 +189,14 @@ export function useDesignScores(doc: Doc) {
   // Today's visitor counts toward the open design's stars, just as on the HUD.
   const visitId = useGame((s) => s.visit.visitId)
   const visitDone = useGame((s) => s.visit.done)
+  const dragPerk = useGame((s) => !!s.dragStar && s.dragStar === doc.apartment.id)
   return useMemo(() => {
     const visit = visitId ? { id: visitId, done: visitDone } : null
+    const perks = dragPerk ? { drag: true } : null
     const scores = new Map(
       doc.layouts.map((l) => {
         try {
-          const sc = scoreHome(doc, l, analyze(doc, l), l.id === doc.activeLayoutId ? visit : null)
+          const sc = scoreHome(doc, l, analyze(doc, l), l.id === doc.activeLayoutId ? visit : null, perks)
           const twist = l.remix ? sc.goals.find((g) => g.id === `twist:${l.remix!.twist}`) : undefined
           return [
             l.id,
@@ -224,7 +226,7 @@ export function useDesignScores(doc: Doc) {
         if (st > top) [best, top] = [l.id, st]
       }
     return { scores, best }
-  }, [doc.rooms, doc.items, doc.layouts, doc.apartment.units, doc.activeLayoutId, visitId, visitDone])
+  }, [doc.rooms, doc.items, doc.layouts, doc.apartment.units, doc.activeLayoutId, visitId, visitDone, dragPerk])
 }
 
 function Crown() {

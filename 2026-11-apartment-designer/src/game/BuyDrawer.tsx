@@ -2,15 +2,16 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { CATALOG, itemFromCatalog, type CatalogEntry } from '../model/catalog'
 import { checkLayout } from '../model/checks'
-import { centroid, pointInPolygon } from '../model/geometry'
-import { BEDROOM, DINING, findDrop, nookTarget, OFFICE, type DropResult } from '../model/placement'
+import { centroid, lerp, orientedRect, pointInPolygon, v, wallSegments } from '../model/geometry'
+import { BEDROOM, DINING, findDrop, HOSTED, nookTarget, OFFICE, type DropResult } from '../model/placement'
+import { isWallDecor } from '../model/wallDecor'
 import { STARTER_CATALOG } from '../model/starterCatalog'
 import { uid } from '../model/sample'
 import type { Doc, Item, Room, Units } from '../model/types'
 import { formatLength } from '../model/units'
 import { activeLayout, defaultDrop, useStore } from '../store'
 import { analyze } from '../analysis'
-import { scoreHome, talkCornerSpot } from './goals'
+import { inOpenMiddle, openFloorCentre, scoreHome, talkCornerSpot } from './goals'
 import { ImportDialog, Photo } from '../components/AddDialogs'
 import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
@@ -208,6 +209,34 @@ type Spot = { x: number; y: number; rotation: number; on?: string; roomName?: st
  * toast when the goal named a place that has no room.
  */
 export function pickSpot(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; fail?: string } {
+  const r = pickSpotIn(doc, item, hint)
+  return r.fail ? r : clearOfOpenMiddle(doc, item, hint, r)
+}
+
+/**
+ * An Open floor remix (round 16): a piece the chip places on its own (not beside a piece, not the
+ * coffee table in front of the sofa) keeps out of the living room's middle when a clean spot at
+ * the room's edges exists, so following Next doesn't undo the twist.
+ */
+function clearOfOpenMiddle(doc: Doc, item: Item, hint: Hint | null, r: { spot?: Spot }): { spot?: Spot } {
+  const layout = activeLayout(doc)
+  const open = openFloorCentre(doc, layout)
+  if (!open || !hint || hint.category !== item.category || hint.near || item.floorLevel || item.category === 'coffee-table' || HOSTED.has(item.category) || isWallDecor(item.category)) return r
+  const body = (q: Spot) => orientedRect(v(q.x, q.y), item.width / 2, item.depth / 2, q.rotation)
+  const spot = r.spot ?? (() => {
+    const d = defaultDrop(doc, item)
+    return d.ok ? d.spot : undefined
+  })()
+  if (!spot || spot.on || !pointInPolygon(spot, open.room.polygon) || !inOpenMiddle(open.c, body(spot))) return r
+  const targets = [...open.room.polygon.map((q) => lerp(q, open.c, 0.2)), ...wallSegments(open.room).map(([a, b]) => lerp(lerp(a, b, 0.5), open.c, 0.15))]
+  for (const near of targets) {
+    const d = findDrop({ ...doc, rooms: [open.room] }, layout, item, { near })
+    if (d.ok && !inOpenMiddle(open.c, body(d.spot)) && !trialIssues(doc, item, d.spot)) return { spot: { ...d.spot, roomName: open.room.name } }
+  }
+  return r
+}
+
+function pickSpotIn(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; fail?: string } {
   const layout = activeLayout(doc)
   // The talk-corner twist (round 15): a seat for it goes where it faces the sofa, not beside it.
   if (hint?.goalId === 'twist:talk-corner' && hint.category === item.category && (item.category === 'armchair' || item.category === 'sofa')) {

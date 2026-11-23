@@ -14,7 +14,7 @@ import { albumFor, TWIST_EMOJI, useAlbum } from './album'
 import { IconCheck, IconClose, IconSparkle, IconStar } from './icons'
 import { useModal } from './useModal'
 import { openRemixPicker } from './Designs'
-import { localDay, TWISTS, VISIT_BY_ID, VISIT_LEVEL, VISIT_STARS, VISITS, visitLeads, type Visit } from './goals'
+import { DRAG_PERK, localDay, twistMove, TWISTS, VISIT_BY_ID, VISIT_LEVEL, VISIT_STARS, VISITS, visitLeads, type Visit } from './goals'
 import { reduceMotion } from '../motion'
 import { listHomes } from '../storage'
 import type { Issue } from '../model/checks'
@@ -31,7 +31,10 @@ export function useHomeScore(): HomeScore & { best: number } {
   const analysis = useAnalysis(doc, layout)
   const visitState = useGame((s) => s.visit)
   const visitIn = useMemo(() => (visitState.visitId ? { id: visitState.visitId, done: visitState.done } : null), [visitState.visitId, visitState.done])
-  const raw = useMemo(() => scoreHome(doc, layout, analysis, visitIn), [doc, layout, analysis, visitIn])
+  // The drag lesson's star belongs to the home it was nailed in (round 16).
+  const dragPerk = useGame((s) => !!s.dragStar && s.dragStar === doc.apartment.id)
+  const perks = useMemo(() => (dragPerk ? { drag: true } : null), [dragPerk])
+  const raw = useMemo(() => scoreHome(doc, layout, analysis, visitIn, perks), [doc, layout, analysis, visitIn, perks])
   lastIssues = analysis.issues
   // A new local day brings a new visitor (one the home doesn't already please, when there is one).
   // While move-in day's boxes are still the first thing to do, the visitor waits: unpacking would
@@ -255,8 +258,10 @@ export function VibeMeter() {
     }
     if (Math.hypot(lessonAt.x - lesson.x, lessonAt.y - lesson.y) > LESSON_REACH) return
     useGame.getState().setDragLesson(null)
-    useStore.getState().notify('Nice placement! ✨ Drag any piece to try a new spot.')
-    setPop({ key: Date.now(), delta: 0, text: 'Nice!' })
+    // Round 16: nailing it earns a star (once ever, for this home), cheered like any goal.
+    const starred = useGame.getState().awardDragStar(useStore.getState().doc.apartment.id)
+    useStore.getState().notify(starred ? `Nice placement! +${DRAG_PERK.stars}★ ✨ Drag any piece to try a new spot.` : 'Nice placement! ✨ Drag any piece to try a new spot.')
+    if (!starred) setPop({ key: Date.now(), delta: 0, text: 'Nice!' })
   }, [lesson, lessonAt, gesturing])
   /** Stars just lost, with the goal that broke: a soft pill with Undo, never a cheer. */
   const [loss, setLoss] = useState<{ key: number; delta: number; title: string } | null>(null)
@@ -690,6 +695,33 @@ function showGoal(g: Goal) {
       const next = [...packedBoxIds(d, activeLayout(d))][0]
       if (next) useStore.setState({ selection: { kind: 'placement', id: next } })
     })
+    return
+  }
+  // A remix twist that is a move (Open floor, Fresh start, Talk corner): the chip moves the piece
+  // itself to a clean spot that meets the twist (round 16), so Next alone can finish any twist.
+  // The piece is selected first, so the move reads as "this one went there"; dragging still works.
+  if (g.id.startsWith('twist:') && !g.tab && g.near && activeLayout(useStore.getState().doc).placements.some((p) => p.id === g.near)) {
+    const st = useStore.getState()
+    if (st.mode !== 'select') st.setMode('select')
+    useGame.setState({ mode: 'buy', sheet: null, buyHint: null })
+    st.select({ kind: 'placement', id: g.near })
+    const docAt = st.doc
+    // After a paint: the search scores the home a few times over.
+    setTimeout(() => {
+      const s = useStore.getState()
+      if (s.doc !== docAt) return
+      const m = twistMove(s.doc, activeLayout(s.doc))
+      if (!m) {
+        if (g.hint) s.notify(g.hint)
+        return
+      }
+      const p = activeLayout(s.doc).placements.find((x) => x.id === m.id)
+      const name = s.doc.items.find((i) => i.id === p?.itemId)?.name.toLowerCase() ?? 'piece'
+      s.updatePlacement(m.id, { x: m.x, y: m.y, rotation: m.rotation })
+      s.select({ kind: 'placement', id: m.id })
+      const twist = g.id.slice(6) as keyof typeof TWISTS
+      s.notify(m.done ? `${TWIST_EMOJI[twist] ?? '↻'} Twist done! Moved the ${name}.` : `Moved the ${name}. ${TWISTS[twist]?.name ?? 'Twist'}: a step closer.`)
+    }, 40)
     return
   }
   // A goal fixed by moving a piece (an overlap, a piece in a wall, a blocked door): select that piece.

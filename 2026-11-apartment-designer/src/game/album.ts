@@ -127,7 +127,8 @@ function dreamPolaroid(layoutId: string, twist: string) {
     try {
       const vs = useGame.getState().visit
       const visit = vs.visitId && layoutId === doc.activeLayoutId ? { id: vs.visitId, done: vs.done } : null
-      stars = scoreHome(doc, layout, analyze(doc, layout), visit).stars
+      const g = useGame.getState()
+      stars = scoreHome(doc, layout, analyze(doc, layout), visit, g.dragStar === doc.apartment.id ? { drag: true } : null).stars
     } catch {
       /* the caption just shows no stars */
     }
