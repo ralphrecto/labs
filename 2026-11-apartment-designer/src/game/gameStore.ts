@@ -48,6 +48,10 @@ interface GameState {
    */
   dragLesson: { id: string; x: number; y: number; rotation: number; w: number; d: number } | null
   setDragLesson: (l: GameState['dragLesson']) => void
+  /** The home whose drag lesson was nailed (round 16): its star (DRAG_PERK), once per player. */
+  dragStar: string | null
+  /** Award the drag lesson's star to this home: true the first time only. */
+  awardDragStar: (homeId: string) => boolean
   /** The goal to scroll to when the goals sheet opens. */
   goalFocus: string | null
   /** A level just reached, for the celebration card. */
@@ -106,6 +110,15 @@ const BEST_LEVEL_KEY = 'apartment-designer:best-level'
 const LAST_VISIT_KEY = 'apartment-designer:last-visit'
 const TASTE_KEY = 'apartment-designer:taste'
 export const VISIT_KEY = 'apartment-designer:visit'
+
+const DRAG_STAR_KEY = 'homebody:drag-star'
+function readDragStar(): string | null {
+  try {
+    return localStorage.getItem(DRAG_STAR_KEY) || null
+  } catch {
+    return null
+  }
+}
 
 export function readVisit(): VisitState {
   const empty: VisitState = { date: '', visitId: '', done: false, stickers: [] }
@@ -228,6 +241,17 @@ export const useGame = create<GameState>((set, get) => ({
   chipFollows: 0,
   dragLesson: null,
   setDragLesson: (dragLesson) => set({ dragLesson }),
+  dragStar: readDragStar(),
+  awardDragStar: (homeId) => {
+    if (get().dragStar) return false
+    try {
+      localStorage.setItem(DRAG_STAR_KEY, homeId)
+    } catch {
+      // Private mode: the star lasts for this visit.
+    }
+    set({ dragStar: homeId })
+    return true
+  },
   goalFocus: null,
   levelUp: null,
   evening: false,
