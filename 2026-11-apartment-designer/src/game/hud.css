@@ -334,6 +334,9 @@
 .hud-ctx-wrap.slim .hud-ctx-text small { font-size: 0.6875rem; }
 .hud-ctx-wrap.slim .hud-act { width: 40px; height: 40px; padding: 0; justify-content: center; border-radius: 50%; }
 .hud-ctx-wrap.slim .hud-act > span { display: none; }
+/* Round 16: the main action (Unpack) keeps its word in the slim bar, so "Tap Unpack!" finds it. */
+.hud-ctx-wrap.slim .hud-act.filled { width: auto; padding: 0 14px 0 10px; gap: 6px; border-radius: 999px; }
+.hud-ctx-wrap.slim .hud-act.filled > span { display: inline; font-weight: 800; font-size: 0.8125rem; }
 .hud-ctx-wrap.slim .hud-ctx-warn { font-size: 0.75rem; padding: 6px 12px; }
 @media (max-width: 520px) {
   .hud-ctx-wrap.slim { width: max-content; }

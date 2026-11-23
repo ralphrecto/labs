@@ -383,6 +383,17 @@ function LessonRing() {
   )
 }
 
+/** A pinched walkway's narrowest point (round 16): a pulsing ring on the floor while it's fixed. */
+function PinchMarker() {
+  const pinch = useGame((s) => s.pinch)
+  if (!pinch) return null
+  return (
+    <group position={[pinch.x, 0, pinch.y]}>
+      <SelectRing w={0.5} d={0.5} />
+    </group>
+  )
+}
+
 const HOP_MS = 260
 /** Lifts its children 4 cm and sets them down again when `on` turns true (not with reduced motion). */
 function Hop({ on, children }: { on: boolean; children: ReactNode }) {
@@ -978,6 +989,7 @@ function Scene({
       )}
       {(style === 'classic' || style === 'scan') && <ScanPoints />}
       <LessonRing />
+      <PinchMarker />
       <group onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
         {placed.map(({ p, item }) => (
           <PlacedItem

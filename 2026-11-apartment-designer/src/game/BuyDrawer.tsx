@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { CATALOG, itemFromCatalog, type CatalogEntry } from '../model/catalog'
 import { checkLayout } from '../model/checks'
-import { centroid, lerp, orientedRect, pointInPolygon, v, wallSegments } from '../model/geometry'
+import { add, centroid, lerp, orientedRect, pointInPolygon, polygonInsideRoom, rot, sub, v, wallSegments } from '../model/geometry'
 import { BEDROOM, DINING, findDrop, HOSTED, nookTarget, OFFICE, type DropResult } from '../model/placement'
 import { isWallDecor } from '../model/wallDecor'
 import { STARTER_CATALOG } from '../model/starterCatalog'
@@ -11,7 +11,7 @@ import type { Doc, Item, Room, Units } from '../model/types'
 import { formatLength } from '../model/units'
 import { activeLayout, defaultDrop, useStore } from '../store'
 import { analyze } from '../analysis'
-import { inOpenMiddle, openFloorCentre, scoreHome, talkCornerSpot } from './goals'
+import { inOpenMiddle, openFloorCentre, scoreHome, starMove, talkCornerSpot, twistMove } from './goals'
 import { ImportDialog, Photo } from '../components/AddDialogs'
 import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
@@ -209,8 +209,94 @@ type Spot = { x: number; y: number; rotation: number; on?: string; roomName?: st
  * toast when the goal named a place that has no room.
  */
 export function pickSpot(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; fail?: string } {
+  const bedside = bedsidePick(doc, item, hint)
+  if (bedside) return bedside
   const r = pickSpotIn(doc, item, hint)
-  return r.fail ? r : clearOfOpenMiddle(doc, item, hint, r)
+  return r.fail ? r : keepStars(doc, item, hint, clearOfOpenMiddle(doc, item, hint, r))
+}
+
+/** The home's stars with `item` placed at `spot` (and how many stars it has now). */
+function starsWith(doc: Doc, item: Item, spot: Spot): number {
+  const layout = activeLayout(doc)
+  const l2 = { ...layout, placements: [...layout.placements, { id: '__stars', itemId: item.id, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}) }] }
+  const d2 = { ...doc, items: [...doc.items, item], layouts: doc.layouts.map((l) => (l.id === layout.id ? l2 : l)) }
+  return scoreHome(d2, l2, analyze(d2, l2)).stars
+}
+
+/**
+ * Round 16: a piece the chip places (a hint from a goal) never costs a star while another clean spot for it doesn't
+ * (a chair that would squeeze a walkway, a coffee table back in the open floor's middle). Only
+ * looked at when the first spot loses a star, so a plain pick costs one extra score.
+ */
+function keepStars(doc: Doc, item: Item, hint: Hint | null, r: { spot?: Spot }): { spot?: Spot } {
+  if (!hint?.goalId || hint.category !== item.category || item.floorLevel || isWallDecor(item.category)) return r
+  const first = r.spot ?? (() => {
+    const d = defaultDrop(doc, item)
+    return d.ok ? d.spot : undefined
+  })()
+  if (!first) return r
+  const layout = activeLayout(doc)
+  const now = scoreHome(doc, layout, analyze(doc, layout)).stars
+  const firstStars = starsWith(doc, item, first)
+  if (firstStars >= now) return r
+  // The piece set down where it would go, then moved (as the chip moves pieces) to the spot with
+  // the most stars, if one beats it.
+  const layout2 = { ...layout, placements: [...layout.placements, { id: '__keep', itemId: item.id, x: first.x, y: first.y, rotation: first.rotation, ...(first.on ? { on: first.on } : {}) }] }
+  const doc2 = { ...doc, items: [...doc.items, item], layouts: doc.layouts.map((l) => (l.id === layout.id ? layout2 : l)) }
+  // A remix's twist knows where its pieces belong (out of the open floor's middle): try its move first.
+  const tm = first.on || !layout.remix ? null : twistMove(doc2, layout2)
+  const m = first.on ? null : tm?.id === '__keep' ? tm : starMove(doc2, layout2, '__keep')
+  if (!m) return r
+  const room = doc.rooms.find((x) => pointInPolygon(v(m.x, m.y), x.polygon))
+  const spot = { x: m.x, y: m.y, rotation: m.rotation, roomName: room?.name }
+  return starsWith(doc, item, spot) > firstStars ? { spot } : r
+}
+
+/**
+ * A nightstand (or a side table standing in for one) for a bed's goal (round 16): only beside the
+ * pillow end of that bed, on the side the goal names, never one that costs a star while another
+ * side doesn't. Undefined when the hint isn't a bedside one; `fail` when no side has room.
+ */
+function bedsidePick(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; fail?: string } | undefined {
+  if (!hint?.goalId || hint.category !== item.category || (item.category !== 'nightstand' && item.category !== 'side-table')) return undefined
+  const m = /^(nightstand|bedside-light):([^:]+)(?::(-?1))?$/.exec(hint.goalId)
+  if (!m) return undefined
+  const layout = activeLayout(doc)
+  const bed = layout.placements.find((p) => p.id === m[2])
+  const bi = bed && doc.items.find((i) => i.id === bed.itemId)
+  if (!bed || !bi) return undefined
+  const room = doc.rooms.find((r) => pointInPolygon(bed, r.polygon))
+  const hw = bi.width / 2
+  const hd = bi.depth / 2
+  const sides = m[3] ? [Number(m[3])] : [1, -1]
+  const at = (sd: number, gap: number): Spot => {
+    const c = add(v(bed.x, bed.y), rot(v(sd * (hw + gap + item.width / 2), -hd + item.depth / 2), bed.rotation))
+    return { x: c.x, y: c.y, rotation: bed.rotation, roomName: room?.name }
+  }
+  /** At the head of the bed: beside it, by the pillows, within the goal's reach. */
+  const byPillows = (q: Spot) => {
+    const l = rot(sub(v(q.x, q.y), v(bed.x, bed.y)), -bed.rotation)
+    return Math.abs(l.x) >= hw * 0.9 && l.y <= 0 && Math.abs(l.x) - hw - item.width / 2 <= 0.6
+  }
+  const cands: Spot[] = []
+  for (const sd of sides) for (const gap of [0.03, 0.1, 0.2]) cands.push(at(sd, gap))
+  const found = findDrop(doc, layout, item, { nextTo: bed.id })
+  if (found.ok && byPillows(found.spot)) cands.push(found.spot)
+  const inside = (q: Spot) => !room || polygonInsideRoom(orientedRect(v(q.x, q.y), item.width / 2, item.depth / 2, q.rotation), room.polygon)
+  let best: { spot: Spot; stars: number } | null = null
+  const seen = new Set<string>()
+  for (const c of cands) {
+    const k = `${Math.sign(rot(sub(v(c.x, c.y), v(bed.x, bed.y)), -bed.rotation).x)}`
+    if (seen.has(k) || !inside(c) || trialIssues(doc, item, c)) continue
+    seen.add(k)
+    const st = starsWith(doc, item, c)
+    if (!best || st > best.stars) best = { spot: c, stars: st }
+  }
+  if (best) return { spot: best.spot }
+  // No clean side: the drop search's own spot by the pillows, if it found one.
+  if (found.ok && byPillows(found.spot)) return { spot: found.spot }
+  const name = item.category === 'side-table' ? 'side table' : 'nightstand'
+  return { fail: `No room by the pillows for a ${name}. Make some room beside the head of the bed, or move the bed out of the corner.` }
 }
 
 /**
@@ -290,12 +376,15 @@ export function lessonSpot(doc: Doc, item: Item, best: Spot): Spot | undefined {
   if (best.on || !LESSON_PIECES.has(item.category)) return undefined
   const room = doc.rooms.find((r) => pointInPolygon({ x: best.x, y: best.y }, r.polygon))
   if (!room) return undefined
+  // Round 16: the spot aside never costs a star (a walkway's pinch names no piece, so trialIssues
+  // alone misses it): it must score what the ring's spot scores.
+  const target = starsWith(doc, item, best)
   for (const d of [0.6, 0.75, 0.5])
     for (let k = 0; k < 8; k++) {
       const a = best.rotation + (k * Math.PI) / 4
       const c = { x: best.x + Math.cos(a) * d, y: best.y + Math.sin(a) * d, rotation: best.rotation }
       if (!pointInPolygon(c, room.polygon)) continue
-      if (!trialIssues(doc, item, c)) return { ...c, roomName: best.roomName }
+      if (!trialIssues(doc, item, c) && starsWith(doc, item, c) >= target) return { ...c, roomName: best.roomName }
     }
   return undefined
 }
@@ -519,15 +608,17 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   let pickCount = 0
   let firstPick: (() => void) | undefined
   if (hintEntry) {
-    // In a remix, the pieces the original design used (waiting in Mine) are offered before new ones.
-    const src = (() => {
-      const l = activeLayout(doc)
-      const from = l.remix && doc.layouts.find((x) => x.id === l.remix!.from)
-      return from ? new Set(from.placements.map((p) => p.itemId)) : null
-    })()
+    // In a remix, the pieces the original design used are offered before new ones; then (round 16)
+    // any piece of yours from another design or Mine (the wall art you already own), never a copy.
+    const l = activeLayout(doc)
+    const from = l.remix && doc.layouts.find((x) => x.id === l.remix!.from)
+    const src = from ? new Set(from.placements.map((p) => p.itemId)) : null
+    const usedElsewhere = l.remix ? new Set(doc.layouts.filter((x) => x.id !== l.id).flatMap((x) => x.placements.map((p) => p.itemId))) : null
+    const spare = (i: Item) => i.category === hintEntry.category && !counts.get(i.id) && !i.unpack?.length && !i.unpacked
     const boxed =
       boxedFor(hintEntry.category, items, (id) => !!counts.get(id)) ??
-      (src ? items.find((i) => i.category === hintEntry.category && src.has(i.id) && !counts.get(i.id) && !i.unpack?.length) : undefined)
+      (src ? items.find((i) => spare(i) && src.has(i.id)) : undefined) ??
+      (usedElsewhere ? items.find((i) => spare(i) && (usedElsewhere.has(i.id) || isMine(i))) : undefined)
     if (boxed) pickCards.push({ key: boxed.id, label: pickLabel(boxed, items), name: boxed.name, category: boxed.category, color: boxed.color, mine: true, onClick: () => placeMine(boxed) })
     const chips = vetted.chips
     pickCount = vetted.all
@@ -536,9 +627,12 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     // A plain tap on the hinted card places the first card without counting it as a chosen colour.
     const first = pickCards[0]
     const firstChip = chips[0]?.chip
-    if (vetted.all >= 2 && first) firstPick = first.mine ? first.onClick : firstChip ? () => place(hintEntry, firstChip) : undefined
+    // A piece of yours comes first even with no colours to pick from (curtains, a mirror): the hinted
+    // card places it rather than buying a copy (round 16).
+    if (first?.mine) firstPick = first.onClick
+    else if (vetted.all >= 2 && firstChip) firstPick = () => place(hintEntry, firstChip)
   }
-  const showPicker = pickCount >= 2
+  const showPicker = pickCount >= 2 || (pickCards.length >= 2 && !!pickCards[0].mine)
   const sizeEntry = sizePick ? ENTRIES.get(sizePick) : undefined
   const sizeCards: PickCard[] = sizeEntry
     ? sizeChips(sizeEntry).map((c) => ({ key: `${sizeEntry.category}:${c.label}`, label: c.label, name: c.name, category: sizeEntry.category, color: c.color ?? sizeEntry.color, look: c.look, onClick: () => place(sizeEntry, c) }))
@@ -581,7 +675,8 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
 
       {sizeEntry && !(hintEntry && showPicker) && !selected && <HintPicker title={displayName(sizeEntry)} cards={sizeCards} popped={popped?.key} />}
       {hintEntry && showPicker && !selected && <HintPicker title={displayName(hintEntry)} goal={hint?.title} room={hintRoom} cards={pickCards} popped={popped?.key} />}
-      {hintEntry && !showPicker && !selected && (
+      {/* The size row, when open, sits where the pill would (round 16: the pill covered its labels on phones). */}
+      {hintEntry && !showPicker && !selected && !sizeEntry && (
         <div className="feel-hint-pill" role="status">
           Tap <b>{displayName(hintEntry)}</b>
           {hintRoom ? (
