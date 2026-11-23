@@ -608,11 +608,15 @@ function wallDecor(item: Item): Part[] {
       ]
     }
     default: {
-      // Curtains: a rod with two soft panels, each a few rounded folds, gathered toward the sides.
+      // Curtains: a rod across the pair's width (sized to the window, see curtainSpan) with a finial
+      // at each end, and two soft panels gathered toward the sides. A wider pair gets more folds, so
+      // the folds keep about the same size on a small or a wide window.
       const rodY = y0 + h - 0.02
-      const out: Part[] = [{ kind: 'cyl', size: [0.025, w + 0.12, 0.025], pos: [0, rodY, 0], rot: [0, 0, Math.PI / 2], seg: 10, color: PAL.metal }]
-      const panel = w * 0.26
-      const folds = 4
+      const rodL = Math.max(0.2, w - 0.04)
+      const out: Part[] = [{ kind: 'cyl', size: [0.025, rodL, 0.025], pos: [0, rodY, 0], rot: [0, 0, Math.PI / 2], seg: 10, color: PAL.metal }]
+      for (const side of [-1, 1]) out.push({ kind: 'cyl', size: [0.045, 0.03, 0.045], pos: [side * (rodL / 2 + 0.01), rodY, 0], rot: [0, 0, Math.PI / 2], seg: 10, color: PAL.metal })
+      const panel = Math.min(w * 0.3, Math.max(w * 0.22, 0.28))
+      const folds = Math.max(3, Math.min(8, Math.round(panel / 0.09)))
       const fw = panel / folds
       for (const side of [-1, 1])
         for (let i = 0; i < folds; i++) {

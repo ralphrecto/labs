@@ -82,9 +82,47 @@ export interface PlanViewProps {
    * what's left, with a tighter margin. Leave out for the classic editor (whole pane).
    */
   inset?: { top: number; bottom: number; right?: number; ctx?: number }
+  /**
+   * Scan measure step: told whether the measured line (or the live line to the cursor) runs more
+   * than MEASURE_SKEW_DEG off the scan's wall axes, i.e. probably isn't along a wall. The plan's own
+   * hint says so too; a step (Onboarding's MeasureStep) can use this to show its own warning.
+   */
+  onMeasureSkew?: (skewed: boolean) => void
 }
 
-export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset }: PlanViewProps) {
+/** A measured line further than this (degrees) off the scan's wall axes is probably not a wall. */
+export const MEASURE_SKEW_DEG = 5
+
+/** How far (degrees, 0..45) the line a→b is off the plan axes, which the scan's walls are squared to. */
+export function offAxisDeg(a: Vec2, b: Vec2): number {
+  const ang = (Math.abs(Math.atan2(b.y - a.y, b.x - a.x)) * 180) / Math.PI
+  const m = ang % 90
+  return Math.min(m, 90 - m)
+}
+
+/** Whether a measured line is long enough to judge and more than MEASURE_SKEW_DEG off the wall axes. */
+export const measureSkewed = (a: Vec2, b: Vec2 | null | undefined) => !!b && dist(a, b) > 0.3 && offAxisDeg(a, b) > MEASURE_SKEW_DEG
+
+/**
+ * Pick where a scan-measure tap lands, given the corner magnet's hit (`corner`), the wall snap's
+ * hit along the plan axes (`wall`: x for a vertical wall, y for a horizontal one, both at a corner)
+ * and the line's first end (`anchor`, for the second tap). A tap well inside a wall's span (more
+ * than half the corner radius from the corner, along that wall) goes onto the wall, not the
+ * corner; so does a second tap whose corner would make the line skewed while the wall wouldn't.
+ */
+export function pickMeasureSnap(o: { tap: Vec2; corner: Vec2 | null; wall: { x?: number; y?: number }; anchor?: Vec2 | null; cornerRadius: number }): Vec2 {
+  const { tap, corner, wall, anchor, cornerRadius } = o
+  const one = (wall.x == null) !== (wall.y == null)
+  const proj = wall.x != null || wall.y != null ? v(wall.x ?? tap.x, wall.y ?? tap.y) : null
+  if (!corner) return proj ?? tap
+  if (!proj || !one) return corner
+  const along = wall.x != null ? Math.abs(tap.y - corner.y) : Math.abs(tap.x - corner.x)
+  if (along > 0.5 * cornerRadius) return proj
+  if (anchor && dist(anchor, corner) > 0.3 && offAxisDeg(anchor, corner) > MEASURE_SKEW_DEG && offAxisDeg(anchor, proj) <= MEASURE_SKEW_DEG) return proj
+  return corner
+}
+
+export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset, onMeasureSkew }: PlanViewProps) {
   const doc = useStore((s) => s.doc)
   const mode = useStore((s) => (readOnly ? 'select' : s.mode))
   const selection = useStore((s) => s.selection)
@@ -241,7 +279,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
    * scanSnap, plus a corner magnet: within ~25 px, a corner of the scan's wall outline (or the end
    * of a wall line) wins over the plain wall snap, so "wall to wall" taps reach the corners.
    */
-  const scanMagnet = (p: Vec2, only?: ScanRef): { p: Vec2; corner: boolean } | null => {
+  const scanMagnet = (p: Vec2, only?: ScanRef, anchor?: Vec2 | null): { p: Vec2; corner: boolean } | null => {
     const refs = (only ? [only] : visibleScans).flatMap((ref) => {
       const img = underlayOf(ref, 'walls')
       return img ? [{ ref, u: img.underlay }] : []
@@ -253,12 +291,21 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
       return m
     }
     const step = Math.max(0.005, Math.min(...refs.map(({ ref, u }) => u.pixel * ref.scale)))
-    const corner = snapCorner(strength, p, Math.min(0.6, Math.max(0.08, 25 * px)), step)
-    if (corner) return { p: corner, corner: true }
+    const cornerRadius = Math.min(0.6, Math.max(0.08, 25 * px))
+    const corner = snapCorner(strength, p, cornerRadius, step)
     const hit = snapAxes(strength, p, Math.min(0.25, Math.max(0.06, 10 * px)), step)
-    if (hit.x == null && hit.y == null) return null
-    return { p: v(hit.x ?? p.x, hit.y ?? p.y), corner: false }
+    if (!corner && hit.x == null && hit.y == null) return null
+    const q = pickMeasureSnap({ tap: p, corner, wall: hit, anchor, cornerRadius })
+    return { p: q, corner: !!corner && q === corner }
   }
+  // The scan measure line (second end live at the cursor) and whether it runs off the wall axes.
+  const measureLive = mode === 'scan-measure' && scanDraft && !scanDraft.b && cursor && activeScan ? scanMagnet(cursor, activeScan, scanDraft.a) : null
+  const measureEnd = scanDraft ? (scanDraft.b ?? (mode === 'scan-measure' && cursor ? (measureLive?.p ?? cursor) : null)) : null
+  const measureSkew = mode === 'scan-measure' && !!scanDraft && measureSkewed(scanDraft.a, measureEnd)
+  useEffect(() => {
+    onMeasureSkew?.(measureSkew)
+  }, [measureSkew, onMeasureSkew])
+
   /** A length label sits just above its line, or below it near the top edge (under the hint pill). */
   const labelY = (y: number) => (y - vb.y < 64 * px ? y + 18 * px : y - 7 * px)
   const cornerRing = (q: Vec2) => <circle cx={q.x} cy={q.y} r={9 * px} fill="none" stroke="#7a3fc2" strokeWidth={1.5 * px} opacity={0.85} pointerEvents="none" className="corner-ring" />
@@ -306,7 +353,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
       return
     }
     if (mode === 'scan-measure' && activeScan) {
-      const p = (!e.altKey && scanSnap(w, activeScan)) || w
+      const second = !!scanDraft && !scanDraft.b && scanDraft.scanId === activeScan.id
+      const p = (!e.altKey && scanMagnet(w, activeScan, second ? scanDraft!.a : null)?.p) || w
       const s = store()
       if (!scanDraft || scanDraft.b || scanDraft.scanId !== activeScan.id) s.setUI({ scanDraft: { scanId: activeScan.id, a: p } })
       else s.setUI({ scanDraft: { ...scanDraft, b: p } })
@@ -976,8 +1024,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
         {scanDraft && (
           <g pointerEvents="none">
             {(() => {
-              const live = !scanDraft.b && mode === 'scan-measure' && cursor && activeScan ? scanMagnet(cursor, activeScan) : null
-              const b = scanDraft.b ?? (mode === 'scan-measure' && cursor ? live?.p ?? cursor : null)
+              const live = measureLive
+              const b = measureEnd
               return (
                 <>
                   {live?.corner && cornerRing(live.p)}
@@ -1090,6 +1138,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
       {!readOnly && mode === 'scan-measure' && (
         <div className="draw-hint">
           {!scanDraft || scanDraft.b ? 'Click one end of something you measured with a tape (wall to wall works best).' : 'Click the other end.'}
+          {measureSkew && <strong> That line runs at a slant, not along a wall. Measure along a wall for the best fit.</strong>}
           <span className="muted"> Points snap to the scan’s walls; hold Alt to place freely. Esc when done.</span>
         </div>
       )}

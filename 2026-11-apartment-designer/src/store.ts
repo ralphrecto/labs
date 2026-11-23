@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { catalogEntry, itemFromCatalog, type CatalogEntry } from './model/catalog'
 import { add, dist, norm, pointInPolygon, scale, sub } from './model/geometry'
 import { findDrop, HOSTED, reconcileHosts, type DropResult } from './model/placement'
+import { reconcileWallDecor, wallDecorMessage, type WallDecorReport } from './model/wallDecor'
 import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
 import type { Doc, Item, Layout, Opening, Placement, Room, ScanRef, ScanReference, Units, Vec2 } from './model/types'
@@ -249,7 +250,14 @@ export const useStore = create<State>((set, get) => ({
       const changed = fn(s.doc)
       if (changed === s.doc) return s
       // Table lamps follow their host, or move to another top (or come off) when it goes.
-      const next = reconcileHosts(s.doc, changed)
+      let next = reconcileHosts(s.doc, changed)
+      // --- wall decor (round 14): re-snap to the walls when rooms/openings change, size curtains to
+      // their window, and say so when a piece comes down to Mine.
+      const wallReport: WallDecorReport = { toMine: [] }
+      next = reconcileWallDecor(s.doc, next, wallReport)
+      const wallMsg = wallDecorMessage(wallReport)
+      if (wallMsg) queueMicrotask(() => get().notify(wallMsg))
+      // --- end wall decor
       if (s.gesture) return { doc: next }
       return { doc: next, past: [...s.past, s.doc].slice(-HISTORY_LIMIT), future: [] }
     }),

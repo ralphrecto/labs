@@ -6,7 +6,7 @@
 //
 // Kept apart from placement.ts on purpose: findDrop only hands wall pieces over to findWallDrop.
 import { add, dist, dot, norm, openingEndpoints, pointInPolygon, polygonArea, scale, sub, v, wallInwardNormal, wallSegments } from './geometry'
-import type { Doc, Item, Layout, Placement, Room, Vec2 } from './types'
+import type { Doc, Item, Layout, Opening, Placement, Room, Vec2 } from './types'
 
 /** Catalog categories that hang on a wall. */
 export const WALL_DECOR = new Set(['wall-art', 'mirror', 'wall-shelf', 'wall-clock', 'curtains'])
@@ -39,7 +39,13 @@ export interface WallSpot {
   roomId: string
   roomName: string
   wall: number
+  /** Curtains only: the width the pair takes on this window (rod span), and the window's id. */
+  width?: number
+  windowId?: string
 }
+
+/** How far a curtain rod reaches past each side of its window. */
+export const CURTAIN_OVERHANG = 0.3
 
 /** Rotation that turns a piece's front (local +y) toward `d` (same as placement.facing). */
 const facing = (d: Vec2) => Math.atan2(-d.x, d.y)
@@ -94,6 +100,34 @@ function spotAt(room: Room, wall: number, t: number, item: WallItem): WallSpot {
 }
 
 /**
+ * The span (meters along the wall) a pair of curtains takes on window `win`: the window plus
+ * CURTAIN_OVERHANG each side, cut short by the wall's ends and by neighbouring doors and windows
+ * (so the rod may sit off-centre near a corner). Null when a door overlaps the window itself.
+ */
+export function curtainSpan(doc: Doc, room: Room, wall: number, win: Opening): Interval | null {
+  const [a, b] = wallSegments(room)[wall]
+  const L = dist(a, b)
+  const w0 = Math.max(0, win.offset)
+  const w1 = Math.min(L, win.offset + win.width)
+  const { doors, windows } = blockedSpans(doc, undefined, room, wall, { category: 'curtains', width: 0, depth: 0 })
+  let lo = Math.max(0.02, w0 - CURTAIN_OVERHANG)
+  let hi = Math.min(L - 0.02, w1 + CURTAIN_OVERHANG)
+  for (const [x, y, isDoor] of [...doors.map((s) => [...s, true] as const), ...windows.map((s) => [...s, false] as const)]) {
+    // The window itself (or the same opening seen from the room next door).
+    if (x < w1 - 0.01 && y > w0 + 0.01) {
+      if (isDoor) return null
+      continue
+    }
+    // Curtains keep clear of a door; two windows close together split the wall between them.
+    if (y <= w0 + GAP + 1e-6) lo = Math.max(lo, isDoor ? y : (y - GAP + w0) / 2)
+    else if (x >= w1 - GAP - 1e-6) hi = Math.min(hi, isDoor ? x : (x + GAP + w1) / 2)
+  }
+  lo = Math.min(lo, w0)
+  hi = Math.max(hi, w1)
+  return hi - lo > 0.1 ? [lo, hi] : null
+}
+
+/**
  * The legal spot on wall `wall` of `room` closest to `t` (meters along the wall), or null when the
  * wall has none. Curtains centre on the window nearest `t`; everything else keeps off doors,
  * windows and other frames.
@@ -102,7 +136,6 @@ function bestOnWall(doc: Doc, layout: Layout | undefined, room: Room, wall: numb
   const [a, b] = wallSegments(room)[wall]
   const L = dist(a, b)
   const hw = item.width / 2
-  if (L < item.width + 0.04) return null
   const { doors, windows, frames } = blockedSpans(doc, layout, room, wall, item, exclude)
   const lo = hw + 0.02
   const hi = L - hw - 0.02
@@ -111,12 +144,15 @@ function bestOnWall(doc: Doc, layout: Layout | undefined, room: Room, wall: numb
     const own = room.openings.filter((o) => o.kind === 'window' && o.wall === wall)
     let best: { spot: WallSpot; t: number } | null = null
     for (const o of own) {
-      const tc = Math.max(lo, Math.min(hi, o.offset + o.width / 2))
-      if (overlaps(tc - hw + GAP, tc + hw - GAP, doors) || overlaps(tc - 0.01, tc + 0.01, frames)) continue
-      if (!best || Math.abs(tc - t) < Math.abs(best.t - t)) best = { spot: spotAt(room, wall, tc, item), t: tc }
+      const span = curtainSpan(doc, room, wall, o)
+      if (!span) continue
+      const tc = (span[0] + span[1]) / 2
+      if (overlaps(tc - 0.01, tc + 0.01, frames)) continue
+      if (!best || Math.abs(tc - t) < Math.abs(best.t - t)) best = { spot: { ...spotAt(room, wall, tc, item), width: span[1] - span[0], windowId: o.id }, t: tc }
     }
     return best
   }
+  if (L < item.width + 0.04) return null
   const blocked = [...doors, ...windows, ...frames]
   const ok = (x: number) => x >= lo - 1e-9 && x <= hi + 1e-9 && !overlaps(x - hw, x + hw, blocked)
   const cands = [Math.max(lo, Math.min(hi, t)), ...blocked.flatMap(([x, y]) => [x - hw - 1e-6, y + hw + 1e-6]), lo, hi]
@@ -185,7 +221,8 @@ export function findWallDrop(doc: Doc, layout: Layout, item: WallItem & { name?:
       const ts = curtains ? room.openings.filter((o) => o.kind === 'window' && o.wall === wall).map((o) => o.offset + o.width / 2) : Array.from({ length: Math.max(1, Math.floor(L / 0.2)) }, (_, i) => (i + 0.5) * (L / Math.max(1, Math.floor(L / 0.2))))
       for (const t0 of ts) {
         const r = bestOnWall(doc, layout, room, wall, t0, item)
-        if (!r || Math.abs(r.t - t0) > 0.15) continue
+        // (Curtains centre on their rod, which may sit off the window's centre near a corner or a door.)
+        if (!r || (!curtains && Math.abs(r.t - t0) > 0.15)) continue
         const at = add(a, scale(d, r.t))
         let score = roomScore
         for (const { p, it } of solids) {
@@ -214,4 +251,149 @@ export function findWallDrop(doc: Doc, layout: Layout, item: WallItem & { name?:
     }
   const s = best.spot
   return { ok: true, spot: { x: s.x, y: s.y, rotation: s.rotation, roomId: s.roomId, roomName: s.roomName } }
+}
+
+// ------------------------------------------------------------------ reconcile after room edits
+
+/** What reconcileWallDecor did: pieces that lost their wall (or window) and went to Mine. */
+export interface WallDecorReport {
+  toMine: { placementId: string; name: string; why: 'wall' | 'window' }[]
+}
+
+/** The wall face a placed wall piece hangs on (its centre just inside the face), with how far along it is. */
+function hungOn(doc: Doc, p: Pick<Placement, 'x' | 'y'>, item: WallItem): { room: Room; wall: number; t: number; L: number } | null {
+  const c = v(p.x, p.y)
+  let best: { room: Room; wall: number; t: number; L: number; off: number } | null = null
+  for (const room of doc.rooms)
+    wallSegments(room).forEach(([a, b], wall) => {
+      const L = dist(a, b)
+      const t = dot(sub(c, a), norm(sub(b, a)))
+      if (t < -0.01 || t > L + 0.01) return
+      const off = Math.abs(dot(sub(c, a), wallInwardNormal(room, wall)) - item.depth / 2 - 0.004)
+      if (off < 0.06 && (!best || off < best.off)) best = { room, wall, t, L, off }
+    })
+  return best
+}
+
+/** The window a pair of curtains hangs on: a window on its wall face under (or next to) its centre. */
+function windowUnder(doc: Doc, p: Pick<Placement, 'x' | 'y'>, item: WallItem): { roomId: string; windowId: string } | null {
+  const h = hungOn(doc, p, item)
+  if (!h) return null
+  let best: { o: Opening; d: number } | null = null
+  for (const o of h.room.openings) {
+    if (o.kind !== 'window' || o.wall !== h.wall) continue
+    const d = Math.max(0, o.offset - h.t, h.t - o.offset - o.width)
+    if (d < CURTAIN_OVERHANG + 0.05 && (!best || d < best.d)) best = { o, d }
+  }
+  return best ? { roomId: h.room.id, windowId: best.o.id } : null
+}
+
+/**
+ * Keep wall decor on the walls after an edit (prev → next). When rooms, walls or openings change,
+ * each wall piece re-snaps to the nearest legal spot on the wall it hung on, keeping its relative
+ * position along it (or another wall of the same room); a piece with nowhere left, or curtains
+ * whose window is gone, comes down and waits in Mine (its item is marked owned). Curtains are
+ * always sized to their window (see curtainSpan) by setting their item's width. Returns `next`
+ * itself when nothing changes.
+ */
+export function reconcileWallDecor(prev: Doc, next: Doc, report?: WallDecorReport): Doc {
+  const roomsChanged = prev.rooms !== next.rooms
+  const items = new Map(next.items.map((i) => [i.id, i]))
+  const relevant = (p: Placement) => {
+    const c = items.get(p.itemId)?.category
+    return c === 'curtains' || (roomsChanged && isWallDecor(c))
+  }
+  if (!next.layouts.some((l) => l.placements.some(relevant))) return next
+  const widths = new Map<string, number>()
+  const owned = new Set<string>()
+  let changed = false
+  const layouts = next.layouts.map((layout) => {
+    if (!layout.placements.some(relevant)) return layout
+    const prevById = new Map((prev.layouts.find((l) => l.id === layout.id)?.placements ?? []).map((p) => [p.id, p]))
+    let placements = layout.placements
+    let lc = false
+    const toMine = (p: Placement, it: Item, why: 'wall' | 'window') => {
+      placements = placements.filter((q) => q.id !== p.id)
+      owned.add(it.id)
+      report?.toMine.push({ placementId: p.id, name: it.name, why })
+      lc = true
+    }
+    for (const p of layout.placements) {
+      if (!relevant(p)) continue
+      const base = items.get(p.itemId)!
+      const it = widths.has(base.id) ? { ...base, width: widths.get(base.id)! } : base
+      const cur: Layout = { ...layout, placements }
+      // Where it hung before the edit (a piece just placed or moved: where it is now).
+      const was = roomsChanged ? (prevById.get(p.id) ?? p) : p
+      const from = roomsChanged ? prev : next
+      let spot: WallSpot | null = null
+      if (it.category === 'curtains') {
+        const w = windowUnder(from, was, it)
+        if (!w) continue // never on a window: leave it be
+        const room = next.rooms.find((r) => r.id === w.roomId)
+        const win = room?.openings.find((o) => o.id === w.windowId && o.kind === 'window')
+        if (!room || !win) {
+          toMine(p, base, 'window')
+          continue
+        }
+        const [a, b] = wallSegments(room)[win.wall] ?? []
+        const r = a && b ? bestOnWall(next, cur, room, win.wall, win.offset + win.width / 2, it, p.id) : null
+        if (!r || r.spot.windowId !== win.id) {
+          toMine(p, base, 'window')
+          continue
+        }
+        spot = r.spot
+      } else {
+        const h = hungOn(prev, was, it)
+        if (!h) continue
+        const room = next.rooms.find((r) => r.id === h.room.id)
+        const segs = room ? wallSegments(room) : []
+        let best: { spot: WallSpot; d: number } | null = null
+        if (room && segs[h.wall]) {
+          const [a, b] = segs[h.wall]
+          const r = bestOnWall(next, cur, room, h.wall, (h.t / Math.max(1e-9, h.L)) * dist(a, b), it, p.id)
+          if (r) best = { spot: r.spot, d: 0 }
+        }
+        if (room && !best) {
+          // That wall is gone or full: the nearest spot on another wall of the room.
+          const pt = v(p.x, p.y)
+          segs.forEach(([a, b], wall) => {
+            const r = bestOnWall(next, cur, room, wall, dot(sub(pt, a), norm(sub(b, a))), it, p.id)
+            const d = r && dist(pt, r.spot)
+            if (r && d != null && (!best || d < best.d)) best = { spot: r.spot, d }
+          })
+        }
+        if (!best) {
+          toMine(p, base, 'wall')
+          continue
+        }
+        spot = (best as { spot: WallSpot }).spot
+      }
+      if (spot.width != null && Math.abs(spot.width - it.width) > 1e-3) widths.set(base.id, spot.width)
+      if (Math.hypot(spot.x - p.x, spot.y - p.y) > 1e-5 || Math.abs(spot.rotation - p.rotation) > 1e-5) {
+        const n = { ...p, x: spot.x, y: spot.y, rotation: spot.rotation }
+        placements = placements.map((q) => (q.id === p.id ? n : q))
+        lc = true
+      }
+    }
+    if (!lc) return layout
+    changed = true
+    return { ...layout, placements }
+  })
+  if (!changed && !widths.size) return next
+  return {
+    ...next,
+    layouts: changed ? layouts : next.layouts,
+    items: next.items.map((i) => (widths.has(i.id) || owned.has(i.id) ? { ...i, ...(widths.has(i.id) ? { width: widths.get(i.id)! } : {}), ...(owned.has(i.id) ? { owned: true } : {}) } : i)),
+  }
+}
+
+/** The toast when wall pieces came down: "The mirror lost its wall. It’s waiting in Mine." */
+export function wallDecorMessage(r: WallDecorReport): string | null {
+  if (!r.toMine.length) return null
+  if (r.toMine.length > 1) return `${r.toMine.length} wall pieces had nowhere left to hang. They’re waiting in Mine.`
+  const { name, why } = r.toMine[0]
+  const n = name.toLowerCase()
+  if (why === 'window') return `The ${n} lost ${/s$/.test(n) ? 'their' : 'its'} window. ${/s$/.test(n) ? 'They’re' : 'It’s'} waiting in Mine.`
+  return `The ${n} had no wall left to hang on. ${/s$/.test(n) ? 'They’re' : 'It’s'} waiting in Mine.`
 }
