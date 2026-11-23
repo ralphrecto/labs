@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { useStore } from '../store'
 import { RENDER_STYLES, type RenderStyle } from '../three/style'
-import { useGame } from './gameStore'
+import { useGame, useHomeReached } from './gameStore'
 import './style-picker.css'
 
 // The "map layers" control: a small round button showing the current look. Tapping it fans out
@@ -94,6 +94,13 @@ export const useStylePicker = create<{ open: boolean; setOpen: (open: boolean) =
   setOpen: (open) => set({ open }),
 }))
 
+/** Styles are a first reward: they unlock at "Moving in" (or stay, once a style other than Cartoon is picked). */
+export function useStylesUnlocked(): boolean {
+  const style = useGame((s) => s.renderStyle)
+  const homeId = useStore((s) => s.doc.apartment.id)
+  return useHomeReached(homeId, 1) || style !== 'toon'
+}
+
 export function StylePicker({ className = '' }: { className?: string }) {
   const style = useGame((s) => s.renderStyle)
   const hasScan = useStore((s) => (s.doc.scans ?? []).length > 0)
@@ -145,7 +152,7 @@ export function StylePicker({ className = '' }: { className?: string }) {
       </button>
       {open && (
         <div className="sty-pop g-card" role="menu" aria-label="Styles">
-          {RENDER_STYLES.filter((s) => s.id !== 'scan' || hasScan || style === 'scan').map((s, i) => {
+          {RENDER_STYLES.filter((s) => (s.id !== 'scan' || hasScan || style === 'scan') && (s.id !== 'blueprint' || style === 'blueprint')).map((s, i) => {
             const disabled = s.id === 'scan' && !hasScan
             return (
               <button

@@ -121,6 +121,12 @@
 }
 .buy-preset:hover { background: var(--g-sky); color: #fff; transform: translateY(-1px); }
 .buy-preset:active { transform: scale(0.9); }
+/* With a mouse the size chips stay tucked away until the card is hovered or focused: one card, one
+   button, until you reach for it. Still in the layout (no jump) and still reachable with the arrows. */
+@media (hover: hover) and (pointer: fine) {
+  .buy-card .buy-presets { opacity: 0; visibility: hidden; transition: opacity 0.15s, visibility 0s 0.15s; }
+  .buy-card:hover .buy-presets, .buy-card:focus-within .buy-presets { opacity: 1; visibility: visible; transition: opacity 0.15s; }
+}
 
 /* "+1" that floats up from a tapped card. */
 .buy-plus {
@@ -166,10 +172,12 @@
 }
 .buy-shop .modal header { align-items: flex-start; gap: 12px; }
 .buy-shop .modal h2 { font: 900 1.375rem/1.2 var(--g-font); }
+/* The same round × as the game's other sheets (the word stays for screen readers via aria-label). */
 .buy-shop .modal header button.link {
-  flex: none; border-radius: 999px; padding: 8px 14px; background: var(--g-paper-2); color: var(--g-ink-2);
-  font: 800 0.8125rem/1 var(--g-font); text-decoration: none;
+  flex: none; width: 38px; height: 38px; border-radius: 50%; padding: 0; background: var(--g-paper-2); color: var(--g-ink);
+  font-size: 0; text-decoration: none; display: inline-flex; align-items: center; justify-content: center;
 }
+.buy-shop .modal header button.link::before { content: '\00d7'; font: 700 1.625rem/1 var(--g-font); }
 .buy-shop .modal header button.link:hover { background: #fff; color: var(--g-ink); box-shadow: var(--g-shadow-sm); }
 .buy-shop .modal p { line-height: 1.4; }
 .buy-shop .muted { color: var(--g-ink-2); }

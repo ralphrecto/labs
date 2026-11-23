@@ -24,8 +24,6 @@ interface GameState {
   sheet: Sheet
   /** Buy drawer category (a CATEGORY_GROUPS key in BuyDrawer, or 'mine' for owned/imported items). */
   buyTab: string
-  /** Shows the advanced controls (exact sizes, snapping, overlays) in context menus. */
-  advanced: boolean
   /** Player chose the old all-panels editor from settings. */
   classic: boolean
   /** How the 3D view is drawn (Cartoon, Lifelike, Scan, Clay, Blueprint), switched like map layers. */
@@ -58,7 +56,6 @@ interface GameState {
   setCamera: (c: Camera) => void
   openSheet: (s: Sheet) => void
   setBuyTab: (t: string) => void
-  setAdvanced: (a: boolean) => void
   setClassic: (c: boolean) => void
   setRenderStyle: (s: RenderStyle) => void
   /** Remember a level reached in a home; lower levels are ignored. */
@@ -212,7 +209,6 @@ export const useGame = create<GameState>((set) => ({
   camera: '3d',
   sheet: null,
   buyTab: 'living',
-  advanced: false,
   renderStyle: readStyle(),
   bestLevel: readBestLevels(),
   // A first-time player still in the move-in flow has nothing to come back to.
@@ -241,7 +237,6 @@ export const useGame = create<GameState>((set) => ({
   setCamera: (camera) => set({ camera }),
   openSheet: (sheet) => set(sheet === 'goals' ? { sheet } : { sheet, goalFocus: null }),
   setBuyTab: (buyTab) => set({ buyTab }),
-  setAdvanced: (advanced) => set({ advanced }),
   setClassic: (classic) => {
     try {
       localStorage.setItem(CLASSIC_KEY, classic ? '1' : '0')
@@ -327,4 +322,12 @@ export function settleStars(before: number, after: number): { kind: 'gain' | 'lo
   if (after > before) return { kind: 'gain', delta: after - before }
   if (after < before) return { kind: 'loss', delta: before - after }
   return { kind: 'none', delta: 0 }
+}
+
+/**
+ * Whether any design of this home has reached `level` (its best, by bestLevelKey, or a pre-design
+ * save's per-home best). Rewards that unlock with a level (styles, remix) stay unlocked after.
+ */
+export function useHomeReached(homeId: string, level: number): boolean {
+  return useGame((g) => Object.entries(g.bestLevel).some(([k, v]) => (k === homeId || k.startsWith(homeId + ':')) && v >= level))
 }

@@ -147,14 +147,14 @@ function ServerNote({ status, need }: { status: ImportStatus | null; need: 'serv
   if (!status.server)
     return (
       <p className="note small">
-        The import server isn't running here, so {need === 'llm' ? "the photo can't be recognized" : "the page can't be read"} automatically.
-        {need === 'llm' ? ' You can still add the photo and type its size.' : ' Paste the size from the page in the box below, or type it on the right.'} Run <code>npm run server</code> to turn it on.
+        {need === 'llm' ? "Photos can't be recognized" : "Pages can't be read"} automatically here.
+        {need === 'llm' ? ' You can still add the photo and type its size.' : ' Paste the size from the page in the box below, or type it on the right.'}
       </p>
     )
   if (need === 'llm' && !status.llm)
     return (
       <p className="note small">
-        Photo recognition needs an Anthropic API key on the import server (<code>ANTHROPIC_API_KEY</code>). You can still add the photo and type its size.
+        Photo recognition isn't available here. You can still add the photo and type its size.
       </p>
     )
   return null

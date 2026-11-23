@@ -11,7 +11,7 @@ import { create } from 'zustand'
 import { catalogEntry, itemFromCatalog } from '../model/catalog'
 import { findDrop } from '../model/placement'
 import { activeLayout } from '../store'
-import { useGame } from './gameStore'
+import { useGame, useHomeReached } from './gameStore'
 import { applicableTwists, finishedTwists, levelProgress, pickTwists, sameArrangement, TWIST_IDS, TWISTS, LEVELS } from './goals'
 import * as I from './icons'
 import { albumFor, removePhoto, restorePhoto, TWIST_EMOJI, useAlbum, watchRemixDreams } from './album'
@@ -310,6 +310,9 @@ export function HomesStrip({ onRenameHome }: { onRenameHome: () => void }) {
           </div>
         )
       })}
+      <button className="dz-home dz-home-add" onClick={() => useGame.getState().setPhase('onboarding')}>
+        <I.IconPlus width={18} height={18} /> Add a home
+      </button>
     </div>
     </>
   )
@@ -335,7 +338,6 @@ export function DesignsSheetBody() {
       ) : (
         <HomesStrip onRenameHome={() => setRenamingHome(true)} />
       )}
-      <h3 className="hud-h3">Album</h3>
       <AlbumRow homeId={doc.apartment.id} />
       <h3 className="hud-h3">Designs for {doc.apartment.name}</h3>
       <DreamCount scores={scores} />
@@ -475,6 +477,9 @@ function DreamCount({ scores }: { scores: Map<string, { dream: boolean; sameAs?:
  * "Remix this home": the primary button of the Designs sheet, which opens a small picker of three
  * twists. Picking one makes the remix (the big pieces only) and closes the sheet.
  */
+/** The level ("Designer home") that unlocks Remix. */
+export const REMIX_LEVEL = 4
+
 export function RemixPicker() {
   const open = useRemixPicker((s) => s.open)
   const doc = useStore((s) => s.doc)
@@ -490,6 +495,10 @@ export function RemixPicker() {
     return pickTwists(doc, applicableTwists(doc, fits))
   }, [open, doc])
   const finished = useMemo(() => finishedTwists(doc), [doc.layouts])
+  // Remixing is a reward: it waits until one of this home's designs has reached Designer home.
+  const homeId = doc.apartment.id
+  const unlocked = useHomeReached(homeId, REMIX_LEVEL)
+  if (!open && !unlocked && !doc.layouts.some((l) => l.remix)) return null
   if (!open)
     return (
       <button className="g-btn primary" onClick={() => useRemixPicker.setState({ open: true })}>
@@ -563,8 +572,11 @@ export function AlbumRow({ homeId }: { homeId: string }) {
   const photos = useMemo(() => albumFor(homeId), [homeId, rev])
   const [open, setOpen] = useState<AlbumPhoto | null>(null)
   const [removed, setRemoved] = useState<AlbumPhoto | null>(null)
+  // No board until the first photo: Look mode's shutter is where the album starts.
+  if (photos.length === 0 && !removed) return null
   return (
     <>
+      <h3 className="hud-h3">Album</h3>
       {removed && (
         <div className="dz-undo" role="status">
           <span>Photo taken off the board</span>
