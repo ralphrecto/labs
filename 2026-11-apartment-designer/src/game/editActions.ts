@@ -184,7 +184,7 @@ export function nudgePlacement(id: string, screen: Vec2, step: number) {
   if (wallItem && isWallDecor(wallItem.category)) {
     // Wall decor slides along its wall (or round the corner onto the next one).
     const spot = snapToWall(s.doc, activeLayout(s.doc), wallItem, to, id)
-    if (spot) inEditRun(() => useStore.getState().updatePlacement(id, { x: spot.x, y: spot.y, rotation: spot.rotation }))
+    if (spot) inEditRun(() => useStore.getState().updatePlacement(id, { x: spot.x, y: spot.y, rotation: spot.rotation, mountY: spot.mountY }))
     return
   }
   inEditRun(() => useStore.getState().updatePlacement(id, { x: to.x, y: to.y }))
@@ -210,7 +210,7 @@ export function dropSpotAt(item: Item, pt: Vec2): PlaceAt | null {
   if (!room) return null
   if (isWallDecor(item.category)) {
     const spot = snapToWall(doc, layout, item, pt)
-    return spot ? { x: spot.x, y: spot.y, rotation: spot.rotation } : null
+    return spot ? { x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.mountY != null ? { mountY: spot.mountY } : {}) } : null
   }
   const byId = new Map(doc.items.map((i) => [i.id, i]))
   const others: Others = layout.placements.flatMap((o) => {

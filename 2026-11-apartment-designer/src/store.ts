@@ -135,7 +135,7 @@ export function defaultDrop(d: Doc, item: Item, near?: Vec2): DropResult {
 }
 
 /** Where a piece goes when the caller picks the spot: a point, optionally turned, optionally on a host (table lamps). */
-export type PlaceAt = Vec2 & { rotation?: number; on?: string }
+export type PlaceAt = Vec2 & { rotation?: number; on?: string; mountY?: number }
 
 /** What happened when a piece was added: where it went, or why it couldn't be placed. */
 export type PlaceResult = { ok: true; placementId: string; roomName?: string } | { ok: false; reason: string }
@@ -392,9 +392,9 @@ export const useStore = create<State>((set, get) => ({
       get().notify(drop.reason)
       return drop
     }
-    const spot = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: at!.rotation ?? 0, on: at!.on }
+    const spot: { x: number; y: number; rotation: number; on?: string; mountY?: number } = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: at!.rotation ?? 0, on: at!.on, mountY: at!.mountY }
     const pid = uid()
-    get().update((d) => mapLayout({ ...d, items: [...d.items, item] }, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: item.id, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}) }] })))
+    get().update((d) => mapLayout({ ...d, items: [...d.items, item] }, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId: item.id, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}), ...(spot.mountY != null ? { mountY: spot.mountY } : {}) }] })))
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
     return { ok: true, placementId: pid, roomName: drop?.ok ? drop.spot.roomName : undefined }
   },
@@ -407,9 +407,9 @@ export const useStore = create<State>((set, get) => ({
       get().notify(drop.reason)
       return drop
     }
-    const spot = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: at!.rotation ?? 0, on: at!.on }
+    const spot: { x: number; y: number; rotation: number; on?: string; mountY?: number } = drop?.ok ? drop.spot : { x: at!.x, y: at!.y, rotation: at!.rotation ?? 0, on: at!.on, mountY: at!.mountY }
     const pid = uid()
-    get().update((d) => mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}) }] })))
+    get().update((d) => mapLayout(d, (l) => ({ ...l, placements: [...l.placements, { id: pid, itemId, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}), ...(spot.mountY != null ? { mountY: spot.mountY } : {}) }] })))
     set({ selection: { kind: 'placement', id: pid }, mode: 'select' })
     return { ok: true, placementId: pid, roomName: drop?.ok ? drop.spot.roomName : undefined }
   },
@@ -467,7 +467,7 @@ export const useStore = create<State>((set, get) => ({
     get().update((d) =>
       mapLayout({ ...d, items: [...d.items, copy] }, (l) => ({
         ...l,
-        placements: [...l.placements, { ...p, id: pid, itemId: copy.id, x: spot.x, y: spot.y, rotation: spot.rotation, on: spot.on }],
+        placements: [...l.placements, { ...p, id: pid, itemId: copy.id, x: spot.x, y: spot.y, rotation: spot.rotation, on: spot.on, mountY: undefined }],
       })),
     )
     set({ selection: { kind: 'placement', id: pid } })

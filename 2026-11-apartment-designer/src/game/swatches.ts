@@ -23,6 +23,8 @@ export type Family = 'wood' | 'fabric' | 'light'
 export interface ThumbLook {
   round?: boolean
   tall?: boolean
+  /** Drawn wider than usual (a landscape print). */
+  wide?: boolean
   /** Drawn at this size (1 = the category's usual thumbnail), from the ground up. */
   scale?: number
 }
