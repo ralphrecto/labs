@@ -22,15 +22,15 @@
 /* Day / Evening, beside the shutter. */
 .photo-evening {
   position: absolute; z-index: 20; left: calc(50% + 50px); bottom: calc(var(--photo-bottom, 104px) + env(safe-area-inset-bottom) + 18px);
-  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px 0 11px; border: none; border-radius: 999px; cursor: pointer;
-  background: color-mix(in srgb, var(--g-paper, #fffdf8) 94%, transparent); color: var(--g-ink, #3b2f26); font: 800 13px/1 var(--g-font, system-ui); box-shadow: var(--g-shadow-sm, 0 2px 6px rgba(0,0,0,.15));
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px 0 11px; border: none; border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--g-paper, #fffdf8) 94%, transparent); color: var(--g-ink, #3b2f26); font: 800 0.8125rem/1 var(--g-font, system-ui); box-shadow: var(--g-shadow-sm, 0 2px 6px rgba(0,0,0,.15));
   transition: background 0.2s, color 0.2s;
 }
-.photo-evening span { font-size: 16px; }
+.photo-evening span { font-size: 1rem; }
 .photo-evening.on.on, .game .photo-evening.on { background: #2a3350; color: #ffd9a0; box-shadow: 0 0 0 2px rgba(255, 207, 138, 0.35), var(--g-shadow-sm, 0 2px 6px rgba(0,0,0,.15)); }
 .photo-evening { white-space: nowrap; }
 /* Locked: a short "☾ At Cozy" (the full sentence is the label and tooltip). */
-.photo-evening.locked { cursor: default; white-space: nowrap; padding: 0 13px 0 10px; font-size: 12px; color: var(--g-ink-2, #7a6a5d); opacity: 0.92; }
+.photo-evening.locked { cursor: default; white-space: nowrap; padding: 0 13px 0 10px; font-size: 0.75rem; color: var(--g-ink-2, #7a6a5d); opacity: 0.92; }
 .photo-evening.locked .photo-evening-text { font-size: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .photo-evening { transition: none; }

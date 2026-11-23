@@ -5,10 +5,10 @@
 .goal-meter:hover { transform: translateY(-2px); }
 .goal-meter:active { transform: scale(0.96); }
 .goal-meter.popping { animation: goal-wiggle 0.5s var(--g-ease); }
-.goal-meter-star { display: inline-flex; align-items: center; gap: 3px; height: 34px; min-width: 34px; padding: 0 10px 0 7px; border-radius: 999px; background: var(--g-sun); color: #6b4300; font-weight: 900; font-size: 16px; box-shadow: inset 0 -3px 0 rgba(160, 100, 0, 0.18); animation: g-pop 0.45s var(--g-ease); }
+.goal-meter-star { display: inline-flex; align-items: center; gap: 3px; min-height: 34px; min-width: 34px; padding: 0 10px 0 7px; border-radius: 999px; background: var(--g-sun); color: #6b4300; font-weight: 900; font-size: 1rem; box-shadow: inset 0 -3px 0 rgba(160, 100, 0, 0.18); animation: g-pop 0.45s var(--g-ease); }
 .goal-meter-star svg { width: 18px; height: 18px; fill: #fff6dc; stroke: #b07a12; stroke-width: 1.6; }
 .goal-meter-body { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 96px; }
-.goal-meter-level { font-weight: 900; font-size: 13px; line-height: 1; white-space: nowrap; }
+.goal-meter-level { font-weight: 900; font-size: 0.8125rem; line-height: 1; white-space: nowrap; }
 .goal-meter-bar { display: block; width: 100%; height: 7px; border-radius: 99px; background: var(--g-paper-2); box-shadow: inset 0 1px 2px rgba(60, 40, 20, 0.12); overflow: hidden; }
 .goal-meter-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--g-sun), #ffa94b); transition: width 0.6s var(--g-ease); min-width: 7px; }
 .goal-meter-bar.big { height: 10px; margin: 8px 0 6px; }
@@ -18,14 +18,14 @@
 .goal-burst i { position: absolute; left: -5px; top: -5px; width: 10px; height: 10px; background: var(--g-sun); clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); animation: goal-spark 0.8s ease-out forwards; }
 .goal-burst i:nth-child(3n) { background: var(--g-coral); }
 .goal-burst i:nth-child(4n) { background: var(--g-sage); }
-.goal-plus { position: absolute; right: 30px; top: -12px; font-weight: 900; font-size: 18px; color: #c98700; white-space: nowrap; text-shadow: 0 2px 0 #fff, 0 0 8px #fff; animation: goal-float 1.2s ease-out forwards; }
+.goal-plus { position: absolute; right: 30px; top: -12px; font-weight: 900; font-size: 1.125rem; color: #c98700; white-space: nowrap; text-shadow: 0 2px 0 #fff, 0 0 8px #fff; animation: goal-float 1.2s ease-out forwards; }
 
 /* Goal complete banner, slides in under the pill. */
 .goal-banner { position: absolute; top: calc(100% + 10px); display: flex; align-items: center; gap: 10px; padding: 8px 14px 8px 8px; border-radius: 16px; background: var(--g-paper); box-shadow: var(--g-shadow); white-space: nowrap; max-width: calc(100vw - 32px); animation: goal-banner 2.6s var(--g-ease) forwards; pointer-events: none; }
 .goal-banner-check { width: 30px; height: 30px; border-radius: 50%; background: var(--g-sage); color: #fff; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .goal-banner-check svg { width: 18px; height: 18px; stroke-width: 3; }
-.goal-banner-text { display: flex; flex-direction: column; font-weight: 900; font-size: 14px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; }
-.goal-banner-text small { font-size: 11px; font-weight: 800; color: var(--g-sage); text-transform: uppercase; letter-spacing: 0.04em; }
+.goal-banner-text { display: flex; flex-direction: column; font-weight: 900; font-size: 0.875rem; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; }
+.goal-banner-text small { font-size: 0.6875rem; font-weight: 800; color: var(--g-sage); text-transform: uppercase; letter-spacing: 0.04em; }
 
 .goal-stars { display: inline-flex; gap: 1px; flex: none; color: #d9cbb5; }
 .goal-stars svg { width: 16px; height: 16px; fill: currentColor; stroke: currentColor; stroke-width: 1.4; }
@@ -38,15 +38,15 @@
 .goal-hero { display: flex; gap: 16px; align-items: center; padding-right: 40px; }
 .goal-hero-badge { flex: none; width: 76px; height: 76px; border-radius: 24px; background: var(--g-sun); color: #6b4300; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: inset 0 -5px 0 rgba(160, 100, 0, 0.18), var(--g-shadow-sm); transform: rotate(-4deg); }
 .goal-hero-badge svg { width: 28px; height: 28px; fill: #fff6dc; stroke: #b07a12; stroke-width: 1.5; }
-.goal-hero-badge b { font-size: 24px; font-weight: 900; line-height: 1; }
+.goal-hero-badge b { font-size: 1.5rem; font-weight: 900; line-height: 1; }
 .goal-hero-text { flex: 1; min-width: 0; }
-.goal-headline { font-size: 24px; font-weight: 900; line-height: 1.1; }
-.goal-hero-level { font-size: 14px; color: var(--g-ink-2); font-weight: 700; margin-top: 2px; }
+.goal-headline { font-size: 1.5rem; font-weight: 900; line-height: 1.1; }
+.goal-hero-level { font-size: 0.875rem; color: var(--g-ink-2); font-weight: 700; margin-top: 2px; }
 .goal-hero-level b { color: var(--g-ink); }
-.goal-hero-sub { font-size: 12px; font-weight: 700; color: var(--g-ink-2); }
+.goal-hero-sub { font-size: 0.75rem; font-weight: 700; color: var(--g-ink-2); }
 
 .goal-group { margin-top: 14px; }
-.goal-group h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em; color: var(--g-ink-2); }
+.goal-group h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 0.8125rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em; color: var(--g-ink-2); }
 .goal-group h3::before { content: ''; width: 10px; height: 10px; border-radius: 3px; background: var(--goal-cat, var(--g-sky)); }
 .goal-cat-basics { --goal-cat: var(--g-coral); }
 .goal-cat-flow { --goal-cat: var(--g-sky); }
@@ -60,10 +60,10 @@
 .goal-row.done .goal-check { background: var(--g-sage); border-color: var(--g-sage); }
 .goal-check svg { width: 16px; height: 16px; stroke-width: 3.2; }
 .goal-main { flex: 1; min-width: 0; }
-.goal-title { font-weight: 800; font-size: 15px; line-height: 1.25; }
+.goal-title { font-weight: 800; font-size: 0.9375rem; line-height: 1.25; }
 .goal-row.done .goal-title { color: var(--g-ink-2); }
-.goal-bonus { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 99px; background: var(--g-paper-2); color: var(--g-ink-2); font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; vertical-align: 2px; }
-.goal-hint { font-size: 13px; color: var(--g-ink-2); line-height: 1.35; margin-top: 2px; user-select: text; }
+.goal-bonus { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 99px; background: var(--g-paper-2); color: var(--g-ink-2); font-size: 0.625rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; vertical-align: 2px; }
+.goal-hint { font-size: 0.8125rem; color: var(--g-ink-2); line-height: 1.35; margin-top: 2px; user-select: text; }
 .goal-progress { height: 6px; border-radius: 99px; background: var(--g-paper-2); margin-top: 7px; overflow: hidden; }
 .goal-progress i { display: block; height: 100%; border-radius: inherit; background: var(--goal-cat, var(--g-sky)); }
 /* An open goal is a button: tap (or Enter) to be shown it, like the Next chip. */
@@ -81,7 +81,7 @@ button.goal-row:focus-visible { outline: 3px solid var(--g-sky); outline-offset:
 @keyframes goal-banner { 0% { transform: translateY(-14px) scale(0.9); opacity: 0; } 12% { transform: translateY(0) scale(1); opacity: 1; } 85% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-8px); opacity: 0; } }
 
 /* Next goal: one quiet chip under the pill. Tapping it shows where to start. */
-.goal-next { position: absolute; top: calc(100% + 6px); display: inline-flex; align-items: center; gap: 8px; max-width: min(320px, calc(100vw - 128px)); padding: 5px 6px 5px 12px; border: none; border-radius: 999px; background: color-mix(in srgb, var(--g-paper) 92%, transparent); box-shadow: var(--g-shadow-sm); font: 700 12px/1.2 var(--g-font); color: var(--g-ink-2); cursor: pointer; white-space: nowrap; animation: g-fade 0.4s var(--g-ease); }
+.goal-next { position: absolute; top: calc(100% + 6px); display: inline-flex; align-items: center; gap: 8px; max-width: min(320px, calc(100vw - 128px)); padding: 5px 6px 5px 12px; border: none; border-radius: 999px; background: color-mix(in srgb, var(--g-paper) 92%, transparent); box-shadow: var(--g-shadow-sm); font: 700 0.75rem/1.2 var(--g-font); color: var(--g-ink-2); cursor: pointer; white-space: nowrap; animation: g-fade 0.4s var(--g-ease); }
 .goal-next { min-height: 36px; box-sizing: border-box; }
 @media (max-width: 360px) {
   /* Narrow phones: the goal may take two lines rather than cut off its last words. */
@@ -92,7 +92,7 @@ button.goal-row:focus-visible { outline: 3px solid var(--g-sky); outline-offset:
 .goal-next:active { transform: scale(0.97); }
 .goal-next-text { overflow: hidden; text-overflow: ellipsis; }
 .goal-next-text b { color: var(--g-ink); font-weight: 800; }
-.goal-next-stars { flex: none; padding: 2px 7px; border-radius: 99px; background: var(--g-sun); color: #6b4300; font-weight: 900; font-size: 11px; }
+.goal-next-stars { flex: none; padding: 2px 7px; border-radius: 99px; background: var(--g-sun); color: #6b4300; font-weight: 900; font-size: 0.6875rem; }
 
 /* Welcome back reuses the banner, and can be tapped. */
 .goal-banner.welcome { pointer-events: auto; cursor: pointer; border: none; font: inherit; color: var(--g-ink); text-align: left; animation-duration: 6s; }
@@ -101,7 +101,7 @@ button.goal-row:focus-visible { outline: 3px solid var(--g-sky); outline-offset:
 .goal-banner.welcome .goal-banner-text small { color: #c98700; }
 /* Wide enough to read at a glance (it was a 184px column, nine lines tall): as wide as its text, up to 440px. */
 .goal-banner.welcome { width: max-content; max-width: min(440px, calc(100vw - 32px)); white-space: normal; align-items: flex-start; }
-.goal-banner.welcome .goal-banner-check { width: auto; min-width: 30px; height: 30px; padding: 0 9px; gap: 3px; border-radius: 99px; font-weight: 900; font-size: 13px; }
+.goal-banner.welcome .goal-banner-check { width: auto; min-width: 30px; height: auto; min-height: 30px; padding: 0 9px; gap: 3px; border-radius: 99px; font-weight: 900; font-size: 0.8125rem; }
 .goal-banner.welcome .goal-banner-check svg { width: 15px; height: 15px; }
 .goal-banner.welcome .goal-banner-text { min-width: 0; }
 .goal-welcome-next { display: block; }
@@ -109,7 +109,7 @@ button.goal-row:focus-visible { outline: 3px solid var(--g-sky); outline-offset:
 @media (max-width: 700px) {
   /* Phones: the star count stacks under a small star, so the text keeps the width. */
   .goal-banner.welcome { gap: 8px; padding: 8px 12px 8px 8px; }
-  .goal-banner.welcome .goal-banner-check { flex-direction: column; height: auto; min-width: 28px; padding: 4px 4px 3px; gap: 0; border-radius: 12px; font-size: 11px; line-height: 1; }
+  .goal-banner.welcome .goal-banner-check { flex-direction: column; height: auto; min-width: 28px; padding: 4px 4px 3px; gap: 0; border-radius: 12px; font-size: 0.6875rem; line-height: 1; }
   .goal-banner.welcome .goal-banner-check svg { width: 12px; height: 12px; }
 }
 
@@ -123,9 +123,9 @@ button.goal-row:focus-visible { outline: 3px solid var(--g-sky); outline-offset:
 .goal-levelup-card { cursor: pointer; position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; width: min(320px, 100%); padding: 0 20px 20px; border-radius: 26px; overflow: visible;
   background: linear-gradient(180deg, #ffd477 0, var(--g-sun) 72px, var(--g-paper) 72px); box-shadow: 0 0 0 4px rgba(255, 250, 242, 0.7), var(--g-shadow); font-family: var(--g-font); color: var(--g-ink); text-align: center; animation: goal-levelup 3.6s var(--g-ease) forwards; }
 @media (max-width: 640px) { .goal-levelup-card { width: min(300px, calc(100vw - 112px)); } }
-.goal-levelup-card small { margin-top: 4px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; color: #8a5a00; }
-.goal-levelup-card strong { font-size: 30px; font-weight: 900; line-height: 1.1; }
-.goal-levelup-card span { font-size: 13px; font-weight: 700; color: var(--g-ink-2); }
+.goal-levelup-card small { margin-top: 4px; font-size: 0.75rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; color: #8a5a00; }
+.goal-levelup-card strong { font-size: 1.875rem; font-weight: 900; line-height: 1.1; }
+.goal-levelup-card span { font-size: 0.8125rem; font-weight: 700; color: var(--g-ink-2); }
 .goal-levelup-badge { position: relative; width: 84px; height: 84px; margin: 22px 0 8px; border-radius: 26px; background: var(--g-sun); display: flex; align-items: center; justify-content: center;
   box-shadow: 0 0 0 5px var(--g-paper), inset 0 -6px 0 rgba(160, 100, 0, 0.2), 0 8px 18px rgba(160, 100, 0, 0.3); transform: rotate(-4deg); animation: goal-badge-in 0.9s var(--g-ease) both; }
 .goal-levelup-badge > svg:first-child { width: 46px; height: 46px; fill: #fff6dc; stroke: #b07a12; stroke-width: 1.5; }
@@ -154,29 +154,29 @@ button.goal-row:focus-visible { outline: 3px solid var(--g-sky); outline-offset:
 
 /* Round 4: the best level as a small note beside the honest one; the phone level-up banner. */
 .goal-meter-level { display: inline-flex; align-items: baseline; gap: 6px; }
-.goal-meter-best { font-size: 10px; font-weight: 800; color: var(--g-ink-2); }
-.goal-levelup-goal { margin-top: 6px; font-style: normal; font-weight: 800; font-size: 13px; color: #8a5a00; }
+.goal-meter-best { font-size: 0.625rem; font-weight: 800; color: var(--g-ink-2); }
+.goal-levelup-goal { margin-top: 6px; font-style: normal; font-weight: 800; font-size: 0.8125rem; color: #8a5a00; }
 .goal-levelup-mini { pointer-events: auto; cursor: pointer; border: none; font: inherit; color: var(--g-ink); text-align: left; z-index: 70;
   background: linear-gradient(90deg, #ffe7a8, var(--g-paper) 60%); animation: goal-banner 3.6s var(--g-ease) forwards; }
 .goal-levelup-mini .goal-banner-check { background: var(--g-sun); color: #6b4300; }
 .goal-levelup-mini .goal-banner-check svg { fill: #fff6dc; stroke: #b07a12; stroke-width: 1.6; }
 .goal-levelup-mini .goal-banner-text small { color: #c98700; }
-.goal-levelup-mini .goal-banner-text em { font-style: normal; font-size: 12px; font-weight: 800; color: var(--g-ink-2); }
+.goal-levelup-mini .goal-banner-text em { font-style: normal; font-size: 0.75rem; font-weight: 800; color: var(--g-ink-2); }
 
 /* Goals sheet: a remix's twist, under the level and pinned on top. */
-.goal-twist-pill { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 999px; background: var(--g-sun); color: #6b4300; font-size: 12px; font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-twist-pill { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 999px; background: var(--g-sun); color: #6b4300; font-size: 0.75rem; font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .goal-twist-pill.done { background: #dcefd9; color: #2f6b2a; }
 .goal-cat-twist h3 { color: #c98700; }
 
 /* Visitor of the day: its pill under the level, its section, the sticker row. */
-.goal-visit-pill { display: inline-block; margin-top: 6px; margin-right: 6px; padding: 3px 10px; border-radius: 999px; background: #f6e3f0; color: #7a3a68; font-size: 12px; font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-visit-pill { display: inline-block; margin-top: 6px; margin-right: 6px; padding: 3px 10px; border-radius: 999px; background: #f6e3f0; color: #7a3a68; font-size: 0.75rem; font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .goal-visit-pill.done { background: #dcefd9; color: #2f6b2a; }
 .goal-cat-visit { --goal-cat: var(--g-plum); }
-.goal-visit-ask { margin: 0 0 8px; font-size: 14px; font-weight: 700; color: var(--g-ink); line-height: 1.35; }
+.goal-visit-ask { margin: 0 0 8px; font-size: 0.875rem; font-weight: 700; color: var(--g-ink); line-height: 1.35; }
 .goal-bonus.visit { background: #f6e3f0; color: #7a3a68; }
-.goal-stickers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; font-weight: 800; color: var(--g-ink-2); }
+.goal-stickers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; font-size: 0.75rem; font-weight: 800; color: var(--g-ink-2); }
 .goal-stickers-none { font-weight: 700; font-style: italic; }
-.goal-sticker { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: #fff; border: 2px solid var(--g-line); font-size: 16px; line-height: 1; transform: rotate(-6deg); flex: none; }
+.goal-sticker { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: #fff; border: 2px solid var(--g-line); font-size: 1rem; line-height: 1; transform: rotate(-6deg); flex: none; }
 .goal-sticker:nth-child(odd) { transform: rotate(5deg); }
-.goal-sticker.pop { width: 34px; height: 34px; font-size: 20px; border-color: var(--g-sun); animation: g-pop 0.5s var(--g-ease); }
-.goal-visit-line { display: block; margin-top: 3px; font-size: 12px; font-weight: 700; color: var(--g-ink-2); white-space: normal; }
+.goal-sticker.pop { width: 2.125rem; height: 2.125rem; font-size: 1.25rem; border-color: var(--g-sun); animation: g-pop 0.5s var(--g-ease); }
+.goal-visit-line { display: block; margin-top: 3px; font-size: 0.75rem; font-weight: 700; color: var(--g-ink-2); white-space: normal; }

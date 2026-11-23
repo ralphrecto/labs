@@ -20,7 +20,7 @@
 }
 .sty-tile {
   border: none; background: transparent; padding: 0; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 5px;
-  font: 800 12px var(--g-font); color: var(--g-ink-2); animation: sty-in 0.28s var(--g-ease) both;
+  font: 800 0.75rem var(--g-font); color: var(--g-ink-2); animation: sty-in 0.28s var(--g-ease) both;
 }
 .sty-tile-art {
   width: 62px; height: 62px; border-radius: 16px; overflow: hidden; display: block; border: 3px solid transparent; box-shadow: var(--g-shadow-sm);
@@ -35,7 +35,7 @@
 
 .sty-hint {
   position: absolute; right: calc(100% + 10px); top: 8px; white-space: nowrap; background: var(--g-ink); color: #fff; border-radius: 999px; padding: 7px 14px;
-  font-size: 13px; font-weight: 600; animation: sty-hint 1.8s ease both; pointer-events: none;
+  font-size: 0.8125rem; font-weight: 600; animation: sty-hint 1.8s ease both; pointer-events: none;
 }
 .sty-hint b { font-weight: 900; margin-right: 4px; }
 @keyframes sty-hint { 0% { opacity: 0; transform: translateX(8px); } 12%, 80% { opacity: 1; transform: none; } 100% { opacity: 0; } }
