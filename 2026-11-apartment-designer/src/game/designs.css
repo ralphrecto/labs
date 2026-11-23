@@ -18,11 +18,13 @@
 .dz-design-text strong { font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dz-design-text small { font-size: 0.75rem; font-weight: 700; color: var(--g-ink-2); }
 .dz-thumb { flex: none; background: var(--g-paper-2); border-radius: 12px; }
-.dz-rename { font: 700 0.9375rem var(--g-font); color: var(--g-ink); border: 2px solid var(--g-sky); border-radius: 10px; padding: 6px 10px; background: #fff; outline: none; width: 100%; max-width: 240px; box-sizing: border-box; }
+.dz-rename { font: 700 1rem var(--g-font); /* 16px+: iOS doesn't zoom in on focus */ color: var(--g-ink); border: 2px solid var(--g-sky); border-radius: 10px; padding: 6px 10px; background: #fff; outline: none; width: 100%; max-width: 240px; box-sizing: border-box; }
 
 .dz-more { position: relative; flex: none; }
 .dz-more-btn { box-shadow: none; background: var(--g-paper-2); }
 .dz-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 180px; max-width: min(280px, calc(100vw - 48px)); padding: 6px; display: flex; flex-direction: column; animation: g-pop 0.2s var(--g-ease); }
+/* Opens upward when there is no room under the button inside the sheet (iPhone SE: the last design's menu). */
+.dz-menu.up { top: auto; bottom: calc(100% + 6px); }
 .dz-menu-item { display: flex; align-items: center; gap: 10px; border: none; background: none; border-radius: 12px; padding: 10px 12px; font: 800 0.875rem var(--g-font); color: var(--g-ink); cursor: pointer; text-align: left; }
 .dz-menu-item:hover { background: var(--g-paper-2); }
 .dz-menu-item.danger { color: var(--g-bad); }

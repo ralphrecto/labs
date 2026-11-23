@@ -1,6 +1,6 @@
 // "Your designs": the homes you've moved into and the designs for the open one, as little
 // top-down postcards. Rename and delete sit behind a "…" menu, and deleting asks first.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { analyze } from '../analysis'
 import type { Doc, Layout } from '../model/types'
@@ -74,6 +74,8 @@ function MoreMenu({ label, items }: { label: string; items: MenuItem[] }) {
   const [open, setOpen] = useState(false)
   const [asking, setAsking] = useState<MenuItem | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [up, setUp] = useState(false)
   const close = () => {
     setOpen(false)
     setAsking(null)
@@ -86,13 +88,28 @@ function MoreMenu({ label, items }: { label: string; items: MenuItem[] }) {
     document.addEventListener('pointerdown', off)
     return () => document.removeEventListener('pointerdown', off)
   }, [open])
+  // A menu that would run past the bottom of its sheet (or the screen) opens upward instead, if it
+  // fits there; otherwise the sheet scrolls just enough to show it.
+  useLayoutEffect(() => {
+    if (!open) return setUp(false)
+    const m = menuRef.current
+    const btn = ref.current
+    if (!m || !btn) return
+    const box = (btn.closest('.g-sheet') ?? document.documentElement).getBoundingClientRect()
+    const bottom = Math.min(box.bottom, window.innerHeight)
+    const top = Math.max(box.top, 0)
+    const b = btn.getBoundingClientRect()
+    const h = m.offsetHeight
+    if (b.bottom + 6 + h > bottom - 8 && b.top - 6 - h >= top + 8) setUp(true)
+    else if (b.bottom + 6 + h > bottom - 8) m.scrollIntoView?.({ block: 'nearest' })
+  }, [open, asking])
   return (
     <div className="dz-more" ref={ref}>
       <button className="g-icon sm dz-more-btn" aria-label={label} aria-expanded={open} onClick={() => (open ? close() : setOpen(true))}>
         <I.IconMore />
       </button>
       {open && (
-        <div className="dz-menu g-card" role="menu">
+        <div ref={menuRef} className={`dz-menu g-card${up ? ' up' : ''}`} role="menu">
           {asking ? (
             <>
               <p className="dz-ask">{asking.confirm}</p>
@@ -141,6 +158,12 @@ function NameInput({ value, onDone }: { value: string; onDone: (v: string) => vo
       autoFocus
       defaultValue={value}
       aria-label="New name"
+      enterKeyHint="done"
+      // Keep the field in view above the on-screen keyboard.
+      onFocus={(e) => {
+        const el = e.currentTarget
+        setTimeout(() => el.scrollIntoView?.({ block: 'center' }), 300)
+      }}
       onClick={(e) => e.stopPropagation()}
       onBlur={(e) => onDone(e.target.value.trim() || value)}
       onKeyDown={(e) => {

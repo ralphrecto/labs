@@ -29,9 +29,10 @@
 
 .game { position: fixed; inset: 0; overflow: hidden; background: var(--g-bg); font-family: var(--g-font); color: var(--g-ink); font-size: 0.9375rem; -webkit-tap-highlight-color: transparent; user-select: none; }
 /* Taps never double-tap-zoom the page and the page never rubber-bands; the 3D stage claims its own
-   pinch and drag in hud.css. Pinch-zoom stays available on sheets (no user-scalable=no). */
-.game { touch-action: manipulation; overscroll-behavior: none; --error: var(--g-bad); }
-.g-sheet { touch-action: pan-x pan-y pinch-zoom; overscroll-behavior: contain; }
+   pinch and drag in hud.css. No pinch-zoom anywhere in the game (r15: a pinch on the drawer zoomed the
+   page to 5x and stranded the player). Sheets still scroll; text follows the browser's font size. */
+.game { touch-action: pan-x pan-y; overscroll-behavior: none; --error: var(--g-bad); }
+.g-sheet { touch-action: pan-y; overscroll-behavior: contain; }
 .game input, .game textarea, .game select { user-select: text; }
 
 /* Round icon button, used for HUD corners and context actions. */
@@ -96,7 +97,7 @@
 .game .onb .onb-link, .game .onb .onb-link:hover:not(:disabled) { min-height: 44px; padding: 10px 4px; }
 .game .buy-size { font-size: 0.8125rem; }
 .game .buy-badge { font-size: 0.75rem; min-width: 20px; height: auto; min-height: 20px; line-height: 1.25rem; border-radius: 10px; }
-.game .buy-grid { touch-action: pan-x pan-y pinch-zoom; }
+.game .buy-grid { touch-action: pan-x pan-y; }
 
 @keyframes g-fade { from { opacity: 0; } }
 @keyframes g-rise { from { transform: translateY(40px); opacity: 0; } }

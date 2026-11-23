@@ -278,7 +278,7 @@
 .game .panel button:not(.link):not(.g-btn):not(.g-icon) { border-radius: 999px; border: none; background: var(--g-paper-2); font-weight: 800; padding: 7px 14px; }
 .game .panel button.primary { background: var(--g-coral-fill); color: #fff; }
 .game .panel button.danger { color: var(--g-bad); }
-.game .panel input, .game .panel select { border-radius: 10px; border: 2px solid var(--g-line); padding: 6px 8px; font: 600 0.875rem var(--g-font); }
+.game .panel input, .game .panel select { border-radius: 10px; border: 2px solid var(--g-line); padding: 6px 8px; font: 600 1rem var(--g-font); } /* 16px+: iOS doesn't zoom in on focus */
 .game .panel .field span { font-weight: 800; color: var(--g-ink-2); }
 
 .hud-back-to-game {
@@ -297,8 +297,8 @@
 @media (orientation: landscape) and (max-height: 500px) {
   .game { --side-w: min(300px, 40vw); }
   .hud-drawer-slot .buy-drawer {
-    left: auto; right: max(12px, env(safe-area-inset-right)); top: calc(66px + env(safe-area-inset-top)); bottom: calc(12px + env(safe-area-inset-bottom));
-    width: var(--side-w); max-height: none; margin: 0; border-radius: var(--g-r-lg); padding: 10px 0 6px;
+    left: auto; right: max(12px, calc(8px + env(safe-area-inset-right))); top: calc(66px + env(safe-area-inset-top)); bottom: calc(12px + env(safe-area-inset-bottom));
+    width: var(--side-w); max-width: calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right) - 24px); max-height: none; margin: 0; border-radius: var(--g-r-lg); padding: 10px 0 6px;
   }
   .hud-drawer-slot .buy-tabs { justify-content: flex-start; }
   .hud-drawer-slot .buy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); overflow-x: hidden; overflow-y: auto; flex: 1; }
@@ -465,30 +465,38 @@
 /* Too short for the side column (DESKTOP_SIDE_DRAWER needs 640px+ of height) and wider than a phone:
    the drawer is the phone's compact bottom sheet above the centred dock, low enough that the camera
    buttons and the Next chip under the stars stay clear of it. Phones in landscape (max-width 700)
-   keep the side panel above. `.game` lifts these over the landscape rules and buy.css. */
-@media (max-height: 520px) and (min-width: 700px) {
+   keep the side panel above. `.game` lifts these over the landscape rules and buy.css.
+   Only a mouse/trackpad screen: real phones in landscape are 750-932 wide and keep the side panel
+   (r15: a 750x340 phone got this bottom sheet, its cards spilling under the dock). */
+@media (max-height: 520px) and (min-width: 700px) and (hover: hover) and (pointer: fine) {
   .game .hud-drawer-slot .buy-drawer {
     left: 16px; right: 16px; top: auto; bottom: var(--dock-h); width: auto; max-width: 920px; margin: 0 auto;
     max-height: min(40vh, calc(100vh - var(--dock-h) - 180px)); border-radius: var(--g-r-lg); padding: 6px 0 4px;
+    overflow: hidden; /* cards never spill out over the dock */
   }
   .game .hud-drawer-slot.expanded .buy-drawer { max-height: calc(100vh - var(--dock-h) - 120px); }
   .game .hud-drawer-slot .buy-tabs { justify-content: center; gap: 4px; padding: 2px 12px 4px; }
   .game .hud-drawer-slot .buy-tab { min-width: 52px; gap: 3px; }
-  .game .hud-drawer-slot .buy-tab-icon { width: 36px; height: 36px; }
+  /* Icons and thumbnails give up height as the text grows (2rem = 32px at 200% text), so two-line names fit. */
+  .game .hud-drawer-slot .buy-tab-icon { width: clamp(26px, calc(52px - 1rem), 36px); height: clamp(26px, calc(52px - 1rem), 36px); }
   .game .hud-drawer-slot .buy-tab-icon svg { width: 28px; height: 28px; }
   .game .hud-drawer-slot .buy-tab-icon > svg:not(.item-thumb) { width: 18px; height: 18px; }
   .game .hud-drawer-slot .buy-tab-label { font-size: 0.6875rem; white-space: nowrap; }
   .game .hud-drawer-slot .buy-grid {
     display: flex; justify-content: flex-start; gap: 8px; padding: 6px 12px 4px; overflow-x: auto; overflow-y: hidden;
-    flex: none; scroll-snap-type: x proximity; scroll-padding: 0 12px; scrollbar-width: none;
+    flex: none; min-height: 0; scroll-snap-type: x proximity; scroll-padding: 0 12px; scrollbar-width: none;
   }
   .game .hud-drawer-slot .buy-grid .buy-empty { width: 150px; }
-  .game .hud-drawer-slot:not(.expanded) .buy-grid .buy-card { width: 72px; animation: none; }
+  .game .hud-drawer-slot:not(.expanded) .buy-grid .buy-card { width: max(72px, 4.6rem); animation: none; }
   .game .hud-drawer-slot:not(.expanded) .buy-hit { padding: 4px 4px 5px; }
-  .game .hud-drawer-slot:not(.expanded) .buy-thumb { height: 56px; margin: 0 0 2px; border-radius: 10px; }
-  .game .hud-drawer-slot:not(.expanded) .buy-thumb svg { width: 48px !important; height: 48px !important; }
+  .game .hud-drawer-slot:not(.expanded) .buy-thumb { height: clamp(28px, calc(96px - 2.5rem), 56px); margin: 0 0 2px; border-radius: 10px; }
+  .game .hud-drawer-slot:not(.expanded) .buy-thumb svg { width: clamp(24px, calc(88px - 2.5rem), 48px) !important; height: clamp(24px, calc(88px - 2.5rem), 48px) !important; }
   .game .hud-drawer-slot:not(.expanded) .buy-shop-icons svg { width: 28px !important; height: 28px !important; padding: 5px; }
-  .game .hud-drawer-slot:not(.expanded) .buy-name { display: block; max-width: 100%; font-size: 0.6875rem; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .game .hud-drawer-slot:not(.expanded) .buy-name {
+    /* Two lines at most, so a name still reads with large text (200%) instead of clipping to "So…". */
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; max-width: 100%;
+    font-size: 0.6875rem; line-height: 1.15; white-space: normal; overflow: hidden; overflow-wrap: anywhere;
+  }
   .game .hud-drawer-slot:not(.expanded) .buy-size,
   .game .hud-drawer-slot:not(.expanded) .buy-presets,
   .game .hud-drawer-slot:not(.expanded) .buy-tag { display: none; }

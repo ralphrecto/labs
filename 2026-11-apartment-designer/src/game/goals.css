@@ -35,6 +35,12 @@
 /* Sheet */
 .goal-sheet { position: relative; padding-top: 20px; }
 .goal-close { position: absolute; top: 14px; right: 14px; box-shadow: none; background: var(--g-paper-2); }
+/* The sheet's close button stays put while the goals scroll (r15: the list runs ~2200px on a phone, and
+   opening it on a goal left Close 1300px above the fold). It takes no room in the flow. */
+.goal-sheet > .goal-close {
+  position: sticky; top: 0; z-index: 3; display: flex; margin: -6px -8px -32px auto;
+  background: var(--g-paper-2); box-shadow: 0 0 0 4px var(--g-paper), var(--g-shadow-sm);
+}
 .goal-hero { display: flex; gap: 16px; align-items: center; padding-right: 40px; }
 .goal-hero-badge { flex: none; width: 76px; height: 76px; border-radius: 24px; background: var(--g-sun); color: #6b4300; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: inset 0 -5px 0 rgba(160, 100, 0, 0.18), var(--g-shadow-sm); transform: rotate(-4deg); }
 .goal-hero-badge svg { width: 28px; height: 28px; fill: #fff6dc; stroke: #b07a12; stroke-width: 1.5; }
@@ -111,6 +117,14 @@ button.goal-row:focus-visible { outline: 3px solid var(--g-sky); outline-offset:
   .goal-banner.welcome { gap: 8px; padding: 8px 12px 8px 8px; }
   .goal-banner.welcome .goal-banner-check { flex-direction: column; height: auto; min-width: 28px; padding: 4px 4px 3px; gap: 0; border-radius: 12px; font-size: 0.6875rem; line-height: 1; }
   .goal-banner.welcome .goal-banner-check svg { width: 12px; height: 12px; }
+}
+@media (max-width: 640px) {
+  /* Phones: the card hugs the left edge and stops short of the camera buttons down the right side
+     (r15: it ran under the plan and layer buttons). Fixed, since its pill sits off-centre. */
+  .goal-banner.welcome {
+    position: fixed; left: max(16px, env(safe-area-inset-left)); right: auto; top: calc(66px + env(safe-area-inset-top));
+    max-width: calc(100vw - 112px);
+  }
 }
 
 /* Goals sheet: the goal "Show me" pointed at. */

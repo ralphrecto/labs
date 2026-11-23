@@ -72,6 +72,35 @@ interface ViewState {
 }
 
 
+/** A touch on wall decor inside the room only belongs to it this close (screen px) to its wall line. */
+export const DECOR_TOUCH_PX = 8
+
+type Piece = { p: { id: string; x: number; y: number; rotation: number }; item: { width: number; depth: number } }
+/** A world point in a piece's own frame (x along its width, y along its depth, +y away from its back). */
+const toLocal = (w: Vec2, p: Piece['p']): Vec2 => {
+  const dx = w.x - p.x
+  const dy = w.y - p.y
+  const c = Math.cos(-p.rotation)
+  const s = Math.sin(-p.rotation)
+  return v(dx * c - dy * s, dx * s + dy * c)
+}
+
+/**
+ * Who gets a touch that lands on a wall piece's hit area. Wall decor is drawn over the furniture, so
+ * on a finger the floor pieces under the touch win, unless it starts on the wall side of the decor or
+ * within DECOR_TOUCH_PX of its wall line. Returns the placement id that takes it.
+ */
+export function decorTouchTarget(o: { at: Vec2; decor: Piece; floor: Piece[]; px: number }): string {
+  const { at, decor, floor, px } = o
+  const ly = toLocal(at, decor.p).y + decor.item.depth / 2 // 0 on the wall line, + into the room
+  if (ly <= DECOR_TOUCH_PX * px) return decor.p.id
+  const under = floor.find(({ p, item }) => {
+    const q = toLocal(at, p)
+    return Math.abs(q.x) <= item.width / 2 && Math.abs(q.y) <= item.depth / 2
+  })
+  return under ? under.p.id : decor.p.id
+}
+
 /** Tiny badge glyphs for wall decor in the plan. */
 const WALL_GLYPH: Record<string, string> = { 'wall-art': '▣', mirror: '◯', 'wall-shelf': '☰', 'wall-clock': '◷', curtains: '⫴' }
 export interface PlanViewProps {
@@ -591,6 +620,12 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
     return l
   }, [px, units])
 
+  // Wall decor badges sit just outside the wall stroke; a touch on decor checks these floor pieces first
+  // (lamps on tops before what they stand on).
+  const decorWallT = Math.max(0.05, ...doc.rooms.map((r) => r.wallThickness))
+  const touchFloor = placementsWithItems
+    .filter(({ item }) => !isWallDecor(item.category) && !item.floorLevel && item.category !== 'pendant')
+    .sort((a, b) => Number(!!b.p.on) - Number(!!a.p.on))
   const pieceBoxes = placementsWithItems.map(({ p, item }) => bounds(footprint(item, p)))
   const dimsDone: { l: number; mid: Vec2 }[] = []
   // Dimension labels already drawn (world boxes): a wall's length never lands on top of another's.
@@ -821,7 +856,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
 
         {/* Items, floor-level ones (rugs) first */}
         {[...placementsWithItems]
-          // Rugs first, then furniture, lamps on tops, and wall decor last so its badges sit over the sofa.
+          // Rugs first, then furniture, lamps on tops, and wall decor last (its badges sit outside the walls).
           .sort((a, b) => Number(!!b.item.floorLevel) - Number(!!a.item.floorLevel) || Number(isWallDecor(a.item.category)) - Number(isWallDecor(b.item.category)) || Number(!!a.p.on) - Number(!!b.p.on))
           .map(({ p, item }) => {
             const selected = selection?.kind === 'placement' && selection.id === p.id
@@ -834,23 +869,29 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
             const pendant = item.category === 'pendant'
             const sk = pendant ? 0.6 : 1
             if (isWallDecor(item.category)) {
-              // Wall decor: a thin strip on the wall face with a small badge in front of it.
+              // Wall decor: a thin strip on the wall face with a small badge just outside the wall, so
+              // it never sits over the sofa or its name.
               const t = Math.max(item.category === 'curtains' ? 0.06 : 0.035, 4 * px)
               const grab = (e: RPointerEvent) => {
                 if (readOnly || mode !== 'select') return onBackgroundDown(e)
-                store().select({ kind: 'placement', id: p.id })
-                begin({ type: 'item', id: p.id, grab: sub(toWorld(e), v(p.x, p.y)), moved: false }, e)
+                const w = toWorld(e)
+                // A finger: the furniture under the touch wins unless it starts right on the wall line.
+                const id = e.pointerType === 'touch' || COARSE ? decorTouchTarget({ at: w, decor: { p, item }, floor: touchFloor, px }) : p.id
+                const target = id === p.id ? p : placementsWithItems.find((x) => x.p.id === id)?.p ?? p
+                store().select({ kind: 'placement', id: target.id })
+                begin({ type: 'item', id: target.id, grab: sub(w, v(target.x, target.y)), moved: false }, e)
               }
-              // A finger needs a bigger badge, and a hit area bigger still around it.
-              const r = (COARSE ? 11 : 7) * px
-              const hit = r + (COARSE ? 9 : 3) * px
+              const r = (COARSE ? 8 : 5.5) * px
+              const hit = r + (COARSE ? 8 : 3) * px
+              const by = -hd - decorWallT - 3 * px - r
+              const reach = (COARSE ? DECOR_TOUCH_PX : 4) * px
               return (
                 <g key={p.id} transform={`translate(${p.x} ${p.y}) rotate(${deg})`} style={{ cursor: readOnly ? undefined : drag?.type === 'item' ? 'grabbing' : 'grab' }} onPointerDown={grab}>
-                  <rect x={-hw} y={-hd - 4 * px} width={item.width} height={t + 4 * px + 2 * r + 4 * px} fill="transparent" />
+                  <rect x={-hw} y={by - r} width={item.width} height={-hd + reach - (by - r)} fill="transparent" />
                   <rect x={-hw} y={-hd} width={item.width} height={t} rx={t / 2} fill={item.color} stroke={stroke} strokeWidth={(selected ? 2.5 : 1) * px} />
-                  <circle cx={0} cy={-hd + t + r + 2 * px} r={hit} fill="transparent" />
-                  <circle cx={0} cy={-hd + t + r + 2 * px} r={r} fill="#fffaf1" stroke={stroke} strokeWidth={(selected ? 2 : 1) * px} />
-                  <text x={0} y={-hd + t + r + 2 * px} fontSize={(COARSE ? 13 : 9) * px} textAnchor="middle" dominantBaseline="central" fill="#4a4740" pointerEvents="none">
+                  <circle cx={0} cy={by} r={hit} fill="transparent" />
+                  <circle className="plan-decor-badge" cx={0} cy={by} r={r} fill="#fffaf1" stroke={stroke} strokeWidth={(selected ? 2 : 1) * px} />
+                  <text x={0} y={by} fontSize={(COARSE ? 10 : 7) * px} textAnchor="middle" dominantBaseline="central" fill="#4a4740" pointerEvents="none">
                     {WALL_GLYPH[item.category] ?? '▣'}
                   </text>
                 </g>
