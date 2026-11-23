@@ -74,6 +74,7 @@
 .dz-dreams { margin: -4px 0 8px; font-size: 0.9em; color: var(--g-ink-soft, #8a7a68); }
 .dz-picker { display: flex; flex-direction: column; gap: 8px; padding: 12px; flex: 1 1 100%; }
 .dz-picker-h { margin: 0; font-size: 0.95em; }
+.dz-picker-note { margin: 0; font-size: 0.85em; color: var(--g-ink-soft, inherit); opacity: 0.85; }
 .dz-picker-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--g-line, #e6dccf); background: var(--g-card, #fff); color: inherit; text-align: left; cursor: pointer; min-height: 44px; }
 .dz-picker-opt small { opacity: 0.75; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 

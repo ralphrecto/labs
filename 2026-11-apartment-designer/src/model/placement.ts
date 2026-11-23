@@ -798,6 +798,13 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
         }
         if (found) break
       }
+      // A coffee table for a sofa (round 15): one that can only stand in front of it by narrowing a
+      // walkway, or only far from it, isn't offered; Next moves on to another goal instead.
+      const forSofa = (cat === 'coffee-table' || cat === 'ottoman') && !!opts.nextTo
+      if (forSofa && (!found || found.score < cands[0].score - 12)) {
+        const where = blocked ?? 'next room'
+        return { ok: false, reason: `${/^[aeiou]/i.test(item.name) ? 'An' : 'A'} ${item.name.toLowerCase()} there would block the way to the ${where}. Make some room by the sofa first.` }
+      }
       if (found) {
         pick = found
         blocked = undefined

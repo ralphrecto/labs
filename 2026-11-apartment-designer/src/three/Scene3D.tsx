@@ -370,6 +370,18 @@ function SelectRing({ w, d }: { w: number; d: number }) {
   )
 }
 
+/** The drag lesson's target (round 15): a glowing ring on the piece's best spot, until it's there. */
+function LessonRing() {
+  const lesson = useGame((s) => s.dragLesson)
+  const there = useStore((s) => !!lesson && activeLayout(s.doc).placements.some((p) => p.id === lesson.id))
+  if (!lesson || !there) return null
+  return (
+    <group position={[lesson.x, 0, lesson.y]} rotation={[0, -lesson.rotation, 0]}>
+      <SelectRing w={lesson.w} d={lesson.d} />
+    </group>
+  )
+}
+
 const HOP_MS = 260
 /** Lifts its children 4 cm and sets them down again when `on` turns true (not with reduced motion). */
 function Hop({ on, children }: { on: boolean; children: ReactNode }) {
@@ -964,6 +976,7 @@ function Scene({
         </Suspense>
       )}
       {(style === 'classic' || style === 'scan') && <ScanPoints />}
+      <LessonRing />
       <group onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
         {placed.map(({ p, item }) => (
           <PlacedItem

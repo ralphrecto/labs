@@ -4,10 +4,13 @@ import { nanoid } from 'nanoid'
 
 export const uid = () => nanoid(10)
 
-/** What's in the sample's two moving boxes: enough for the first few goals (rooms used, light, plant, rug). */
+/**
+ * What's in the sample's two moving boxes: enough for the first few goals (rooms used, plant, rug).
+ * Round 15: no floor lamp any more, so the first light is a pick the player makes.
+ */
 export const SAMPLE_BOX_CONTENTS: readonly (readonly string[])[] = [
   ['plant', 'table-lamp'],
-  ['rug', 'plant', 'floor-lamp'],
+  ['rug', 'plant'],
 ]
 
 export function rectRoom(name: string, x: number, y: number, w: number, d: number, ceiling = 2.6): Room {

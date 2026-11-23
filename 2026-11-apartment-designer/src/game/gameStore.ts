@@ -37,7 +37,17 @@ interface GameState {
   welcomeBack: boolean
   /** The catalog piece the "Next" chip pointed at; the drawer gives its card a nudge until it's placed. */
   /** `title`: the goal it came from ("A table to eat at"), headed on the picker. */
-  buyHint: { category: string; roomId?: string; near?: string; title?: string } | null
+  buyHint: { category: string; roomId?: string; near?: string; title?: string; goalId?: string } | null
+  /** The goal the player last followed from the Next chip (kept after the drawer's hint clears). */
+  hintGoal: string | null
+  /** Pieces placed by following the Next chip this visit (the drag lesson comes after a few). */
+  chipFollows: number
+  /**
+   * The one-time hands-on moment (round 15): a piece the chip placed a little off its best spot, and
+   * that spot (a glowing ring) to drag it onto.
+   */
+  dragLesson: { id: string; x: number; y: number; rotation: number; w: number; d: number } | null
+  setDragLesson: (l: GameState['dragLesson']) => void
   /** The goal to scroll to when the goals sheet opens. */
   goalFocus: string | null
   /** A level just reached, for the celebration card. */
@@ -62,7 +72,7 @@ interface GameState {
   noteLevel: (homeId: string, level: number) => void
   /** "Show me" for a goal: the drawer on a tab with a piece to point at, or the goals sheet at the goal. */
   showGoal: (goal: { id: string; title?: string; tab?: string; item?: string; placeIn?: string; near?: string }) => void
-  setBuyHint: (hint: { category: string; roomId?: string; near?: string; title?: string } | null) => void
+  setBuyHint: (hint: { category: string; roomId?: string; near?: string; title?: string; goalId?: string } | null) => void
   celebrateLevel: (index: number, name: string) => void
   clearLevelUp: () => void
   consumeWelcomeBack: () => void
@@ -203,7 +213,7 @@ export function markOnboarded(done = true) {
   }
 }
 
-export const useGame = create<GameState>((set) => ({
+export const useGame = create<GameState>((set, get) => ({
   phase: readOnboarded() ? 'play' : 'onboarding',
   mode: 'buy',
   camera: '3d',
@@ -214,6 +224,10 @@ export const useGame = create<GameState>((set) => ({
   // A first-time player still in the move-in flow has nothing to come back to.
   welcomeBack: checkVisit() && readOnboarded(),
   buyHint: null,
+  hintGoal: null,
+  chipFollows: 0,
+  dragLesson: null,
+  setDragLesson: (dragLesson) => set({ dragLesson }),
   goalFocus: null,
   levelUp: null,
   evening: false,
@@ -267,8 +281,8 @@ export const useGame = create<GameState>((set) => ({
   showGoal: (goal) =>
     set(
       goal.tab
-        ? { mode: 'buy', buyTab: goal.tab, buyHint: goal.item ? { category: goal.item, roomId: goal.placeIn, near: goal.near, title: goal.title } : null, sheet: null, goalFocus: null }
-        : { sheet: 'goals', goalFocus: goal.id },
+        ? { mode: 'buy', buyTab: goal.tab, buyHint: goal.item ? { category: goal.item, roomId: goal.placeIn, near: goal.near, title: goal.title, goalId: goal.id } : null, hintGoal: goal.id, chipFollows: get().chipFollows + (goal.item ? 1 : 0), sheet: null, goalFocus: null }
+        : { sheet: 'goals', goalFocus: goal.id, hintGoal: goal.id },
     ),
   setBuyHint: (buyHint) => set({ buyHint }),
   celebrateLevel: (index, name) => set({ levelUp: { key: Date.now(), index, name } }),

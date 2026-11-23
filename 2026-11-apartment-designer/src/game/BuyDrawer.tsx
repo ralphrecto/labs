@@ -2,15 +2,15 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { CATALOG, itemFromCatalog, type CatalogEntry } from '../model/catalog'
 import { checkLayout } from '../model/checks'
-import { centroid } from '../model/geometry'
-import { findDrop, nookTarget, type DropResult } from '../model/placement'
+import { centroid, pointInPolygon } from '../model/geometry'
+import { BEDROOM, DINING, findDrop, nookTarget, OFFICE, type DropResult } from '../model/placement'
 import { STARTER_CATALOG } from '../model/starterCatalog'
 import { uid } from '../model/sample'
 import type { Doc, Item, Room, Units } from '../model/types'
 import { formatLength } from '../model/units'
 import { activeLayout, defaultDrop, useStore } from '../store'
 import { analyze } from '../analysis'
-import { scoreHome } from './goals'
+import { scoreHome, talkCornerSpot } from './goals'
 import { ImportDialog, Photo } from '../components/AddDialogs'
 import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
@@ -196,7 +196,10 @@ function dropIn(doc: Doc, item: Item, room: Room): DropResult | null {
 /** Pieces the Next chip puts beside the piece its goal is about (a reading lamp by the armchair). */
 const BESIDE = new Set(['floor-lamp', 'table-lamp', 'side-table'])
 
-type Hint = { category: string; roomId?: string; near?: string; title?: string }
+type Hint = { category: string; roomId?: string; near?: string; title?: string; goalId?: string }
+
+/** Rooms a piece belongs in (round 15): with no room named by the goal, a dining table goes to the dining area. */
+const HOME_ROOM: Record<string, RegExp> = { 'dining-table': DINING, bed: BEDROOM, wardrobe: BEDROOM, desk: OFFICE }
 type Spot = { x: number; y: number; rotation: number; on?: string; roomName?: string }
 
 /**
@@ -206,14 +209,66 @@ type Spot = { x: number; y: number; rotation: number; on?: string; roomName?: st
  */
 export function pickSpot(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; fail?: string } {
   const layout = activeLayout(doc)
+  // The talk-corner twist (round 15): a seat for it goes where it faces the sofa, not beside it.
+  if (hint?.goalId === 'twist:talk-corner' && hint.category === item.category && (item.category === 'armchair' || item.category === 'sofa')) {
+    const at = talkCornerSpot(doc, layout)
+    if (at) {
+      const spot = { x: at.x, y: at.y, rotation: at.rotation }
+      if (!trialIssues(doc, item, spot)) return { spot }
+    }
+  }
   const room = hint?.category === item.category && hint.roomId ? doc.rooms.find((r) => r.id === hint.roomId) : undefined
   const there = room ? dropIn(doc, item, room) : null
   if (there?.ok) return { spot: { ...there.spot, roomName: room!.name } }
+  // No room named and no piece to stand by: a piece with a room of its own goes there when it fits cleanly.
+  const own = !room && !hint?.near && HOME_ROOM[item.category] ? doc.rooms.find((r) => HOME_ROOM[item.category].test(r.name)) : undefined
+  if (own) {
+    const d = dropIn(doc, item, own)
+    if (d?.ok && d.spot.roomId === own.id) return { spot: { ...d.spot, roomName: own.name } }
+  }
   const nearId = hint?.category === item.category ? hint.near ?? (BESIDE.has(item.category) ? nookTarget(doc, layout) : undefined) : undefined
   const beside = nearId ? findDrop(doc, layout, item, { nextTo: nearId }) : null
   if (beside && !beside.ok && hint?.near) return { fail: beside.reason }
   if (beside?.ok) return { spot: beside.spot }
   return hint?.category === item.category ? cleanDrop(doc, item) : {}
+}
+
+/** Floor pieces the one-time drag lesson may use (nothing on a surface or a wall). */
+const LESSON_PIECES = new Set(['armchair', 'floor-lamp', 'plant', 'side-table', 'dresser', 'bookshelf', 'desk', 'ottoman', 'sideboard', 'console-table', 'dining-table', 'wardrobe'])
+/** Pieces followed from the Next chip before the drag lesson: it comes with the 4th. */
+export const DRAG_LESSON_AFTER = 4
+const DRAG_TAUGHT_KEY = 'homebody:drag-taught'
+export function dragTaught(): boolean {
+  try {
+    return localStorage.getItem(DRAG_TAUGHT_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+function markDragTaught() {
+  try {
+    localStorage.setItem(DRAG_TAUGHT_KEY, '1')
+  } catch {
+    /* private mode: once per visit */
+  }
+}
+
+/**
+ * The drag lesson's start (round 15): `best` nudged 50-75 cm aside within its room, somewhere clean,
+ * so the player drags it back onto the glowing ring. Undefined when there's no clean spot nearby.
+ */
+export function lessonSpot(doc: Doc, item: Item, best: Spot): Spot | undefined {
+  if (best.on || !LESSON_PIECES.has(item.category)) return undefined
+  const room = doc.rooms.find((r) => pointInPolygon({ x: best.x, y: best.y }, r.polygon))
+  if (!room) return undefined
+  for (const d of [0.6, 0.75, 0.5])
+    for (let k = 0; k < 8; k++) {
+      const a = best.rotation + (k * Math.PI) / 4
+      const c = { x: best.x + Math.cos(a) * d, y: best.y + Math.sin(a) * d, rotation: best.rotation }
+      if (!pointInPolygon(c, room.polygon)) continue
+      if (!trialIssues(doc, item, c)) return { ...c, roomName: best.roomName }
+    }
+  return undefined
 }
 
 /** Warnings and errors a trial placement `id` of `item` at `spot` would carry. */
@@ -356,8 +411,29 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
       st.notify(fail)
       return
     }
+    // The one-time drag lesson: a few pieces into following Next, this one lands a little aside and
+    // a glowing ring marks its best spot. Optional: it's fine where it is too.
+    const g = useGame.getState()
+    let lesson: Spot | undefined
+    let at = spot
+    if (hint && g.chipFollows >= DRAG_LESSON_AFTER && !g.dragLesson && !dragTaught()) {
+      const best = spot ?? (() => {
+        const d = defaultDrop(st.doc, item)
+        return d.ok ? d.spot : undefined
+      })()
+      const aside = best && lessonSpot(st.doc, item, best)
+      if (best && aside) [lesson, at] = [best, aside]
+    }
     // Otherwise the item goes to a free spot that suits it and is selected; when nothing fits, the store toasts why.
-    let res = spot ? st.addItem(item, spot) : st.addItem(item)
+    let res = at ? st.addItem(item, at) : st.addItem(item)
+    if (res.ok && lesson) {
+      markDragTaught()
+      g.setDragLesson({ id: res.placementId, x: lesson.x, y: lesson.y, rotation: lesson.rotation, w: item.width, d: item.depth })
+      if (hint) g.setBuyHint(null)
+      st.notify('Drag to move it onto the glowing spot ✨')
+      celebrate(entry.category + (preset ? `:${preset.label}` : ''))
+      return
+    }
     if (res.ok && spot) res = { ...res, roomName: spot.roomName }
     if (!res.ok) return
     if (hint) useGame.getState().setBuyHint(null)
@@ -370,7 +446,10 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   }
   const placeMine = (item: Item) => {
     const st = useStore.getState()
-    const res = st.placeItem(item.id) // adds a placement of the same item and selects it
+    // A piece of yours for the hinted goal goes where the goal wants it (round 15: the talk corner's
+    // armchair, waiting in Mine after a remix, faces the sofa instead of landing beside it).
+    const { spot } = hint && hint.category === item.category ? pickSpot(st.doc, item, hint) : { spot: undefined }
+    const res = st.placeItem(item.id, spot) // adds a placement of the same item and selects it
     if (!res.ok) return
     if (hint) useGame.getState().setBuyHint(null)
     st.notify(`Placed ${counts.get(item.id) ? 'another' : 'your'} “${item.name}”${inRoom(res.roomName)}.`)
@@ -411,7 +490,15 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   let pickCount = 0
   let firstPick: (() => void) | undefined
   if (hintEntry) {
-    const boxed = boxedFor(hintEntry.category, items, (id) => !!counts.get(id))
+    // In a remix, the pieces the original design used (waiting in Mine) are offered before new ones.
+    const src = (() => {
+      const l = activeLayout(doc)
+      const from = l.remix && doc.layouts.find((x) => x.id === l.remix!.from)
+      return from ? new Set(from.placements.map((p) => p.itemId)) : null
+    })()
+    const boxed =
+      boxedFor(hintEntry.category, items, (id) => !!counts.get(id)) ??
+      (src ? items.find((i) => i.category === hintEntry.category && src.has(i.id) && !counts.get(i.id) && !i.unpack?.length) : undefined)
     if (boxed) pickCards.push({ key: boxed.id, label: pickLabel(boxed, items), name: boxed.name, category: boxed.category, color: boxed.color, mine: true, onClick: () => placeMine(boxed) })
     const chips = vetted.chips
     pickCount = vetted.all

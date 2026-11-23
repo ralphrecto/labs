@@ -547,7 +547,7 @@ describe('round 5 (play-test review)', () => {
 
   it('never reaches Dream home with warnings or without bonus stars while furnishing by the Next chip', () => {
     const d = sampleDoc()
-    const fits = (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
+    const fits = (c: string, near?: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe'), { nextTo: near }).ok
     const levels: string[] = []
     for (let i = 0; i < 30; i++) {
       const a = analyze(d, layoutOf(d))
@@ -659,14 +659,14 @@ describe('round 6 (play-test review)', () => {
     expect(goal(d, (g) => g.id === 'nook')!.done).toBe(true)
   })
 
-  it('reaches Dream home by the Next chip in 12 to 25 placements, with no dead-end loops', () => {
+  it('reaches Dream home by the Next chip in 18 to 28 steps, with no dead-end loops', () => {
     const d = sampleDoc()
-    const fits = (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
+    const fits = (c: string, near?: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe'), { nextTo: near }).ok
     let dream = -1
     let last = ''
     let repeats = 0
     let best = -1
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 40; i++) {
       const s = score(d)
       if (s.level.index === LEVELS.length - 1) {
         dream = i
@@ -692,9 +692,11 @@ describe('round 6 (play-test review)', () => {
       d.items.push(item)
       layoutOf(d).placements.push({ id: `dnp${i}`, itemId: item.id, x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation, on: r.spot.on })
     }
-    // 11 since round 12: a roomier coffee-table range and density cap mean fewer fix-ups on the way.
-    expect(dream, `Dream home after ${dream} placements`).toBeGreaterThanOrEqual(11)
-    expect(dream).toBeLessThanOrEqual(25)
+    // Round 15: 20 (was 11). A fresh player reached Dream home at minute three, so Dream home now asks
+    // for most of the home's bonus goals (DREAM_BONUS_SHARE), Designer home for half of those, there
+    // are a few more small goals (art and curtains per room, a book shelf) and the boxes hold no lamp.
+    expect(dream, `Dream home after ${dream} placements`).toBeGreaterThanOrEqual(18)
+    expect(dream).toBeLessThanOrEqual(28)
   }, 60000)
 })
 
@@ -820,7 +822,7 @@ describe('remix this home (round 8)', () => {
 
   /** Furnishes d by the Next chip until Dream home: the number of placements it took, or -1. */
   function playToDream(d: Doc, tag: string) {
-    const fits = (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
+    const fits = (c: string, near?: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe'), { nextTo: near }).ok
     let last = ''
     let repeats = 0
     let best = -1
@@ -880,7 +882,7 @@ describe('remix twists lead the day (round 10)', () => {
 
   /** Follows the Next chip; a twist goal that is a move is done as the player would (the armchair to the talk spot). */
   function play(d: Doc, tag: string, log: string[]) {
-    const fits = (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
+    const fits = (c: string, near?: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe'), { nextTo: near }).ok
     for (let i = 0; i < 40; i++) {
       const s = score(d)
       if (s.level.index === LEVELS.length - 1) return i
@@ -925,6 +927,20 @@ describe('remix twists lead the day (round 10)', () => {
     expect(first, rx.join('\n')).toBeLessThanOrEqual(2)
     expect(score(d).goals.find((g) => g.id === 'twist:talk-corner')!.done).toBe(true)
     expect(score(d).goals.find((g) => g.id === 'nook')!.done).toBe(true)
+  }, 60000)
+
+  it('an open-floor remix points the Next chip at a piece to drag clear of the middle (round 15)', () => {
+    const d = sampleDoc()
+    expect(play(d, 'of', [])).toBeGreaterThan(0)
+    const l = remixedLayout(d, d.activeLayoutId, 'open-floor', ids)!
+    d.layouts.push(l)
+    d.activeLayoutId = l.id
+    const fits = (c: string, near?: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe'), { nextTo: near }).ok
+    const next = nextGoal(score(d), fits)!
+    // A move, not a purchase: the chip selects the piece and says where it should go.
+    expect(next.id).toBe('twist:open-floor')
+    expect(layoutOf(d).placements.some((p) => p.id === next.near)).toBe(true)
+    expect(next.hint.length).toBeGreaterThan(10)
   }, 60000)
 
   it('Dream home seats two at the dining table', () => {

@@ -220,10 +220,11 @@ export function unpackMessage(r: Pick<UnpackResult, 'placed' | 'waiting'>): stri
     if (!r.waiting.length) return head
     return `${head} ${r.waiting.length === 1 ? '1 is' : `${r.waiting.length} are`} waiting in Mine.`
   }
-  if (!r.placed.length) return r.waiting.length ? `Unpacked ${listOf(r.waiting.map(withArticle))}! ${r.waiting.length > 1 ? 'They are' : 'It is'} waiting in Mine.` : 'Unpacked the box!'
+  // Round 15: the piece comes first ("Table lamp → waiting in Mine"), so a narrow toast never cuts it off.
+  if (!r.placed.length) return r.waiting.length ? `${cap(listOf(r.waiting))} → waiting in Mine. Unpacked!` : 'Unpacked the box!'
   const head = `Unpacked ${listOf(r.placed.map(withArticle))}!`
   if (!r.waiting.length) return head
-  return `${head} ${cap(withArticle(r.waiting[0]))} is waiting in Mine.`
+  return `${cap(r.waiting[0])} → waiting in Mine. ${head}`
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -510,7 +511,7 @@ export const useStore = create<State>((set, get) => ({
     if (!copy) return
     switchDesign((d) => ({ ...d, layouts: [...d.layouts, copy], activeLayoutId: copy.id }))
     const n = copy.placements.length
-    get().notify(`${TWISTS[twist].name}! Kept your ${n === 1 ? 'big piece' : `${n} big pieces`}. The rest is waiting in Mine.`)
+    get().notify(`${TWISTS[twist].name}! Kept ${n === 1 ? '1 big piece' : `${n} big pieces`}; the rest wait in Mine.`)
   },
   markRemixDream: (layoutId) =>
     set((s) => {

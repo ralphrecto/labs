@@ -55,7 +55,7 @@ describe('moving boxes', () => {
     expect(after.items.slice(items).every((i) => i.owned)).toBe(true)
     expect(ids.length).toBeGreaterThan(0)
     expect(layoutOf(after).placements.some((p) => p.id === box)).toBe(false)
-    expect(useStore.getState().toast).toMatch(/^Unpacked a /)
+    expect(useStore.getState().toast).toMatch(/Unpacked a /)
     expect(useStore.getState().past).toHaveLength(1)
     useStore.getState().undo()
     const back = useStore.getState().doc
@@ -66,8 +66,8 @@ describe('moving boxes', () => {
 
   it('says what is waiting in Mine', () => {
     expect(unpackMessage({ placed: ['plant', 'table lamp'], waiting: [] })).toBe('Unpacked a plant and a table lamp!')
-    expect(unpackMessage({ placed: ['plant'], waiting: ['table lamp'] })).toBe('Unpacked a plant! A table lamp is waiting in Mine.')
-    expect(unpackMessage({ placed: [], waiting: ['rug'] })).toBe('Unpacked a rug! It is waiting in Mine.')
+    expect(unpackMessage({ placed: ['plant'], waiting: ['table lamp'] })).toBe('Table lamp → waiting in Mine. Unpacked a plant!')
+    expect(unpackMessage({ placed: [], waiting: ['rug'] })).toBe('Rug → waiting in Mine. Unpacked!')
     // Past two things it counts, so it fits two lines.
     expect(unpackMessage({ placed: ['plant'], waiting: ['rug', 'floor lamp', 'armchair'] })).toBe('Unpacked 4 things! 3 are waiting in Mine.')
     expect(unpackMessage({ placed: ['plant', 'floor lamp', 'rug'], waiting: [] })).toBe('Unpacked 3 things!')

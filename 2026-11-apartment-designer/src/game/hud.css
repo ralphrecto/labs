@@ -233,7 +233,7 @@
      camera buttons on the right. */
   /* The toast takes the Next chip's place under the stars (the chip hides while it shows, below),
      keeping clear of the camera buttons on the right. */
-  .game:has(.goal-next) .hud-toast .toast { top: calc(62px + env(safe-area-inset-top)); max-width: calc(100vw - 136px); }
+  .game:has(.goal-next) .hud-toast .toast { top: calc(62px + env(safe-area-inset-top)); max-width: calc(100vw - 32px); }
   .game:has(.goal-banner) .hud-toast .toast { top: calc(124px + env(safe-area-inset-top)); }
   /* First-run labels beside the camera buttons would run under the Next chip, so the chip waits
      until they have gone (about 9 s, or the first tap on a camera button). */

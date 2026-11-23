@@ -525,6 +525,7 @@ export function RemixPicker() {
       <p className="dz-picker-h">
         Remix <b>{activeLayout(doc).name}</b>: keep the big pieces, rebuild around them, with a twist.
       </p>
+      <p className="dz-picker-note">Your pieces wait in Mine — the twist is the goal. This design keeps its stars.</p>
       {twists.map((t) => (
         <button
           key={t}

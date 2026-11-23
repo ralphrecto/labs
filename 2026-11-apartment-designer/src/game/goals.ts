@@ -202,6 +202,17 @@ export const LEVEL_FRACTIONS = [0, 0, 0.35, 0.75, 0.92, 1]
 export const DREAM_BONUS_STARS = 3
 /** Bonus or style goals Dream home also needs done, on top of every core goal. */
 export const DREAM_EXTRA_GOALS = 2
+/**
+ * Share of the home's bonus goals Dream home also asks for (round 15: the sample reached Dream home
+ * in about a dozen taps, so the game ended at minute three). It always leaves a couple of bonus goals
+ * spare, so one piece that won't fit is never a dead end.
+ */
+export const DREAM_BONUS_SHARE = 0.85
+export const DREAM_BONUS_SPARE = 2
+/** How many bonus goals (of `count` on offer) Dream home asks for. */
+export function dreamBonusGoals(count: number): number {
+  return Math.max(0, Math.min(count - DREAM_BONUS_SPARE, Math.ceil(count * DREAM_BONUS_SHARE)))
+}
 /** The highest level a layout with warnings (a blocked clearance, say) can reach: Designer home. */
 export const WARNING_LEVEL_CAP = 4
 /** The highest level a layout with snags (errors, a tight walkway, a blocked door) can reach: Cozy. */
@@ -291,7 +302,7 @@ export function packedBoxIds(doc: Doc, layout: Layout): Set<string> {
  * (a bookshelf when the bedroom has no room for a dresser), or gives way to the next goal, so the
  * chip never leads to a refusal.
  */
-export function nextGoal(score: HomeScore, fits?: (category: string) => boolean): Goal | undefined {
+export function nextGoal(score: HomeScore, fits?: (category: string, near?: string) => boolean): Goal | undefined {
   const open = score.goals.filter((g) => !g.done && !g.locked)
   const urgent = open.find((g) => g.urgent && g.near)
   if (urgent) return urgent
@@ -334,10 +345,10 @@ export function nextGoal(score: HomeScore, fits?: (category: string) => boolean)
  * first). A goal a piece of furniture finishes is the easiest next step, so the first of those
  * wins; then the first core goal.
  */
-function pickFrom(pool: Goal[], fits?: (category: string) => boolean): Goal | undefined {
+function pickFrom(pool: Goal[], fits?: (category: string, near?: string) => boolean): Goal | undefined {
   for (const g of pool) {
     if (!g.tab || !g.item) continue
-    if (!fits || fits(g.item)) return g
+    if (!fits || fits(g.item, g.near)) return g
     // A side table elsewhere in the room wouldn't light that side of the bed: no stand-in.
     if (g.id.startsWith('bedside-light:') && g.item === 'nightstand') continue
     const alt = [g.item, ...(STAND_IN_GOALS[g.id] ?? []), ...(STAND_INS[g.item] ?? [])].find((c) => c !== g.item && fits(c))
@@ -1147,24 +1158,30 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
   // Art or a mirror on a wall of the living room or a bedroom, once there's a sofa or bed to hang it over.
   const decorRooms = rooms.filter((r) => !UTILITY_ROOM.test(r.name) && (LIVING.test(r.name) || BEDROOM.test(r.name)))
   const anchored = decorRooms.filter((r) => of('sofa', 'bed').some((x) => x.room?.id === r.id))
-  if (anchored.length) {
-    const hung = ofAny('wall-art', 'mirror')
-    const ok = of('wall-art', 'mirror').some((x) => decorRooms.some((r) => r.id === x.room?.id))
+  // Round 15: one per room with a sofa or bed (the living room and the bedroom each want their own),
+  // so a home has a few more small, cozy wins on the way to Dream home.
+  anchored.forEach((r, i) => {
+    const hung = i === 0 ? ofAny('wall-art', 'mirror') : []
+    const ok = i === 0
+      ? of('wall-art', 'mirror').some((x) => decorRooms.some((d) => d.id === x.room?.id) && (anchored.length === 1 || x.room?.id === r.id))
+      : of('wall-art', 'mirror').some((x) => x.room?.id === r.id)
+    const where = r.name.toLowerCase()
     add({
-      id: 'wall-art',
-      title: 'Something on the walls',
-      hint: ok ? 'Your walls have some personality.' : hung.length ? 'Hang your art in the living room or a bedroom.' : 'Hang some art or a mirror. Over the sofa or bed is a classic.',
+      id: i === 0 ? 'wall-art' : `wall-art:${r.id}`,
+      title: i === 0 ? 'Something on the walls' : `Art in the ${where}`,
+      hint: ok ? 'Your walls have some personality.' : hung.length ? 'Hang your art in the living room or a bedroom.' : i === 0 ? 'Hang some art or a mirror. Over the sofa or bed is a classic.' : `Hang some art or a mirror in the ${where} too.`,
       tab: ok || hung.length ? undefined : 'wall',
       item: ok || hung.length ? undefined : 'wall-art',
-      placeIn: ok || hung.length ? undefined : anchored[0].id,
+      placeIn: ok || hung.length ? undefined : r.id,
       near: ok ? undefined : hung[0]?.id,
       done: ok,
       stars: 1,
       category: 'style',
       bonus: true,
     })
-  }
-  // Curtains on a bedroom window soften the light: a cozy little extra.
+  })
+  // Curtains on a bedroom window soften the light: a cozy little extra. Round 15: the living room's
+  // window (with a sofa there) asks for its own pair too.
   const curtainRooms = bedrooms.filter((r) => r.openings.some((o) => o.kind === 'window') && of('bed').some((x) => x.room?.id === r.id))
   if (curtainRooms.length) {
     const hung = ofAny('curtains')
@@ -1180,6 +1197,39 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
       done: ok,
       stars: 1,
       category: 'comfort',
+      bonus: true,
+    })
+  }
+  for (const r of rooms.filter((r) => LIVING.test(r.name) && r.openings.some((o) => o.kind === 'window') && of('sofa').some((x) => x.room?.id === r.id)).slice(0, 1)) {
+    const ok = of('curtains').some((x) => x.room?.id === r.id)
+    add({
+      id: `curtains:${r.id}`,
+      title: `Curtains in the ${r.name.toLowerCase()}`,
+      hint: ok ? 'The evening light goes golden.' : `Hang curtains on the ${r.name.toLowerCase()} window: evenings feel snug.`,
+      tab: ok ? undefined : 'wall',
+      item: ok ? undefined : 'curtains',
+      placeIn: ok ? undefined : r.id,
+      done: ok,
+      stars: 1,
+      category: 'comfort',
+      bonus: true,
+    })
+  }
+
+  // A shelf of books where you sit (round 15): one more small, personal touch on the way to Dream home.
+  const shelfRoom = decorRooms.find((r) => of('sofa', 'armchair').some((x) => x.room?.id === r.id))
+  if (shelfRoom) {
+    const ok = of('wall-shelf', 'bookshelf').some((x) => decorRooms.some((r) => r.id === x.room?.id))
+    add({
+      id: 'books',
+      title: 'A shelf for your books',
+      hint: ok ? 'Your favourite books, close at hand.' : `Put up a shelf in the ${shelfRoom.name.toLowerCase()} for books and little things.`,
+      tab: ok ? undefined : 'wall',
+      item: ok ? undefined : 'wall-shelf',
+      placeIn: ok ? undefined : shelfRoom.id,
+      done: ok,
+      stars: 1,
+      category: 'style',
       bonus: true,
     })
   }
@@ -1275,11 +1325,17 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
   // well, plus DREAM_EXTRA_GOALS bonus or style goals.
   const coreOpen = (...cats: GoalCategory[]) => goals.some((g) => !g.bonus && !g.done && cats.includes(g.category))
   const extras = goals.filter((g) => g.done && !g.visit && (g.bonus || g.category === 'style')).length
+  // Only bonus goals a pick can finish (or already done) count toward what Dream home asks for: a
+  // goal done by moving a piece, or by colour, is a nice extra but never a gate.
+  const bonusGoals = goals.filter((g) => g.bonus && !g.visit && (g.done || (!!g.item && !!g.tab)))
+  const bonusDone = bonusGoals.filter((g) => g.done).length
+  const bonusNeed = dreamBonusGoals(bonusGoals.length)
   // Snags hold the level at Cozy (so does an open flow goal, or more than one open basics or comfort goal); warnings on screen, an open snag goal
   // (a blocked view of the TV), an open basics, comfort or style goal or too few extras hold it at Designer home.
-  const cap = capped || coreOpen('flow') || goals.filter((g) => !g.bonus && !g.done && (g.category === 'basics' || g.category === 'comfort')).length > 1
+  // Round 15: Designer home also asks for half of Dream home's bonus goals, so the climb has steps.
+  const cap = capped || coreOpen('flow') || goals.filter((g) => !g.bonus && !g.done && (g.category === 'basics' || g.category === 'comfort')).length > 1 || bonusDone < Math.ceil(bonusNeed / 2)
     ? SNAG_LEVEL_CAP
-    : warnings > 0 || goals.some((g) => g.snag) || bonusStars < Math.min(DREAM_BONUS_STARS, bonusMax) || coreOpen('basics', 'comfort', 'style') || extras < DREAM_EXTRA_GOALS
+    : warnings > 0 || goals.some((g) => g.snag) || bonusStars < Math.min(DREAM_BONUS_STARS, bonusMax) || coreOpen('basics', 'comfort', 'style') || extras < DREAM_EXTRA_GOALS || bonusDone < bonusNeed
       ? WARNING_LEVEL_CAP
       : LEVELS.length - 1
   const level = uncapped.index > cap ? levelAt(stars, thresholds, cap) : uncapped

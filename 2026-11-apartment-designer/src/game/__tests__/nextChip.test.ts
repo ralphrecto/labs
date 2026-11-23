@@ -35,7 +35,7 @@ const body = (d: Doc, p: Placement) => {
 
 /** Follows the Next chip, placing each suggested piece as the drawer would (beside `near`). */
 function followNext(d: Doc, max = 40) {
-  const fits = (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
+  const fits = (c: string, near?: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe'), { nextTo: near }).ok
   const log: string[] = []
   let last = ''
   let repeats = 0
@@ -66,7 +66,9 @@ describe('Next chip dead ends (round 7)', () => {
     layoutOf(d).placements = []
     d.items = []
     const r = followNext(d)
-    expect(r.dream, r.log.join('\n')).toBeGreaterThan(0)
+    // Round 15 pacing: about 24 steps from an empty layout (was 15), with no dead ends.
+    expect(r.dream, r.log.join('\n')).toBeGreaterThanOrEqual(20)
+    expect(r.dream, r.log.join('\n')).toBeLessThanOrEqual(32)
   }, 60000)
 
   it('unpacks both moving boxes of the sample home before Dream home', () => {

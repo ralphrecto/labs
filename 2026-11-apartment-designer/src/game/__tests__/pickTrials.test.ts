@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { catalogEntry } from '../../model/catalog'
-import { sampleDoc } from '../../model/sample'
-import { goodPicks, pickChip, pickLabel, presetItem, trialPick, type PickTrial } from '../BuyDrawer'
+import { catalogEntry, itemFromCatalog } from '../../model/catalog'
+import { emptyDoc, rectRoom, sampleDoc } from '../../model/sample'
+import type { Doc } from '../../model/types'
+import { analyze } from '../../analysis'
+import { remixedLayout, scoreHome } from '../goals'
+import { goodPicks, pickChip, pickLabel, pickSpot, presetItem, trialPick, type PickTrial } from '../BuyDrawer'
 import { picksFor } from '../swatches'
 
 const t = (o: Partial<PickTrial>): PickTrial => ({ ok: true, stars: 10, warnings: 0, broken: 0, ...o })
@@ -40,5 +43,33 @@ describe('pick cards only offer variants that keep the home whole', () => {
     const opened = { ...box, unpacked: true }
     const fromBox = { ...lamp, category: box.unpack![0] }
     expect(pickLabel(fromBox, [...d.items, opened])).toBe('From your boxes')
+  })
+})
+
+describe('Next chip placement (round 15)', () => {
+  const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
+  const score = (d: Doc) => scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)))
+  it('puts the talk-corner armchair facing the sofa, so the twist is done in one tap', () => {
+    const d = sampleDoc()
+    const l = remixedLayout(d, d.activeLayoutId, 'talk-corner', () => 'rx-tc')!
+    d.layouts.push(l)
+    d.activeLayoutId = l.id
+    const g = score(d).goals.find((x) => x.id === 'twist:talk-corner')!
+    expect(g.done).toBe(false)
+    expect(g.item).toBe('armchair')
+    const item = itemFromCatalog(catalogEntry('armchair'), 'tc-chair')
+    const { spot } = pickSpot(d, item, { category: 'armchair', near: g.near, goalId: g.id })
+    expect(spot).toBeDefined()
+    d.items.push(item)
+    layoutOf(d).placements.push({ id: 'tc-p', itemId: item.id, x: spot!.x, y: spot!.y, rotation: spot!.rotation })
+    expect(score(d).goals.find((x) => x.id === 'twist:talk-corner')!.done).toBe(true)
+  })
+
+  it('puts a dining table in the dining area when the goal names no room', () => {
+    const d = emptyDoc()
+    d.rooms.push(rectRoom('Living room', 0, 0, 5, 4), rectRoom('Dining area', 5, 0, 3.5, 4))
+    const item = itemFromCatalog(catalogEntry('dining-table'), 'dt')
+    const { spot } = pickSpot(d, item, { category: 'dining-table' })
+    expect(spot?.x).toBeGreaterThan(5)
   })
 })
