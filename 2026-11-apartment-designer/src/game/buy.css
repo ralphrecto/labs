@@ -246,10 +246,14 @@
 /* ---------------------------------------------------------------- phones: the compact drawer */
 /* (Overrides hud.css's compact rules: labels stay, the badge sits inside the circle, names fit.) */
 @media (max-width: 700px) and (orientation: portrait) {
-  .game .buy-tabs { gap: 2px; }
-  .game .buy-tab { min-width: 58px; padding: 2px 1px; }
-  .game .hud-drawer-slot:not(.expanded) .buy-tab { min-width: 58px; gap: 3px; }
-  .game .hud-drawer-slot:not(.expanded) .buy-tab-label { display: block; font: 800 0.6875rem/1.1 var(--g-font); white-space: nowrap; }
+  /* All seven tabs (Mine included) share the row on a 360px phone: each takes an equal share instead
+     of a fixed 58px (7 x 58 overflowed 390 and cut "Mine" to "Mi"). Larger text still scrolls sideways
+     ((1rem - 16px) is 0 at the default). */
+  .game .buy-tabs { gap: 0; padding-left: 6px; padding-right: 6px; justify-content: space-between; }
+  .game .buy-tab { flex: 1 1 0; min-width: calc(44px + (1rem - 16px) * 4); padding: 2px 0; }
+  .game .hud-drawer-slot:not(.expanded) .buy-tab { min-width: calc(44px + (1rem - 16px) * 4); gap: 3px; }
+  .game .buy-tab-label { font: 800 0.6875rem/1.1 var(--g-font); letter-spacing: -0.02em; white-space: nowrap; }
+  .game .hud-drawer-slot:not(.expanded) .buy-tab-label { display: block; }
   .game .buy-tab.on .buy-tab-label { color: var(--g-coral-dk); }
   /* The badge tucks inside the circle's corner instead of hanging off it. */
   .game .buy-tab .buy-badge { top: 2px; right: 2px; min-width: 16px; height: auto; min-height: 16px; padding: 0 4px; border-radius: 8px; font: 900 0.625rem/1rem var(--g-font); }

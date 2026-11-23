@@ -32,6 +32,7 @@ import { StylePicker, useStylePicker, useStylesUnlocked } from './StylePicker'
 import { useModal } from './useModal'
 import { announce, LiveRegion } from './announce'
 import { reduceMotion } from '../motion'
+import { usePageZoomGuard } from '../gestureGuard'
 import './theme.css'
 import './hud.css'
 import './goals.css'
@@ -85,6 +86,8 @@ function GameApp() {
   const view = useStageView()
   const cam = useCam()
   const gameRef = useRef<HTMLDivElement>(null)
+  // No pinch zooms the page anywhere in the game, iOS Safari's gesture events included (theme.css).
+  usePageZoomGuard(gameRef)
   // The 3D view frames the home around the HUD only when the screen really changes (mode, view,
   // recenter, scan review, window size), never as the drawer and selection bar come and go.
   // On a phone, the compact drawer leaves a small stage: frame the selected piece's room instead

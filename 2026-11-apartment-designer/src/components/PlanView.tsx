@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import { useAnalysis } from '../analysis'
+import { usePageZoomGuard } from '../gestureGuard'
 import { catalogEntry } from '../model/catalog'
 import {
   add,
@@ -154,6 +155,44 @@ export function pickMeasureSnap(o: { tap: Vec2; corner: Vec2 | null; wall: { x?:
   return corner
 }
 
+/** Badge radius (screen px) of a wall decor piece in the plan; bigger on a touch screen. */
+export const decorBadgeR = (coarse = COARSE) => (coarse ? 8 : 5.5)
+
+/**
+ * Where a wall decor badge is drawn (world): just outside the wall stroke, behind the piece's back
+ * (`wallT` is the thickest wall, `r` the badge radius in world units).
+ */
+export function decorBadgeCenter(p: { x: number; y: number; rotation: number }, depth: number, wallT: number, px: number, r: number): Vec2 {
+  const by = -depth / 2 - wallT - 3 * px - r
+  return v(p.x - by * Math.sin(p.rotation), p.y + by * Math.cos(p.rotation))
+}
+
+/**
+ * Where a wall's length label goes: just outside the wall; else further out, past the decor badges that
+ * sit outside the wall; else just inside. `halfN` is the label's half extent across the wall, `boxAt`
+ * the label's box at a spot, `ok` the other checks (furniture, labels drawn already). A spot whose
+ * box touches a badge (`badges`, world boxes) is never taken, so badges and lengths never overlap.
+ */
+export function wallLabelSpot(o: {
+  mid: Vec2
+  n: Vec2
+  wallT: number
+  decorWallT: number
+  px: number
+  badgeR: number
+  halfN: number
+  badges: Box[]
+  boxAt: (q: Vec2) => Box
+  ok?: (q: Vec2) => boolean
+}): Vec2 | null {
+  const { mid, n, wallT, decorWallT, px, badgeR, halfN, badges, boxAt, ok } = o
+  const near = add(mid, scale(n, -(wallT + 10 * px)))
+  const beyond = add(mid, scale(n, -(decorWallT + 3 * px + 2 * badgeR + 3 * px + halfN)))
+  const inside = add(mid, scale(n, 14 * px))
+  const free = (b: Box) => !badges.some((o) => o.maxX > b.minX && o.minX < b.maxX && o.maxY > b.minY && o.minY < b.maxY)
+  return [near, beyond, inside].find((q) => free(boxAt(q)) && (!ok || ok(q))) ?? null
+}
+
 export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset, onMeasureSkew }: PlanViewProps) {
   const doc = useStore((s) => s.doc)
   const mode = useStore((s) => (readOnly ? 'select' : s.mode))
@@ -167,6 +206,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<SVGSVGElement>(null)
+  // A pinch on the plan zooms the plan, never the page (iOS Safari's gesture events).
+  usePageZoomGuard(wrapRef)
   const svgRef = externalRef ?? innerRef
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [view, setView] = useState<ViewState | null>(null)
@@ -627,6 +668,15 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
     .filter(({ item }) => !isWallDecor(item.category) && !item.floorLevel && item.category !== 'pendant')
     .sort((a, b) => Number(!!b.p.on) - Number(!!a.p.on))
   const pieceBoxes = placementsWithItems.map(({ p, item }) => bounds(footprint(item, p)))
+  // Wall decor badges (world boxes, a pixel of air around each): wall lengths step out past them.
+  const badgeR = decorBadgeR() * px
+  const badgeBoxes: Box[] = placementsWithItems
+    .filter(({ item }) => isWallDecor(item.category))
+    .map(({ p, item }) => {
+      const c = decorBadgeCenter(p, item.depth, decorWallT, px, badgeR)
+      const e = badgeR + 1.5 * px
+      return { minX: c.x - e, maxX: c.x + e, minY: c.y - e, maxY: c.y + e }
+    })
   const dimsDone: { l: number; mid: Vec2 }[] = []
   // Dimension labels already drawn (world boxes): a wall's length never lands on top of another's.
   const labelBoxes: Box[] = []
@@ -818,7 +868,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
               const hx = Math.abs(u.x) * along + Math.abs(u.y) * across
               const hy = Math.abs(u.y) * along + Math.abs(u.x) * across
               const boxAt = (q: Vec2): Box => ({ minX: q.x - hx, maxX: q.x + hx, minY: q.y - hy, maxY: q.y + hy })
-              const m = [add(mid, scale(n, -(room.wallThickness + 10 * px))), add(mid, scale(n, 14 * px))].find((q) => clear(q) && !boxesHit(boxAt(q)))
+              const halfN = Math.abs(n.x) * hx + Math.abs(n.y) * hy
+              const m = wallLabelSpot({ mid, n, wallT: room.wallThickness, decorWallT, px, badgeR, halfN, badges: badgeBoxes, boxAt, ok: (q) => clear(q) && !boxesHit(boxAt(q)) })
               if (!m) return null
               labelBoxes.push(boxAt(m))
               let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI
@@ -881,7 +932,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
                 store().select({ kind: 'placement', id: target.id })
                 begin({ type: 'item', id: target.id, grab: sub(w, v(target.x, target.y)), moved: false }, e)
               }
-              const r = (COARSE ? 8 : 5.5) * px
+              const r = badgeR
               const hit = r + (COARSE ? 8 : 3) * px
               const by = -hd - decorWallT - 3 * px - r
               const reach = (COARSE ? DECOR_TOUCH_PX : 4) * px
