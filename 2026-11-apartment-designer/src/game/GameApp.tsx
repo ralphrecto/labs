@@ -88,6 +88,7 @@ function GameApp() {
   const gameRef = useRef<HTMLDivElement>(null)
   // No pinch zooms the page anywhere in the game, iOS Safari's gesture events included (theme.css).
   usePageZoomGuard(gameRef)
+  useBackFromDreamPhoto(gameRef)
   // The 3D view frames the home around the HUD only when the screen really changes (mode, view,
   // recenter, scan review, window size), never as the drawer and selection bar come and go.
   // On a phone, the compact drawer leaves a small stage: frame the selected piece's room instead
@@ -563,9 +564,11 @@ function TopBar() {
   const canRedo = useStore((s) => s.future.length > 0)
   const s = useStore.getState()
   const open = useGame((g) => g.openSheet)
+  // Remix just unlocked (round 16): Your designs, where it lives, glows "new" until it's used.
+  const freshRemix = useGame((g) => g.freshUnlocks.includes('remix'))
   return (
     <header className="hud-top">
-      <button className="hud-home" onClick={() => open('layouts')} aria-label="Your designs">
+      <button className={`hud-home${freshRemix ? ' g-new' : ''}`} onClick={() => open('layouts')} aria-label={freshRemix ? 'Your designs (new: Remix)' : 'Your designs'}>
         <span className="dz-hud-icon-col">
           <span className="hud-home-icon">
             <I.IconDesigns />
@@ -1352,4 +1355,34 @@ function ShortcutHelp() {
       )}
     </>
   )
+}
+
+/**
+ * Round 16: the Dream home's "Take its photo" ends in Look mode, which has no top bar and no chip,
+ * so the game looked over. Once that photo's card is closed (Done, or a tap outside), the game goes
+ * back to Furnish, where the Remix chip waits. Watches the card from outside PhotoShutter.
+ */
+function useBackFromDreamPhoto(ref: RefObject<HTMLDivElement | null>) {
+  const photoRequest = useGame((s) => s.photoRequest)
+  const armed = useRef(false)
+  useEffect(() => {
+    if (photoRequest) armed.current = true
+  }, [photoRequest])
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof MutationObserver === 'undefined') return
+    let seen = false
+    const obs = new MutationObserver(() => {
+      if (!armed.current) return
+      const open = !!el.querySelector('.photo-sheet')
+      if (open) seen = true
+      else if (seen) {
+        seen = false
+        armed.current = false
+        if (useGame.getState().mode === 'look') useGame.getState().setMode('buy')
+      }
+    })
+    obs.observe(el, { childList: true, subtree: true })
+    return () => obs.disconnect()
+  }, [ref])
 }

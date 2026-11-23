@@ -55,7 +55,16 @@ interface GameState {
   /** The goal to scroll to when the goals sheet opens. */
   goalFocus: string | null
   /** A level just reached, for the celebration card. */
-  levelUp: { key: number; index: number; name: string } | null
+  levelUp: { key: number; index: number; name: string; /** What the level opens up is news: said on the card. */ unlock?: boolean } | null
+  /** A walkway's narrowest point (round 16): a pulsing marker on the floor while it's being fixed. */
+  pinch: { x: number; y: number } | null
+  setPinch: (p: { x: number; y: number } | null) => void
+  /** Levels whose unlock has been announced once (round 16): across homes, never said again. */
+  unlocksSeen: string[]
+  /** Buttons newly unlocked ('style', 'remix') that glow "new" until first used. */
+  freshUnlocks: string[]
+  /** A newly unlocked button was used: its glow goes. */
+  spendUnlock: (id: string) => void
   /** Evening light in the 3D view (lamps glow, the sun goes down): a reward from the Cozy level up. */
   evening: boolean
   /** When set, Look mode's shutter takes a photo as soon as it's showing (the Dream home card's "Take its photo"). */
@@ -112,6 +121,25 @@ const TASTE_KEY = 'apartment-designer:taste'
 export const VISIT_KEY = 'apartment-designer:visit'
 
 const DRAG_STAR_KEY = 'homebody:drag-star'
+const UNLOCKS_SEEN_KEY = 'homebody:unlocks-seen'
+const FRESH_UNLOCKS_KEY = 'homebody:fresh-unlocks'
+/** The buttons each level unlocks, which glow "new" the first time. */
+export const UNLOCK_BUTTONS: Record<string, string[]> = { 'Moving in': ['style'], 'Designer home': ['remix'] }
+function readList(key: string): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) ?? '[]')
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+function writeList(key: string, v: string[]) {
+  try {
+    localStorage.setItem(key, JSON.stringify(v))
+  } catch {
+    // Private mode: remembered for this visit.
+  }
+}
 function readDragStar(): string | null {
   try {
     return localStorage.getItem(DRAG_STAR_KEY) || null
@@ -254,6 +282,16 @@ export const useGame = create<GameState>((set, get) => ({
   },
   goalFocus: null,
   levelUp: null,
+  pinch: null,
+  setPinch: (pinch) => set({ pinch }),
+  unlocksSeen: readList(UNLOCKS_SEEN_KEY),
+  freshUnlocks: readList(FRESH_UNLOCKS_KEY),
+  spendUnlock: (id) => {
+    if (!get().freshUnlocks.includes(id)) return
+    const freshUnlocks = get().freshUnlocks.filter((x) => x !== id)
+    writeList(FRESH_UNLOCKS_KEY, freshUnlocks)
+    set({ freshUnlocks })
+  },
   evening: false,
   photoRequest: 0,
   unpacked: null,
@@ -309,7 +347,18 @@ export const useGame = create<GameState>((set, get) => ({
         : { sheet: 'goals', goalFocus: goal.id, hintGoal: goal.id },
     ),
   setBuyHint: (buyHint) => set({ buyHint }),
-  celebrateLevel: (index, name) => set({ levelUp: { key: Date.now(), index, name } }),
+  celebrateLevel: (index, name) => {
+    // The unlock is news once (round 16): not on a remix's climb, nor in a second home. Players from
+    // before the flag: another design already at this level (this one's best is noted already).
+    const s = get()
+    const seen = s.unlocksSeen.includes(name) || Object.values(s.bestLevel).filter((v) => v >= index).length >= 2
+    if (seen) return set({ levelUp: { key: Date.now(), index, name } })
+    const unlocksSeen = [...s.unlocksSeen, name]
+    const freshUnlocks = [...new Set([...s.freshUnlocks, ...(UNLOCK_BUTTONS[name] ?? [])])]
+    writeList(UNLOCKS_SEEN_KEY, unlocksSeen)
+    writeList(FRESH_UNLOCKS_KEY, freshUnlocks)
+    set({ levelUp: { key: Date.now(), index, name, unlock: true }, unlocksSeen, freshUnlocks })
+  },
   clearLevelUp: () => set({ levelUp: null }),
   consumeWelcomeBack: () => set({ welcomeBack: false }),
   setEvening: (evening) => set({ evening }),

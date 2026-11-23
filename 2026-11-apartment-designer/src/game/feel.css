@@ -100,3 +100,28 @@
 @media (prefers-reduced-motion: reduce) {
   .unpack-burst { display: none; }
 }
+
+/* Round 16: a button a level just unlocked glows "new" until it's first used. */
+.g-new { position: relative; animation: g-new-glow 1.8s ease-in-out infinite; }
+.g-new:not(.sty-btn)::after {
+  content: 'New'; position: absolute; top: -8px; right: -6px; padding: 1px 7px; border-radius: 999px;
+  background: var(--g-coral-fill); color: #fff; font: 700 11px/16px var(--g-font); letter-spacing: 0.02em; pointer-events: none;
+}
+@keyframes g-new-glow {
+  0%, 100% { box-shadow: var(--g-shadow-sm), 0 0 0 0 color-mix(in srgb, var(--g-coral) 55%, transparent); }
+  50% { box-shadow: var(--g-shadow-sm), 0 0 0 7px color-mix(in srgb, var(--g-coral) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-new { animation: none; box-shadow: var(--g-shadow-sm), 0 0 0 3px var(--g-coral); }
+}
+
+/* Round 16: a remix's goals-done count on the pill pops each time a goal is finished. */
+.goal-meter-tick { display: inline-block; color: #2f6b2a; animation: g-tick-pop 0.5s var(--g-ease, ease-out); }
+@keyframes g-tick-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.6); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .goal-meter-tick { animation: none; }
+}

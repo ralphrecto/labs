@@ -14,7 +14,7 @@ import { albumFor, TWIST_EMOJI, useAlbum } from './album'
 import { IconCheck, IconClose, IconSparkle, IconStar } from './icons'
 import { useModal } from './useModal'
 import { openRemixPicker } from './Designs'
-import { DRAG_PERK, localDay, twistMove, TWISTS, VISIT_BY_ID, VISIT_LEVEL, VISIT_STARS, VISITS, visitLeads, type Visit } from './goals'
+import { DRAG_PERK, goalMove, localDay, twistMove, TWISTS, VISIT_BY_ID, VISIT_LEVEL, VISIT_STARS, VISITS, visitLeads, type Visit } from './goals'
 import { reduceMotion } from '../motion'
 import { listHomes } from '../storage'
 import type { Issue } from '../model/checks'
@@ -92,17 +92,17 @@ function useFits(doc: Doc, refused: Set<string>) {
 }
 
 /** The Next goal, never one whose piece has nowhere to go. */
-export function useNextGoal(score: HomeScore, refused: Set<string> = NO_REFUSALS): Goal | undefined {
+export function useNextGoal(score: HomeScore, refused: Set<string> = NO_REFUSALS, skipped: Set<string> = NO_REFUSALS): Goal | undefined {
   const doc = useStore((s) => s.doc)
   const fits = useFits(doc, refused)
-  return useMemo(() => nextGoal(score, fits), [score, fits])
+  return useMemo(() => nextGoal(score, fits, skipped), [score, fits, skipped])
 }
 const NO_REFUSALS = new Set<string>()
 
 /** The latest layout issues, so Next can point at the piece a "move it" goal is about. */
 let lastIssues: Issue[] = []
 /** Goals fixed by moving a piece, and the issue kind that names that piece. */
-const MOVE_GOAL: Record<string, Issue['kind']> = { 'no-overlap': 'overlap', 'in-walls': 'wall', 'doors-clear': 'door' }
+const MOVE_GOAL: Record<string, Issue['kind']> = { 'no-overlap': 'overlap', 'in-walls': 'wall', 'doors-clear': 'door', walkways: 'path' }
 
 /** Phones get a compact level-up banner under the pill instead of the centred card. */
 const PHONE = '(max-width: 700px)'
@@ -124,8 +124,11 @@ let levelGoalLine = ''
 const UNLOCK_LINE: Record<string, string | undefined> = {
   'Moving in': 'Styles unlocked. Try one with the style button.',
   Cozy: 'Evening light, visitors and bonus goals unlocked.',
-  'Designer home': 'Remix unlocked. Find it in Your designs.',
+  'Designer home': 'Remix unlocked: tap the glowing designs button, top left.',
 }
+
+/** The level-up's unlock line, only the first time that level is reached anywhere (round 16). */
+const unlockLine = (lv: { name: string; unlock?: boolean }) => (lv.unlock ? UNLOCK_LINE[lv.name] : undefined)
 
 /** Goals finished in two steps (a desk, then a chair): the first step gets a "½" and a nudge. */
 const TWO_STEP = new Set(['work', 'eat', 'nook'])
@@ -143,6 +146,8 @@ const SPARKS = 10
 /** A level drop shows only once it has lasted this long (an Undo or a quick fix never demotes). */
 const LEVEL_DROP_MS = 2000
 const LOSS_MS = 6000
+/** A tapped chip steps aside this long at most (round 16), then offers itself again. */
+const CHIP_BACK_MS = 8000
 const PLACED_TOAST = /^Placed /
 /** The level-up card waits until placing has paused this long, so it never lands mid-burst. */
 const LEVEL_UP_QUIET_MS = 1200
@@ -219,12 +224,17 @@ export function VibeMeter() {
   const sheet = useGame((s) => s.sheet)
   const phone = usePhone()
   const prev = useRef<{ key: string; stars: number; level: number; done: Set<string>; progress: Map<string, number>; visit?: string } | null>(null)
-  const [pop, setPop] = useState<{ key: number; delta: number; half?: boolean; text?: string } | null>(null)
+  const [pop, setPop] = useState<{ key: number; delta: number; half?: boolean; text?: string; tick?: string } | null>(null)
   const [banner, setBanner] = useState<Banner | null>(null)
   const [shown, setShown] = useState<string | null>(null)
   // Pieces the store refused while the chip's hint was up: Next stops suggesting them until the home changes.
   const [refused, setRefused] = useState<Set<string>>(NO_REFUSALS)
-  const next = useNextGoal(score, refused)
+  // Goals a piece placed from the chip didn't finish or bring closer (round 16): Next moves on from
+  // them in this design rather than offering the same piece again and again.
+  const [skipped, setSkipped] = useState<Set<string>>(NO_REFUSALS)
+  /** The pick goal the chip was last tapped for, to judge the next piece placed. */
+  const tried = useRef<{ id: string; progress: number; placed: number; key: string } | null>(null)
+  const next = useNextGoal(score, refused, skipped)
   const nextRef = useRef(next)
   nextRef.current = next
   // When the Next goal moves on to another piece, a hint left from the old one is stale.
@@ -297,14 +307,26 @@ export function VibeMeter() {
     prev.current = { key: designKey, stars: score.stars, level: score.level.index, done, progress, visit: visitGoal?.id }
     // First render, or another design or home: no fanfare.
     if (!before || before.key !== designKey) {
+      if (before) setSkipped(NO_REFUSALS)
+      tried.current = null
       celebrated.current[designKey] = Math.max(celebrated.current[designKey] ?? 0, useGame.getState().bestLevel[designKey] ?? 0, bankableLevel(score))
       clearTimeout(levelTimer.current)
       pendingLevel.current = null
       return
     }
+    // The walkway's pinch marker goes once the way is clear.
+    if (useGame.getState().pinch && !score.goals.some((g) => g.id === 'walkways' && g.snag)) useGame.getState().setPinch(null)
     // Any change to the home brings the chip back (with whatever is next now).
     setShown(null)
     setRefused(NO_REFUSALS)
+    // The first piece placed after a tap on a pick goal: if that goal is no closer, Next moves on.
+    const t = tried.current
+    const count = activeLayout(useStore.getState().doc).placements.length
+    if (t && t.key === designKey && count > t.placed) {
+      tried.current = null
+      const g = score.goals.find((x) => x.id === t.id)
+      if (g && !g.done && (g.progress ?? 0) <= t.progress + 1e-6) setSkipped((s) => new Set([...s, t.id]))
+    }
     // A visitor who arrives already happy (a new day) is no headline: only one the player pleases is.
     const fresh = score.goals.filter((g) => g.done && !before.done.has(g.id) && !(g.visit && before.visit !== g.id))
     // The drawer's hint pill ("Tap Plant → Bathroom") points at a goal's piece: once that goal is
@@ -338,6 +360,8 @@ export function VibeMeter() {
     // A new visitor (a new day) changes the stars on offer, not the player's work: no cheer, no loss.
     if (before.visit !== visitGoal?.id) return
     const net = settleStars(before.stars, score.stars)
+    // The drag lesson's piece sits a little aside on purpose: no loss pill while it's waiting there.
+    if (net.kind === 'loss' && useGame.getState().dragLesson) return
     if (net.kind === 'loss') {
       // A loss: say what broke, offer Undo, and clear any cheer (banner, pop, pending level-up).
       const broke = score.goals.filter((g) => !g.done && before.done.has(g.id)).sort((a, b) => b.stars - a.stars)[0]
@@ -349,9 +373,12 @@ export function VibeMeter() {
       if (useGame.getState().levelUp) useGame.getState().clearLevelUp()
       return
     }
+    // A remix's pill counts goals, not stars (round 16): each goal finished ticks it, visibly.
+    const rx = activeLayout(useStore.getState().doc).remix
+    const ticks = rx && !rx.dreamAt ? fresh.filter((g) => !g.visit).length : 0
     if (net.kind === 'gain') {
       setLoss(null)
-      setPop({ key: Date.now(), delta: net.delta })
+      setPop({ key: Date.now(), delta: net.delta, ...(ticks ? { tick: ticks > 1 ? `✓ ${ticks} goals` : '✓ Goal' } : {}) })
     }
     const toast = useStore.getState().toast
     const placedToast = !!toast && PLACED_TOAST.test(toast)
@@ -373,7 +400,7 @@ export function VibeMeter() {
       const best = [...fresh].sort((a, b) => b.stars - a.stars)[0]
       // One short line per action ("+1★ Every room has something"): the room shows in 3D and the
       // pill's pop has the total.
-      const line = `+${best.stars}★ ${best.title}`
+      const line = ticks ? `✓ ${best.title}` : `+${best.stars}★ ${best.title}`
       levelGoalLine = line
       if (placedToast) useStore.getState().notify(line)
       else setBanner({ key: Date.now(), kind: 'goal', goal: best, more: fresh.length - 1 })
@@ -419,6 +446,18 @@ export function VibeMeter() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [welcomeBack])
 
+  // A tap that went nowhere (round 16): the chip comes back when the goals sheet closes, or after
+  // CHIP_BACK_MS, rather than staying hidden until the home changes.
+  useEffect(() => {
+    if (shown === null) return
+    const t = setTimeout(() => setShown(null), CHIP_BACK_MS)
+    return () => clearTimeout(t)
+  }, [shown])
+  const sheetWas = useRef(sheet)
+  useEffect(() => {
+    if (sheetWas.current && !sheet) setShown(null)
+    sheetWas.current = sheet
+  }, [sheet])
   useEffect(() => {
     if (!loss) return
     const t = setTimeout(() => setLoss(null), LOSS_MS)
@@ -456,7 +495,7 @@ export function VibeMeter() {
     if (!levelUp) return
     const dream = levelUp.index >= LEVELS.length - 1
     announce(
-      `${dream ? 'You did it! Dream home reached.' : `Level up! ${levelUp.name}, level ${levelUp.index + 1} of ${LEVELS.length}.`} ${levelGoalLine}${UNLOCK_LINE[levelUp.name] ? ` ${UNLOCK_LINE[levelUp.name]}` : ''}`,
+      `${dream ? 'You did it! Dream home reached.' : `Level up! ${levelUp.name}, level ${levelUp.index + 1} of ${LEVELS.length}.`} ${levelGoalLine}${unlockLine(levelUp) ? ` ${unlockLine(levelUp)}` : ''}`,
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [levelUp?.key])
@@ -491,13 +530,14 @@ export function VibeMeter() {
   // and the twist, never the original's stars dropping away.
   const remixing = !!remixTwist
   const remixLabel = remixing ? `Remix: ${score.level.index} of ${LEVELS.length - 1}` : ''
+  const remixGoals = remixing ? score.goals.filter((g) => g.done && !g.visit).length : 0
   return (
     <div className="goal-meter-wrap">
       <button
         type="button"
         className={`goal-meter${pop ? ' popping' : ''}`}
         onClick={() => useGame.getState().openSheet('goals')}
-        aria-label={remixing ? `${remixLabel}, ${levelName}. Open goals` : `${score.stars} stars, ${levelName}. Open goals`}
+        aria-label={remixing ? `${remixLabel}, ${levelName}, ${remixGoals} goals done. Open goals` : `${score.stars} stars, ${levelName}. Open goals`}
       >
         <span className={`goal-meter-star${remixing ? ' remix' : ''}`} key={pop?.key}>
           {remixing ? <span aria-hidden>{TWIST_EMOJI[remixTwist!] ?? '↻'}</span> : <IconStar />}
@@ -506,7 +546,14 @@ export function VibeMeter() {
         <span className="goal-meter-body">
           <span className="goal-meter-level">
             {remixing ? remixLabel : levelName}
-            {remixing ? <small className="goal-meter-best">{TWISTS[remixTwist!].name} · {levelName}</small> : bestName && <small className="goal-meter-best">Best: {bestName}</small>}
+            {remixing ? (
+              <small className="goal-meter-best">
+                {TWISTS[remixTwist!].name} · {levelName} ·{' '}
+                <span className="goal-meter-tick" key={remixGoals} aria-label={`${remixGoals} goals done`}>
+                  ✓{remixGoals}
+                </span>
+              </small>
+            ) : bestName && <small className="goal-meter-best">Best: {bestName}</small>}
           </span>
           <span className="goal-meter-bar">
             <i style={{ width: `${Math.round(fill * 100)}%` }} />
@@ -518,7 +565,7 @@ export function VibeMeter() {
           {Array.from({ length: SPARKS }, (_, i) => (
             <i key={i} style={{ '--a': `${(360 / SPARKS) * i + (i % 2) * 12}deg`, '--d': `${i % 2 ? 34 : 48}px` } as CSSProperties} />
           ))}
-          <span className="goal-plus">{pop.text ? `✨ ${pop.text}` : `${pop.half && !pop.delta ? '½' : `+${pop.delta}`} ★`}</span>
+          <span className="goal-plus">{pop.tick ?? (pop.text ? `✨ ${pop.text}` : `${pop.half && !pop.delta ? '½' : `+${pop.delta}`} ★`)}</span>
         </div>
       )}
       {loss && (
@@ -573,6 +620,7 @@ export function VibeMeter() {
           key={chip.id}
           onClick={() => {
             setShown(chip.id)
+            tried.current = chip.item && chip.tab ? { id: chip.id, progress: chip.progress ?? 0, placed, key: designKey } : null
             showGoal(chip)
           }}
           aria-label={`Next goal: ${chip.title}, ${chip.stars} star${chip.stars === 1 ? '' : 's'}. Show me`}
@@ -655,7 +703,7 @@ export function VibeMeter() {
             <small>Level up! {levelUp.index + 1} of {LEVELS.length}</small>
             {levelUp.name}
             {levelGoalLine && <em>{levelGoalLine}</em>}
-            {UNLOCK_LINE[levelUp.name] && <em>{UNLOCK_LINE[levelUp.name]}</em>}
+            {unlockLine(levelUp) && <em>{unlockLine(levelUp)}</em>}
           </span>
         </button>
       )}
@@ -736,7 +784,27 @@ function showGoal(g: Goal) {
     if (st.mode !== 'select') st.setMode('select')
     useGame.setState({ mode: 'buy', sheet: null, buyHint: null })
     st.select({ kind: 'placement', id: moveId })
+    // A pinched walkway (round 16): show the walking paths, so the pinch is plain to see.
+    if (g.id === 'walkways') {
+      if (!st.showPath) st.setUI({ showPath: true })
+      if (g.at) useGame.getState().setPinch({ x: g.at.x, y: g.at.y })
+    }
     if (g.hint) st.notify(g.hint)
+    // Round 16: as with a twist, the chip moves the piece itself when a clean spot finishes the
+    // goal (or brings it closer) at no cost in stars; otherwise the piece stays selected to drag.
+    if (issue || moveId !== g.near) return
+    const docAt = st.doc
+    setTimeout(() => {
+      const s = useStore.getState()
+      if (s.doc !== docAt) return
+      const m = goalMove(s.doc, activeLayout(s.doc), g.id)
+      if (!m) return
+      const p = activeLayout(s.doc).placements.find((x) => x.id === m.id)
+      const name = s.doc.items.find((i) => i.id === p?.itemId)?.name.toLowerCase() ?? 'piece'
+      s.updatePlacement(m.id, { x: m.x, y: m.y, rotation: m.rotation })
+      s.select({ kind: 'placement', id: m.id })
+      s.notify(m.done ? `Moved the ${name}. ${g.id === 'walkways' ? 'The way is clear!' : `${g.title} ✓`}` : `Moved the ${name}: a step closer.`)
+    }, 40)
     return
   }
   if (g.tab) {
@@ -870,7 +938,7 @@ export function LevelUpCard() {
               {dream ? `Every level reached: ${LEVELS.length} of ${LEVELS.length}` : `Level ${levelUp.index + 1} of ${LEVELS.length}`}
             </span>
             {levelGoalLine && <em className="goal-levelup-goal">{levelGoalLine}</em>}
-            {UNLOCK_LINE[levelUp.name] && <em className="goal-levelup-goal">{UNLOCK_LINE[levelUp.name]}</em>}
+            {unlockLine(levelUp) && <em className="goal-levelup-goal">{unlockLine(levelUp)}</em>}
           </>
         )}
         {dream && (

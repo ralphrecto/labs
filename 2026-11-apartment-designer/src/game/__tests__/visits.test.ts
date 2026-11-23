@@ -10,7 +10,8 @@ import { applicableVisits, LEVELS, nextGoal, scoreHome, todayVisit, VISIT_LEVEL,
 
 const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
 const score = (d: Doc, visit?: VisitInput) => scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)), visit)
-const fitsIn = (d: Doc) => (c: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe')).ok
+// As the HUD's useFits does: beside the goal's piece when it names one.
+const fitsIn = (d: Doc) => (c: string, near?: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe'), { nextTo: near }).ok
 
 let n = 0
 function put(d: Doc, category: string, x: number, y: number, rotation = 0): Placement {

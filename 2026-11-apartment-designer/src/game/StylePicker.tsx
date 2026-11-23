@@ -111,6 +111,8 @@ export function StylePicker({ className = '' }: { className?: string }) {
   useEffect(() => () => useStylePicker.getState().setOpen(false), [])
   const [hint, setHint] = useState<RenderStyle | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  // Just unlocked (round 16): the button glows "new" until it's first used.
+  const fresh = useGame((g) => g.freshUnlocks.includes('style'))
 
   useEffect(() => {
     if (!open) return
@@ -142,7 +144,10 @@ export function StylePicker({ className = '' }: { className?: string }) {
 
   return (
     <div className={`sty ${className}`} ref={ref}>
-      <button className={`sty-btn${open ? ' open' : ''}`} onClick={() => setOpen((o) => !o)} aria-label={`Style: ${current.label}. Change how the room is drawn`} aria-expanded={open} title="Change the style">
+      <button className={`sty-btn${open ? ' open' : ''}${fresh ? ' g-new' : ''}`} onClick={() => {
+          useGame.getState().spendUnlock('style')
+          setOpen((o) => !o)
+        }} aria-label={`Style: ${current.label}. Change how the room is drawn`} aria-expanded={open} title="Change the style">
         <StyleSwatch id={style} />
         <span className="sty-badge" aria-hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round">

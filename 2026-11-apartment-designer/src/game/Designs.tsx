@@ -500,10 +500,18 @@ export function RemixPicker() {
   // Remixing is a reward: it waits until one of this home's designs has reached Designer home.
   const homeId = doc.apartment.id
   const unlocked = useHomeReached(homeId, REMIX_LEVEL)
+  // Just unlocked (round 16): the button glows "new" until it's first used.
+  const fresh = useGame((g) => g.freshUnlocks.includes('remix'))
   if (!open && !unlocked && !doc.layouts.some((l) => l.remix)) return null
   if (!open)
     return (
-      <button className="g-btn primary" onClick={() => useRemixPicker.setState({ open: true })}>
+      <button
+        className={`g-btn primary${fresh ? ' g-new' : ''}`}
+        onClick={() => {
+          useGame.getState().spendUnlock('remix')
+          useRemixPicker.setState({ open: true })
+        }}
+      >
         <I.IconCopy width={18} height={18} /> Remix this home
       </button>
     )

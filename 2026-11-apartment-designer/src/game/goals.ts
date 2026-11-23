@@ -51,6 +51,8 @@ export interface Goal {
    * before a bed): Next turns the goal into "make room" and selects it.
    */
   makeRoom?: { id: string; name: string; room?: string }
+  /** Where on the floor the goal is about (a walkway's narrowest point), for a marker. */
+  at?: Vec2
   /** Next suggests this before anything else (unpacking the moving boxes on move-in day). */
   urgent?: boolean
   /**
@@ -102,6 +104,8 @@ export interface HomeScore {
    * at Designer home): when it is no higher than the level, more stars alone won't reach the next.
    */
   cap?: number
+  /** A remix's own number (round 16), so its bonus goals come in an order of their own. */
+  remixSeed?: number
 }
 
 export const LEVELS = ['Empty shell', 'Moving in', 'Lived-in', 'Cozy', 'Designer home', 'Dream home'] as const
@@ -298,6 +302,8 @@ const STAND_INS: Record<string, string[]> = {
   'table-lamp': ['floor-lamp'],
 }
 const STAND_IN_GOALS: Record<string, string[]> = { storage: ['bookshelf', 'sideboard', 'console-table', 'wardrobe', 'dresser'], sit: STAND_INS.sofa }
+/** Rooms whose fixtures furnish them: "Every room has something" leaves them out. */
+const WET_ROOM = /bath|\bwc\b|toilet|powder|shower|lavatory/i
 /** Goals that make a living room cozy, suggested first when the home is a living space. */
 const LIVING_GOAL = /^(sit|coffee:|rug|light|plant|nook|rooms-used|sofa-tv|tv-distance)/
 
@@ -314,7 +320,17 @@ export function packedBoxIds(doc: Doc, layout: Layout): Set<string> {
  * (a bookshelf when the bedroom has no room for a dresser), or gives way to the next goal, so the
  * chip never leads to a refusal.
  */
-export function nextGoal(score: HomeScore, fits?: (category: string, near?: string) => boolean): Goal | undefined {
+export function nextGoal(score: HomeScore, fits?: (category: string, near?: string) => boolean, skip?: ReadonlySet<string>): Goal | undefined {
+  // Goals a pick didn't finish (round 16: a side table that landed by the foot of the bed) step
+  // aside, so Next moves on instead of offering the same piece again; when nothing else is left
+  // they come back.
+  if (skip?.size) {
+    const rest = score.goals.filter((g) => !skip.has(g.id))
+    if (rest.some((g) => !g.done && !g.locked)) {
+      const g = nextGoal({ ...score, goals: rest }, fits)
+      if (g && ((g.item && g.tab) || g.near)) return g
+    }
+  }
   const open = score.goals.filter((g) => !g.done && !g.locked)
   const urgent = open.find((g) => g.urgent && g.near)
   if (urgent) return urgent
@@ -349,7 +365,24 @@ export function nextGoal(score: HomeScore, fits?: (category: string, near?: stri
     const held = pool.find((g) => !g.bonus && (!g.tab || !g.item))
     if (held) return held
   }
-  return pickFrom(pool, fits)
+  return remixShuffle(score, pool, pickFrom(pool, fits), fits)
+}
+
+/**
+ * A remix plays out in an order of its own (round 16), so it isn't a re-run of the original: when
+ * Next would start a bonus piece, it may start one of the next two fitting bonus pieces instead,
+ * chosen by the remix's seed and how far it has come. Core goals, the twist, visitors and a goal
+ * already half done (a lamp for the armchair just placed) keep their place.
+ */
+function remixShuffle(score: HomeScore, pool: Goal[], g: Goal | undefined, fits?: (category: string, near?: string) => boolean): Goal | undefined {
+  if (score.remixSeed === undefined || !g || !g.bonus || g.visit || !g.item || !g.tab || (g.progress ?? 0) > 0 || g.id.startsWith('twist:')) return g
+  const alts = pool
+    .filter((x) => x !== g && x.id !== g.id && x.bonus && !x.visit && x.item && x.tab && !(x.progress ?? 0) && !x.id.startsWith('twist:'))
+    .filter((x) => !fits || fits(x.item!, x.near))
+    .slice(0, 2)
+  const options = [g, ...alts]
+  const done = score.goals.filter((x) => x.done).length
+  return options[(score.remixSeed + done) % options.length]
 }
 
 /**
@@ -603,9 +636,11 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
     stars: 1,
     category: 'basics',
   })
-  if (rooms.length) {
-    const filled = rooms.filter((r) => inRoom(r).length > 0)
-    const empty = rooms.filter((r) => !inRoom(r).length)
+  // A bathroom's fixtures are its furniture (round 16): a lone plant on its floor is no goal.
+  const furnishable = rooms.filter((r) => !WET_ROOM.test(r.name))
+  if (furnishable.length) {
+    const filled = furnishable.filter((r) => inRoom(r).length > 0)
+    const empty = furnishable.filter((r) => !inRoom(r).length)
     add({
       id: 'rooms-used',
       title: 'Every room has something',
@@ -613,8 +648,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
       tab: 'decor',
       item: 'plant',
       placeIn: empty[0]?.id,
-      done: filled.length === rooms.length,
-      progress: filled.length / rooms.length,
+      done: filled.length === furnishable.length,
+      progress: filled.length / furnishable.length,
       stars: 1,
       category: 'basics',
     })
@@ -663,6 +698,17 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
     return { r, need, ok: r.reachable && r.narrowest >= need - 0.005 }
   })
   const tight = routes.find((x) => !x.ok)
+  // The piece that makes the pinch (round 16): the solid piece nearest the narrowest point, so the
+  // chip can select it (and move it) rather than leaving the player to hunt for it.
+  const pinchAt = tight?.r.pinch
+  const pinchBox = pinchAt && orientedRect(pinchAt, 0.01, 0.01, 0)
+  const pinchPiece = pinchBox
+    ? solidPieces
+        .filter((x) => !x.host)
+        .map((x) => ({ x, gap: polygonGap(x.body, pinchBox) }))
+        .filter((x) => x.gap <= 1.2)
+        .sort((a, b) => a.gap - b.gap)[0]?.x
+    : undefined
   // One room with no door to walk in from has no routes to check.
   if (paths.entrance || rooms.length > 1 || !rooms.length) add({
     id: 'walkways',
@@ -673,12 +719,14 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
       : tight
         ? !tight.r.reachable
           ? `There's no way to walk to the ${tight.r.roomName}; clear a path.`
-          : `The way to the ${tight.r.roomName} narrows to ${cm(tight.r.narrowest)}; keep ${cm(tight.need)} free.`
+          : `The way to the ${tight.r.roomName} narrows to ${cm(tight.r.narrowest)}${pinchPiece ? ` by the ${pinchPiece.name.toLowerCase()}` : ''}; keep ${cm(tight.need)} free.`
         : furnished
           ? ''
           : fewHint,
     done: paths.entrance && furnished && !tight,
     snag: paths.entrance && !!tight,
+    near: pinchPiece?.id,
+    at: pinchAt,
     progress: routes.length ? (routes.filter((x) => x.ok).length / routes.length) * Math.min(1, solidPieces.length / MIN_PIECES) : 0,
     stars: 2,
     category: 'flow',
@@ -1382,7 +1430,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
   goals.sort((a, b) => Number(a.done) - Number(b.done) || (b.progress ?? 0) - (a.progress ?? 0) || rank(a) - rank(b) || a.stars - b.stars)
 
   const livingFirst = !!rooms.length && !canSleep && livable.some((r) => LIVING.test(r.name) && !named(r))
-  return { stars, maxStars, coreMax, thresholds, level, goals, vibe, errors, headline, livingFirst, cap }
+  const remixSeed = layout.remix ? [...layout.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) : undefined
+  return { stars, maxStars, coreMax, thresholds, level, goals, vibe, errors, headline, livingFirst, cap, remixSeed }
 }
 
 // ---- Remix: twists -------------------------------------------------------
@@ -1392,10 +1441,10 @@ export const ANCHORS = new Set(['bed', 'sofa', 'tv-stand', 'wardrobe', 'dining-t
 
 /** The twist challenges, in the order the picker offers them. */
 export const TWISTS: Record<TwistId, { name: string; title: string; hint: string }> = {
-  'talk-corner': { name: 'Talk corner', title: 'Talk corner', hint: 'Turn the sofa and an armchair to face each other, under 3 m apart.' },
-  'open-floor': { name: 'Open floor', title: 'Open floor', hint: 'Keep the living room’s middle clear (4+ pieces in the room).' },
+  'talk-corner': { name: 'Talk corner', title: 'Talk corner', hint: 'Turn the sofa and an armchair to face each other, close enough to chat.' },
+  'open-floor': { name: 'Open floor', title: 'Open floor', hint: 'Furnish the living room around its edges and keep the middle free to move.' },
   'window-seat': { name: 'Window seat', title: 'Sofa faces the window', hint: 'Turn the sofa to look out of a window in its room.' },
-  'fresh-spots': { name: 'Fresh start', title: 'Everything in a new spot', hint: 'Move each big piece at least 80 cm from its old spot.' },
+  'fresh-spots': { name: 'Fresh start', title: 'Everything in a new spot', hint: 'Give each big piece a whole new spot, a good step away from where it was.' },
   'bed-swap': { name: 'Bed swap', title: 'Bed on a different wall', hint: 'Put the bed’s head against a different wall.' },
   'less-is-more': { name: 'Less is more', title: 'Dream home in 10 pieces', hint: 'Reach Dream home with 10 pieces of furniture or fewer.' },
 }
@@ -1644,6 +1693,36 @@ export function twistMove(doc: Doc, layout: Layout): ChipMove | null {
   return bestMove(doc, layout, p.id, meets, accept, before, a0)
 }
 
+/**
+ * A move that finishes (or brings closer) a goal fixed by moving a piece (round 16): the piece the
+ * goal points at (`near`: the one pinching a walkway, a desk with no room for its chair) taken to
+ * the best clean spot, never at a cost in stars. Null when the goal isn't a move or nothing helps
+ * (the chip then selects the piece to drag, as before).
+ */
+export function goalMove(doc: Doc, layout: Layout, goalId: string): ChipMove | null {
+  const a0 = analyze(doc, layout)
+  const before = scoreHome(doc, layout, a0)
+  const goal = before.goals.find((g) => g.id === goalId)
+  if (!goal || goal.done || goal.tab || !goal.near || !layout.placements.some((p) => p.id === goal.near)) return null
+  const accept = (after: HomeScore) => {
+    const g2 = after.goals.find((g) => g.id === goalId)
+    if (!g2 || after.stars < before.stars) return { ok: false, done: false }
+    return { ok: g2.done || (g2.progress ?? 0) > (goal.progress ?? 0) + 1e-6, done: g2.done }
+  }
+  return bestMove(doc, layout, goal.near, () => true, accept, before, a0)
+}
+
+/**
+ * A better spot for a piece just set down (round 16): placement `pid` moved to the clean spot that
+ * earns the most stars, when that is more than `stars` (what it earns where it stands). The drawer
+ * uses it so a piece the chip places never costs a star while a spot that doesn't exists.
+ */
+export function starMove(doc: Doc, layout: Layout, pid: string): ChipMove | null {
+  const a0 = analyze(doc, layout)
+  const before = scoreHome(doc, layout, a0)
+  return bestMove(doc, layout, pid, () => true, (after) => ({ ok: after.stars > before.stars, done: true }), before, a0)
+}
+
 /** Twists finished in this home: some remix with that twist has reached Dream home. */
 export function finishedTwists(doc: Doc): Set<TwistId> {
   return new Set(doc.layouts.flatMap((l) => (l.remix?.dreamAt ? [l.remix.twist] : [])))
@@ -1767,7 +1846,7 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
     if (!done && stay) {
       near = stay.id
       const left = anchors.length - moved.length
-      hint = `Move the ${stay.name.toLowerCase()} at least 80 cm from its old spot${left > 1 ? ` (${left} big pieces still to move)` : ''}.`
+      hint = `Give the ${stay.name.toLowerCase()} a new spot, a good step from where it was${left > 1 ? ` (${left === 2 ? 'one more big piece after it' : 'a few more big pieces after it'})` : ''}.`
     }
   } else if (t === 'bed-swap') {
     near = of('bed')[0]?.id
@@ -1797,13 +1876,13 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
     near = (pairChair ?? of('armchair')[0] ?? seats[0])?.id
     if (!done && seats.length < 2) {
       item = 'armchair'
-      hint = `Add an armchair, then turn it and the sofa to face each other, under ${TALK_DIST} m apart.`
+      hint = 'Add an armchair, then turn it and the sofa to face each other, close enough to chat.'
     } else if (!done && bestPair && pairChair) {
       const other = pairChair === bestPair.a ? bestPair.b : bestPair.a
       const what = pairChair.name.toLowerCase()
       hint = !bestPair.facing
-        ? `Turn the ${what} to face the ${other.name.toLowerCase()}${bestPair.far ? `, then bring it under ${TALK_DIST} m away` : ''}.`
-        : `Move the ${what} closer to the ${other.name.toLowerCase()}, under ${TALK_DIST} m away.`
+        ? `Turn the ${what} to face the ${other.name.toLowerCase()}${bestPair.far ? ', then bring it close enough to chat' : ''}.`
+        : `Move the ${what} closer to the ${other.name.toLowerCase()}, close enough to chat.`
     }
   } else if (t === 'open-floor') {
     const room = rooms.find((r) => LIVING.test(r.name)) ?? of('sofa')[0]?.room ?? rooms[0]
@@ -1815,14 +1894,14 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
       done = pieces.length >= 4 && clear.length === pieces.length
       progress = pieces.length ? (clear.length / pieces.length) * Math.min(1, pieces.length / 4) : 0
       near = pieces.find((x) => near0(x))?.id
-      if (!done && clear.length < pieces.length) hint = `Move ${pieces.length - clear.length === 1 ? 'one piece' : `${pieces.length - clear.length} pieces`} out of the middle of the ${room.name.toLowerCase()} (1 m around its centre).`
+      if (!done && clear.length < pieces.length) hint = `Move ${pieces.length - clear.length === 1 ? 'one piece' : 'a few pieces'} out of the middle of the ${room.name.toLowerCase()}, so there's room to move.`
       else if (!done) {
         // Too few pieces with the middle already clear: Next suggests one for the room's edges
         // (round 16: pickSpot keeps it out of the middle), so the chip alone can finish the twist.
         item = 'plant'
         placeIn = room.id
         const left = 4 - pieces.length
-        hint = `Add ${left === 1 ? 'one more piece' : `${left} more pieces`} around the edges of the ${room.name.toLowerCase()}, keeping its middle clear.`
+        hint = `Add ${left === 1 ? 'one more piece' : 'a few more pieces'} around the edges of the ${room.name.toLowerCase()}, keeping its middle clear.`
       }
     }
   } else if (t === 'less-is-more') {
