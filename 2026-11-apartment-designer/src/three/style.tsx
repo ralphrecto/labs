@@ -161,6 +161,8 @@ interface SurfaceProps {
   highlight?: string
   map?: THREE.Texture | null
   side?: THREE.Side
+  /** A print or mirror glass (furnitureKit Part.art): Clay keeps a faint tint of its colour. */
+  art?: boolean
 }
 
 /**
@@ -201,7 +203,7 @@ function toonDusk(hex: string, dusk: boolean) {
   return '#' + new THREE.Color(hex).lerp(new THREE.Color('#7d8cc9'), 0.3).getHexString()
 }
 
-function SurfaceMaterial({ role, color, highlight, map, side }: SurfaceProps) {
+function SurfaceMaterial({ role, color, highlight, map, side, art }: SurfaceProps) {
   const { style } = useStyle()
   const evening = useGame((s) => s.evening)
   const edge = role === 'cap' || role === 'trim' ? role : null
@@ -269,7 +271,7 @@ function SurfaceMaterial({ role, color, highlight, map, side }: SurfaceProps) {
     case 'clay':
       return (
         <meshStandardMaterial
-          color={role === 'item' || role === 'soft' ? mix(CLAY_ITEM, color, 0.12) : role === 'floor' ? CLAY_FLOOR : edge ? color : CLAY}
+          color={art ? mix(CLAY_ITEM, color, 0.42) : role === 'item' || role === 'soft' ? mix(CLAY_ITEM, color, 0.12) : role === 'floor' ? CLAY_FLOOR : edge ? color : CLAY}
           roughness={1}
           emissive={emissive}
           emissiveIntensity={emissiveIntensity}

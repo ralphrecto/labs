@@ -4,7 +4,7 @@ import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useSt
 import { useGame } from '../game/gameStore'
 import * as THREE from 'three'
 import { LAMPS } from '../model/placement'
-import { mountBottom } from '../model/wallDecor'
+import { isWallDecor, mountBottom } from '../model/wallDecor'
 import type { Doc, Item } from '../model/types'
 import { pointInPolygon } from '../model/geometry'
 import { activeLayout, useStore } from '../store'
@@ -482,7 +482,7 @@ function ottoman(item: Item): Part[] {
 }
 
 /** Procedural looks for catalog categories. Local frame: width on x, depth on z, front is +z, floor at y=0. */
-export function parts(item: Item, hang?: { hostH?: number; ceiling?: number }): Part[] {
+export function parts(item: Item, hang?: { hostH?: number; ceiling?: number; mountY?: number }): Part[] {
   switch (item.category) {
     case 'sofa':
     case 'armchair':
@@ -524,7 +524,7 @@ export function parts(item: Item, hang?: { hostH?: number; ceiling?: number }): 
     case 'wall-shelf':
     case 'wall-clock':
     case 'curtains':
-      return wallDecor(item)
+      return wallDecor(item, hang?.mountY)
     default: {
       if (item.category === 'box' && /box|carton/i.test(item.name)) return movingBox(item)
       const { width: w, depth: d, height: h } = item
@@ -540,9 +540,98 @@ export function parts(item: Item, hang?: { hostH?: number; ceiling?: number }): 
 /** Abstract canvas patterns, picked by the item's id so two prints differ. */
 const CANVAS_INKS = ['#ffc24b', '#5fa67f', '#4f8be8', '#ff7a59', '#8a5cc7', '#fbf6ee']
 
-function wallDecor(item: Item): Part[] {
+/** An art frame's finish: the player's pick (frameColor), else warm wood. */
+const frameColor = (item: Item) => (item as { frameColor?: string }).frameColor ?? PAL.wood
+
+/** The motifs a print can have; rng(item.id) picks one, so two prints differ. */
+export const ART_MOTIFS = ['blocks', 'stripes', 'arch', 'leaf', 'sun', 'mountains'] as const
+
+/**
+ * The print inside a frame: a canvas cw x ch centred at height cy, its face at z. Colours come from
+ * the item's own (a lighter and a deeper tone) plus one accent ink, so a blue canvas stays blue.
+ */
+function artMotif(item: Item, r: () => number, cw: number, ch: number, cy: number, z: number): Part[] {
+  // (Ids that differ by a letter start the generator almost alike: skip ahead so they spread out.)
+  r()
+  r()
+  const motif = ART_MOTIFS[Math.floor(r() * ART_MOTIFS.length)]
+  const pick = () => CANVAS_INKS[Math.floor(r() * CANVAS_INKS.length)]
+  const base = item.color
+  const deep = shade(base, 0.72)
+  const pale = shade(base, 1.45)
+  const ink = pick()
+  const flat = (x: number, y: number, sw: number, sh: number, color: string, k = 0, extra: Partial<Part> = {}): Part => ({ kind: 'box', size: [sw, sh, 0.008], pos: [x, y, z + k * 0.001], color, noShadow: true, art: true, ...extra })
+  const disc = (x: number, y: number, dd: number, color: string, k = 0): Part => ({ kind: 'ball', size: [dd, dd, 0.01], pos: [x, y, z + k * 0.001], color, noShadow: true, art: true })
+  const m = Math.min(cw, ch)
+  switch (motif) {
+    case 'stripes': {
+      // Soft bands across (or down) the print.
+      const across = cw >= ch
+      const n = 3 + Math.floor(r() * 3)
+      const cols = [base, pale, deep, ink]
+      return Array.from({ length: n }, (_, i) => {
+        const span = (across ? ch : cw) * 0.8
+        const t = -span / 2 + (span / n) * (i + 0.5)
+        const thick = (span / n) * 0.62
+        return across ? flat(0, cy + t, cw * 0.8, thick, cols[i % cols.length]) : flat(t, cy, thick, ch * 0.8, cols[i % cols.length])
+      })
+    }
+    case 'arch': {
+      // A tall arch with a small sun beside it.
+      const aw = Math.min(cw * 0.5, ch * 0.42)
+      const ah = ch * 0.48
+      const by = cy - ch * 0.3
+      return [
+        flat(0, by + ah / 2, aw, ah, base),
+        { kind: 'cyl', size: [aw, 0.008, aw], pos: [0, by + ah, z], rot: [Math.PI / 2, 0, 0], seg: 28, color: base, noShadow: true, art: true },
+        flat(0, cy - ch * 0.36, cw * 0.86, ch * 0.1, deep, 1),
+        disc(cw * 0.3 * (r() < 0.5 ? -1 : 1), cy + ch * 0.3, m * 0.18, ink, 1),
+      ]
+    }
+    case 'leaf': {
+      // A botanical sprig: a stem and leaves in pairs, in the deeper tone over a pale ground.
+      const stemH = ch * 0.72
+      const out: Part[] = [flat(0, cy, cw * 0.9, ch * 0.9, pale), flat(0, cy - ch * 0.02, Math.max(0.004, cw * 0.025), stemH, deep, 1)]
+      const n = 3
+      for (let i = 0; i < n; i++) {
+        const y = cy - stemH * 0.3 + (stemH * 0.62 * i) / (n - 1)
+        const lw = m * (0.34 - i * 0.05)
+        for (const side of [-1, 1])
+          out.push({ kind: 'ball', size: [lw, lw * 0.42, 0.01], pos: [side * lw * 0.42, y + side * 0.01, z + 0.002], rot: [0, 0, side * 0.55], color: i % 2 ? base : deep, noShadow: true, art: true })
+      }
+      out.push({ kind: 'ball', size: [m * 0.2, m * 0.3, 0.01], pos: [0, cy + stemH * 0.44, z + 0.002], color: base, noShadow: true, art: true })
+      return out
+    }
+    case 'sun':
+      // A big sun setting over a horizon.
+      return [
+        flat(0, cy + ch * 0.12, cw * 0.9, ch * 0.66, pale),
+        disc(0, cy - ch * 0.02, m * 0.56, ink, 1),
+        flat(0, cy - ch * 0.3, cw * 0.9, ch * 0.3, base, 2),
+        flat(0, cy - ch * 0.17, cw * 0.9, ch * 0.03, deep, 3),
+      ]
+    case 'mountains': {
+      // Two peaks, a far pale one behind a nearer one, and a small moon.
+      const out: Part[] = [flat(0, cy, cw * 0.9, ch * 0.9, pale)]
+      const peak = (x: number, pw: number, ph: number, color: string, k: number): Part => ({ kind: 'cyl', size: [pw, ph, 0.01], pos: [x, cy - ch * 0.45 + ph / 2, z + k * 0.001], top: 0, seg: 4, color, noShadow: true, art: true })
+      out.push(peak(cw * 0.18, cw * 0.7, ch * 0.62, base, 1), peak(-cw * 0.2, cw * 0.62, ch * 0.46, deep, 2))
+      out.push(disc(-cw * 0.24, cy + ch * 0.28, m * 0.16, ink, 1))
+      return out
+    }
+    default:
+      // Soft blocks of colour (the original print).
+      return [
+        disc(cw * (r() * 0.4 - 0.2), cy + ch * 0.2, cw * 0.34, pick()),
+        flat(0, cy - ch * 0.28, cw * 0.9, ch * 0.32, base, 0, { size: [cw * 0.9, ch * 0.32, 0.008] }),
+        flat(cw * (r() * 0.3 - 0.15), cy - ch * 0.08, cw * 0.45, ch * 0.16, ink, 1, { size: [cw * 0.45, ch * 0.16, 0.009] }),
+        disc(-cw * 0.28, cy + ch * 0.05, cw * 0.2, pick(), 1),
+      ]
+  }
+}
+
+function wallDecor(item: Item, mountY?: number): Part[] {
   const { width: w, depth: d, height: h } = item
-  const y0 = mountBottom(item)
+  const y0 = mountBottom(item, { mountY })
   const cy = y0 + h / 2
   const back = -d / 2
   const face = [Math.PI / 2, 0, 0] as [number, number, number]
@@ -550,25 +639,21 @@ function wallDecor(item: Item): Part[] {
     case 'wall-art': {
       const r = rng(item.id)
       const f = Math.min(0.045, w * 0.08)
-      const pick = () => CANVAS_INKS[Math.floor(r() * CANVAS_INKS.length)]
       const cw = w - 2 * f
       const ch = h - 2 * f
       const z = back + d * 0.75
       return [
-        // Frame and a pale mat, then a canvas in the item's colour with a few soft blocks of colour.
-        { kind: 'box', size: [w, h, d * 0.7], pos: [0, cy, back + d * 0.35], color: PAL.wood, shade: 1.15 },
-        { kind: 'box', size: [cw, ch, 0.006], pos: [0, cy, back + d * 0.7 + 0.003], color: shade(item.color, 1.25) },
-        { kind: 'ball', size: [cw * 0.34, cw * 0.34, 0.01], pos: [cw * (r() * 0.4 - 0.2), cy + ch * 0.2, z], color: pick(), noShadow: true },
-        { kind: 'box', size: [cw * 0.9, ch * 0.32, 0.008], pos: [0, cy - ch * 0.28, z], color: item.color, noShadow: true },
-        { kind: 'box', size: [cw * 0.45, ch * 0.16, 0.009], pos: [cw * (r() * 0.3 - 0.15), cy - ch * 0.08, z + 0.001], color: pick(), noShadow: true },
-        { kind: 'ball', size: [cw * 0.2, cw * 0.2, 0.01], pos: [-cw * 0.28, cy + ch * 0.05, z + 0.001], color: pick(), noShadow: true },
+        // Frame (its finish, or warm wood) and a pale mat, then the print: one of a few motifs.
+        { kind: 'box', size: [w, h, d * 0.7], pos: [0, cy, back + d * 0.35], color: frameColor(item), shade: 1.15 },
+        { kind: 'box', size: [cw, ch, 0.006], pos: [0, cy, back + d * 0.7 + 0.003], color: shade(item.color, 1.25), art: true },
+        ...artMotif(item, r, cw, ch, cy, z),
       ]
     }
     case 'mirror': {
       const s = Math.min(w, h)
       return [
-        { kind: 'cyl', size: [s, d * 0.7, s], pos: [0, cy, back + d * 0.35], rot: face, seg: 40, color: item.color },
-        { kind: 'cyl', size: [s * 0.84, 0.006, s * 0.84], pos: [0, cy, back + d * 0.7 + 0.003], rot: face, seg: 40, color: '#e4f2f6' },
+        { kind: 'cyl', size: [s, d * 0.7, s], pos: [0, cy, back + d * 0.35], rot: face, seg: 40, color: (item as { frameColor?: string }).frameColor ?? item.color },
+        { kind: 'cyl', size: [s * 0.84, 0.006, s * 0.84], pos: [0, cy, back + d * 0.7 + 0.003], rot: face, seg: 40, color: '#e4f2f6', art: true },
         // A light streak across the glass.
         { kind: 'box', size: [s * 0.08, s * 0.4, 0.004], pos: [-s * 0.12, cy + s * 0.06, back + d * 0.7 + 0.008], rot: [0, 0, -0.6], color: '#ffffff', noShadow: true },
       ]
@@ -733,13 +818,19 @@ export function styleBase(style: string, category: string, color: string): strin
   return TOON_WOOD.has(category) ? toonWoodBase(color) : toonSwatchBase(color)
 }
 
+/** A wall piece's own hanging height in the active layout (one stacked above or below another frame). */
+function useMountY(item: Item): number | undefined {
+  return useStore((st) => (isWallDecor(item.category) ? activeLayout(st.doc).placements.find((p) => p.itemId === item.id)?.mountY : undefined))
+}
+
 export function ProceduralItem({ item, highlight }: { item: Item; highlight?: string }) {
   const { style } = useStyle()
   const base = styleBase(style, item.category, item.color)
   // A pendant's cord runs up to the real ceiling over its real table.
   const hostH = useStore((st) => (item.category === 'pendant' ? pendantHostHeight(st.doc, item.id) : undefined))
   const ceiling = useStore((st) => (item.category === 'pendant' ? pendantCeiling(st.doc, item.id) : undefined))
-  const specs = useMemo(() => parts(item, { hostH, ceiling }), [item, hostH, ceiling])
+  const mountY = useMountY(item)
+  const specs = useMemo(() => parts(item, { hostH, ceiling, mountY }), [item, hostH, ceiling, mountY])
   const lineStyle = style === 'blueprint' || style === 'scan' || style === 'classic'
   const hl = ORGANIC.has(item.category) && !lineStyle ? undefined : highlight
   return (
@@ -834,6 +925,7 @@ export function ItemModel({ item, highlight }: { item: Item; highlight?: string 
     <Arrival id={item.id}>
       <ItemLook item={item} highlight={highlight} />
       {LAMPS.has(item.category) && <LampGlow item={item} />}
+      {item.category === 'wall-art' && <PictureLight item={item} />}
     </Arrival>
   )
 }
@@ -901,6 +993,52 @@ function LampGlow({ item }: { item: Item }) {
           // A little toward the room (the shade's open side), so the wall behind isn't blown out.
           <pointLight position={[0, bulbY, 0.15]} color="#ffb070" intensity={4} distance={3.2} decay={2} castShadow={false} />
         ))}
+    </group>
+  )
+}
+
+/** Picture lights are a nicety: only this many cast real light (the rest just glow). */
+const MAX_ART_LIGHTS = 4
+let artLights = 0
+
+/**
+ * In the evening framed art gets a picture light: a small brass arm over the frame with a warm
+ * glowing strip, and a soft, short-reach light (no shadows) washing down over the print.
+ */
+function PictureLight({ item }: { item: Item }) {
+  const evening = useGame((s) => s.evening)
+  const mountY = useMountY(item)
+  const [lit, setLit] = useState(false)
+  useEffect(() => {
+    if (!evening || artLights >= MAX_ART_LIGHTS) return
+    artLights++
+    setLit(true)
+    return () => {
+      artLights--
+      setLit(false)
+    }
+  }, [evening])
+  if (!evening) return null
+  const { width: w, depth: d, height: h } = item
+  const top = mountBottom(item, { mountY }) + h
+  const back = -d / 2
+  const sw = Math.max(0.16, Math.min(0.5, w * 0.55))
+  const out = back + 0.11
+  return (
+    <group>
+      <mesh position={[0, top + 0.03, back + 0.05]}>
+        <boxGeometry args={[0.02, 0.02, 0.1]} />
+        <meshStandardMaterial color="#b8955a" roughness={0.4} metalness={0.6} />
+      </mesh>
+      <mesh position={[0, top + 0.035, out]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.018, 0.018, sw, 12]} />
+        <meshStandardMaterial color="#b8955a" roughness={0.4} metalness={0.6} />
+      </mesh>
+      <mesh position={[0, top + 0.02, out]}>
+        <boxGeometry args={[sw * 0.92, 0.008, 0.02]} />
+        <meshStandardMaterial color="#fff3d6" emissive={GLOW} emissiveIntensity={2} toneMapped={false} />
+      </mesh>
+      {lit && <pointLight position={[0, top - Math.min(0.25, h * 0.3), back + 0.32]} color="#ffc27a" intensity={0.55} distance={1.4} decay={2} castShadow={false} />}
     </group>
   )
 }

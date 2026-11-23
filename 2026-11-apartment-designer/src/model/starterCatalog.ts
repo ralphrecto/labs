@@ -117,6 +117,8 @@ const groups: Record<string, Row[]> = {
   'Wall decor': [
     ['art-sm', 'Small framed print', 'wall-art', 40, 3, 50, { tags: 'picture poster frame' }],
     ['art-md', 'Framed art', 'wall-art', 60, 4, 80, { tags: 'picture painting frame' }],
+    ['art-land', 'Landscape print', 'wall-art', 70, 3, 50, { color: '#8fae84', tags: 'picture poster frame horizontal' }],
+    ['art-tall', 'Tall framed print', 'wall-art', 45, 3, 90, { color: '#c98f86', tags: 'picture poster frame portrait vertical botanical' }],
     ['art-lg', 'Large canvas', 'wall-art', 100, 4, 70, { color: '#7fa7c9', tags: 'picture painting landscape' }],
     ['mirror-round', 'Round mirror', 'mirror', 60, 4, 60],
     ['wall-shelf', 'Floating shelf with books', 'wall-shelf', 80, 22, 30, { tags: 'ledge books' }],

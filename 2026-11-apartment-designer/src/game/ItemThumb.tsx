@@ -654,7 +654,26 @@ const roundTable = (topY: number, rx: number, plates: boolean): Draw => (p) => {
     </>
   )
 }
+/** A framed print drawn face-on in any box: frame, mat, a sun and two soft hills (tall and wide variants). */
+const framedArt = (x: number, y: number, w: number, h: number): Draw => (p) => {
+  const m = 6
+  const [ix, iy, iw, ih] = [x + m, y + m, w - 2 * m, h - 2 * m]
+  const b = iy + ih
+  return (
+    <>
+      {wallShadow(x, y, w, h)}
+      <rect x={x} y={y} width={w} height={h} rx={2} fill={p.wood.t} stroke={p.line} />
+      <rect x={ix} y={iy} width={iw} height={ih} fill={mix(p.base.f, '#ffffff', 0.55)} stroke="none" />
+      <circle cx={ix + iw * 0.72} cy={iy + ih * 0.25} r={Math.min(iw, ih) * 0.16} fill="#ffc24b" stroke="none" />
+      <path d={`M${ix} ${b}V${b - ih * 0.3}Q${ix + iw * 0.25} ${b - ih * 0.55} ${ix + iw * 0.5} ${b - ih * 0.32}T${ix + iw} ${b - ih * 0.4}V${b}Z`} fill={p.base.f} stroke="none" />
+      <path d={`M${ix} ${b}V${b - ih * 0.15}Q${ix + iw * 0.35} ${b - ih * 0.3} ${ix + iw * 0.6} ${b - ih * 0.14}T${ix + iw} ${b - ih * 0.18}V${b}Z`} fill={p.base.s} stroke="none" />
+      <rect x={ix} y={iy} width={iw} height={ih} fill="none" stroke={p.line} strokeWidth={1.6} />
+    </>
+  )
+}
 const VARIANTS: Record<string, Shot> = {
+  'wall-art:tall': { draw: framedArt(33, 6, 34, 80), sx: 50, sw: 0 },
+  'wall-art:wide': { draw: framedArt(12, 24, 76, 52), sx: 50, sw: 0 },
   'dining-table:round': { draw: roundTable(GROUND - 44, 34, true), sx: 50, sw: 32 },
   'coffee-table:round': { draw: roundTable(GROUND - 26, 30, false), sx: 50, sw: 30 },
   'dresser:tall': {
@@ -703,7 +722,7 @@ function palette(color: string): Pal {
 }
 
 export const ItemThumb = memo(function ItemThumb({ category, color, size = 64, look }: { category: string; color: string; size?: number; look?: ThumbLook }) {
-  const variant = look?.round ? VARIANTS[`${category}:round`] : look?.tall ? VARIANTS[`${category}:tall`] : undefined
+  const variant = look?.round ? VARIANTS[`${category}:round`] : look?.tall ? VARIANTS[`${category}:tall`] : look?.wide ? VARIANTS[`${category}:wide`] : undefined
   const shot = variant ?? SHOTS[category]
   const k = look?.scale && look.scale !== 1 ? look.scale : 1
   const p = palette(color || '#9aa4ad')

@@ -32,6 +32,8 @@ export interface Part {
   fabric?: boolean
   /** Small props skip shadow casting (cheaper, and their shadows are just noise). */
   noShadow?: boolean
+  /** A print's canvas or a mirror's glass: keeps a tint in the Clay look, so it doesn't read as a blank plaque. */
+  art?: boolean
 }
 
 // Thumbnail palette (src/game/ItemThumb.tsx), so the 3D shares one look with the drawer.
@@ -161,7 +163,7 @@ export function PartMesh({ part, base, highlight }: { part: Part; base: string; 
   return (
     <group position={part.pos} rotation={part.rot}>
       <mesh geometry={geo} scale={scale} castShadow={!part.noShadow} receiveShadow>
-        <Surface role={part.fabric ? 'soft' : 'item'} color={color} highlight={tint} />
+        <Surface role={part.fabric ? 'soft' : 'item'} color={color} highlight={tint} art={part.art} />
         {(!round || kind === 'cyl' || (kind === 'ball' && lines)) && <Ink highlight={highlight} soft={round} />}
       </mesh>
       {hull && (

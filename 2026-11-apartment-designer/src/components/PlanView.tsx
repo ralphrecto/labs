@@ -25,6 +25,9 @@ import {
 } from '../model/geometry'
 import { clampOnHost, HOSTED, hostAt } from '../model/placement'
 import { isWallDecor, snapToWall } from '../model/wallDecor'
+
+/** A touch screen: wall decor badges are drawn bigger so a finger can grab them. */
+const COARSE = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches
 import { snapDrawPoint, snapPlacement, type SnapGuide } from '../model/snapping'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 import { formatLength, parseLength } from '../model/units'
@@ -401,7 +404,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
           setDrag({ ...drag, moved: true })
         }
         const spot = snapToWall(s.doc, activeLayout(s.doc), pi.item, proposed, drag.id)
-        if (spot) s.updatePlacement(drag.id, { x: spot.x, y: spot.y, rotation: spot.rotation })
+        if (spot) s.updatePlacement(drag.id, { x: spot.x, y: spot.y, rotation: spot.rotation, mountY: spot.mountY })
         return
       }
       if (pi.p.on && HOSTED.has(pi.item.category)) {
@@ -818,7 +821,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
 
         {/* Items, floor-level ones (rugs) first */}
         {[...placementsWithItems]
-          .sort((a, b) => Number(!!b.item.floorLevel) - Number(!!a.item.floorLevel) || Number(!!a.p.on) - Number(!!b.p.on))
+          // Rugs first, then furniture, lamps on tops, and wall decor last so its badges sit over the sofa.
+          .sort((a, b) => Number(!!b.item.floorLevel) - Number(!!a.item.floorLevel) || Number(isWallDecor(a.item.category)) - Number(isWallDecor(b.item.category)) || Number(!!a.p.on) - Number(!!b.p.on))
           .map(({ p, item }) => {
             const selected = selection?.kind === 'placement' && selection.id === p.id
             const flag = analysis.flagged.get(p.id)
@@ -837,13 +841,16 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
                 store().select({ kind: 'placement', id: p.id })
                 begin({ type: 'item', id: p.id, grab: sub(toWorld(e), v(p.x, p.y)), moved: false }, e)
               }
-              const r = 7 * px
+              // A finger needs a bigger badge, and a hit area bigger still around it.
+              const r = (COARSE ? 11 : 7) * px
+              const hit = r + (COARSE ? 9 : 3) * px
               return (
                 <g key={p.id} transform={`translate(${p.x} ${p.y}) rotate(${deg})`} style={{ cursor: readOnly ? undefined : drag?.type === 'item' ? 'grabbing' : 'grab' }} onPointerDown={grab}>
                   <rect x={-hw} y={-hd - 4 * px} width={item.width} height={t + 4 * px + 2 * r + 4 * px} fill="transparent" />
                   <rect x={-hw} y={-hd} width={item.width} height={t} rx={t / 2} fill={item.color} stroke={stroke} strokeWidth={(selected ? 2.5 : 1) * px} />
+                  <circle cx={0} cy={-hd + t + r + 2 * px} r={hit} fill="transparent" />
                   <circle cx={0} cy={-hd + t + r + 2 * px} r={r} fill="#fffaf1" stroke={stroke} strokeWidth={(selected ? 2 : 1) * px} />
-                  <text x={0} y={-hd + t + r + 2 * px} fontSize={9 * px} textAnchor="middle" dominantBaseline="central" fill="#4a4740" pointerEvents="none">
+                  <text x={0} y={-hd + t + r + 2 * px} fontSize={(COARSE ? 13 : 9) * px} textAnchor="middle" dominantBaseline="central" fill="#4a4740" pointerEvents="none">
                     {WALL_GLYPH[item.category] ?? '▣'}
                   </text>
                 </g>

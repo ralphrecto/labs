@@ -24,11 +24,17 @@ const GAP = 0.05
 /** Furniture a piece looks good hung over, with a little bonus when centred on it. */
 const OVER = new Set(['sofa', 'bed', 'desk', 'sideboard', 'dresser', 'console-table', 'tv-stand'])
 
-/** Height of the bottom edge of a wall piece above the floor. */
-export function mountBottom(item: Pick<Item, 'category'> & { height?: number }): number {
+/** Height of the bottom edge of a wall piece above the floor: its placement's own (a stacked frame) or the category's. */
+export function mountBottom(item: Pick<Item, 'category'> & { height?: number }, p?: Pick<Placement, 'mountY'>): number {
   if (item.category === 'curtains') return CURTAIN_GAP
+  if (p?.mountY != null) return p.mountY
   return Math.max(0.3, (CENTRE[item.category] ?? 1.5) - (item.height ?? 0.6) / 2)
 }
+
+/** Vertical gap between two frames stacked one above the other. */
+const STACK_GAP = 0.06
+/** Room a stacked frame keeps under the ceiling. */
+const CEILING_GAP = 0.08
 
 type WallItem = Pick<Item, 'category' | 'width' | 'depth'> & { height?: number }
 
@@ -42,6 +48,8 @@ export interface WallSpot {
   /** Curtains only: the width the pair takes on this window (rod span), and the window's id. */
   width?: number
   windowId?: string
+  /** Set when the piece was dropped onto another frame and hangs straight above or below it: its bottom edge (m). */
+  mountY?: number
 }
 
 /** How far a curtain rod reaches past each side of its window. */
@@ -51,9 +59,11 @@ export const CURTAIN_OVERHANG = 0.3
 const facing = (d: Vec2) => Math.atan2(-d.x, d.y)
 
 type Interval = [number, number]
+/** A frame's span along the wall, with its bottom and top (m above the floor). */
+type FrameSpan = [number, number, number, number]
 
 /** Spans along a wall face (meters from its start) that a piece may not cover. */
-function blockedSpans(doc: Doc, layout: Layout | undefined, room: Room, wall: number, item: WallItem, exclude?: string): { doors: Interval[]; windows: Interval[]; frames: Interval[] } {
+function blockedSpans(doc: Doc, layout: Layout | undefined, room: Room, wall: number, item: WallItem, exclude?: string): { doors: Interval[]; windows: Interval[]; frames: FrameSpan[] } {
   const [a, b] = wallSegments(room)[wall]
   const d = norm(sub(b, a))
   const n = wallInwardNormal(room, wall)
@@ -70,7 +80,7 @@ function blockedSpans(doc: Doc, layout: Layout | undefined, room: Room, wall: nu
       const t1 = dot(sub(q, a), d)
       ;(o.kind === 'door' ? doors : windows).push([Math.min(t0, t1) - GAP, Math.max(t0, t1) + GAP])
     }
-  const frames: Interval[] = []
+  const frames: FrameSpan[] = []
   if (layout) {
     const byId = new Map(doc.items.map((i) => [i.id, i]))
     for (const p of layout.placements) {
@@ -83,13 +93,16 @@ function blockedSpans(doc: Doc, layout: Layout | undefined, room: Room, wall: nu
       if (Math.abs(dot(sub(c, a), n) - it.depth / 2) > 0.06) continue
       const t = dot(sub(c, a), d)
       if (t < -0.01 || t > dist(a, b) + 0.01) continue
-      frames.push([t - it.width / 2 - GAP, t + it.width / 2 + GAP])
+      const y0 = mountBottom(it, p)
+      frames.push([t - it.width / 2 - GAP, t + it.width / 2 + GAP, y0, y0 + it.height])
     }
   }
   return { doors, windows, frames }
 }
 
 const overlaps = (lo: number, hi: number, s: Interval[]) => s.some(([x, y]) => lo < y && hi > x)
+/** Frames whose height range meets [y0, y1] (with a little gap), as plain spans along the wall. */
+const sameRow = (frames: FrameSpan[], y0: number, y1: number): Interval[] => frames.filter((f) => y0 < f[3] + STACK_GAP - 1e-6 && y1 > f[2] - STACK_GAP + 1e-6).map((f) => [f[0], f[1]])
 
 function spotAt(room: Room, wall: number, t: number, item: WallItem): WallSpot {
   const [a, b] = wallSegments(room)[wall]
@@ -132,7 +145,7 @@ export function curtainSpan(doc: Doc, room: Room, wall: number, win: Opening): I
  * wall has none. Curtains centre on the window nearest `t`; everything else keeps off doors,
  * windows and other frames.
  */
-function bestOnWall(doc: Doc, layout: Layout | undefined, room: Room, wall: number, t: number, item: WallItem, exclude?: string): { spot: WallSpot; t: number } | null {
+function bestOnWall(doc: Doc, layout: Layout | undefined, room: Room, wall: number, t: number, item: WallItem, exclude?: string, mountY?: number): { spot: WallSpot; t: number } | null {
   const [a, b] = wallSegments(room)[wall]
   const L = dist(a, b)
   const hw = item.width / 2
@@ -147,18 +160,67 @@ function bestOnWall(doc: Doc, layout: Layout | undefined, room: Room, wall: numb
       const span = curtainSpan(doc, room, wall, o)
       if (!span) continue
       const tc = (span[0] + span[1]) / 2
-      if (overlaps(tc - 0.01, tc + 0.01, frames)) continue
+      if (overlaps(tc - 0.01, tc + 0.01, frames.map((f): Interval => [f[0], f[1]]))) continue
       if (!best || Math.abs(tc - t) < Math.abs(best.t - t)) best = { spot: { ...spotAt(room, wall, tc, item), width: span[1] - span[0], windowId: o.id }, t: tc }
     }
     return best
   }
   if (L < item.width + 0.04) return null
-  const blocked = [...doors, ...windows, ...frames]
+  // Frames only block a piece hung at the same height (one stacked above another doesn't).
+  const y0 = mountBottom(item, { mountY })
+  const blocked = [...doors, ...windows, ...sameRow(frames, y0, y0 + (item.height ?? 0.6))]
   const ok = (x: number) => x >= lo - 1e-9 && x <= hi + 1e-9 && !overlaps(x - hw, x + hw, blocked)
   const cands = [Math.max(lo, Math.min(hi, t)), ...blocked.flatMap(([x, y]) => [x - hw - 1e-6, y + hw + 1e-6]), lo, hi]
   let best: number | undefined
   for (const c of cands) if (ok(c) && (best === undefined || Math.abs(c - t) < Math.abs(best - t))) best = c
-  return best === undefined ? null : { spot: spotAt(room, wall, best, item), t: best }
+  return best === undefined ? null : { spot: { ...spotAt(room, wall, best, item), ...(mountY != null ? { mountY } : {}) }, t: best }
+}
+
+/**
+ * A frame dropped onto another frame hangs straight above it (or below, when there's no room under
+ * the ceiling), centred on it. Null when `pt` isn't over a frame, or neither fits: under the
+ * ceiling, over the furniture against the wall, clear of doors, windows and other frames.
+ */
+function stackOn(doc: Doc, layout: Layout, room: Room, wall: number, item: WallItem, pt: Vec2, exclude?: string): { spot: WallSpot; t: number } | null {
+  if (!FRAMES.has(item.category) || item.height == null) return null
+  const [a, b] = wallSegments(room)[wall]
+  const L = dist(a, b)
+  const d = norm(sub(b, a))
+  const n = wallInwardNormal(room, wall)
+  const off = dot(sub(pt, a), n)
+  if (off < -0.05 || off > 0.45) return null
+  const tp = dot(sub(pt, a), d)
+  const byId = new Map(doc.items.map((i) => [i.id, i]))
+  const hw = item.width / 2
+  const { doors, windows, frames } = blockedSpans(doc, layout, room, wall, item, exclude)
+  // The furniture against this wall: a frame hung below another keeps above it.
+  const solids = layout.placements.flatMap((p) => {
+    const it = byId.get(p.itemId)
+    if (!it || p.on || it.floorLevel || isWallDecor(it.category)) return []
+    const c = v(p.x, p.y)
+    const r = Math.max(it.width, it.depth) / 2
+    const o = dot(sub(c, a), n)
+    return o >= -0.05 && o <= r + 0.25 ? [{ t: dot(sub(c, a), d), r, top: it.height }] : []
+  })
+  for (const p of layout.placements) {
+    if (p.id === exclude) continue
+    const host = byId.get(p.itemId)
+    if (!host || !FRAMES.has(host.category)) continue
+    const c = v(p.x, p.y)
+    if (Math.abs(dot(sub(c, a), n) - host.depth / 2) > 0.06) continue
+    const t = dot(sub(c, a), d)
+    if (Math.abs(tp - t) > host.width / 2 || t - hw < 0.02 || t + hw > L - 0.02) continue
+    if (overlaps(t - hw, t + hw, [...doors, ...windows])) continue
+    const hb = mountBottom(host, p)
+    const floor = Math.max(0.3, ...solids.filter((s) => Math.abs(s.t - t) < s.r + hw).map((s) => s.top + 0.08))
+    const tries = [hb + host.height + STACK_GAP, hb - STACK_GAP - item.height]
+    for (const y0 of tries) {
+      if (y0 < floor - 1e-6 || y0 + item.height > room.ceilingHeight - CEILING_GAP + 1e-6) continue
+      if (overlaps(t - hw, t + hw, sameRow(frames, y0, y0 + item.height))) continue
+      return { spot: { ...spotAt(room, wall, t, item), mountY: Math.round(y0 * 1000) / 1000 }, t }
+    }
+  }
+  return null
 }
 
 /**
@@ -174,7 +236,7 @@ export function snapToWall(doc: Doc, layout: Layout | undefined, item: WallItem,
     wallSegments(room).forEach(([a, b], wall) => {
       const d = norm(sub(b, a))
       const t = dot(sub(pt, a), d)
-      const r = bestOnWall(doc, layout, room, wall, t, item, exclude)
+      const r = (layout && stackOn(doc, layout, room, wall, item, pt, exclude)) || bestOnWall(doc, layout, room, wall, t, item, exclude)
       if (!r) return
       // Distance from the pointer to the spot on the wall line: the nearest wall wins, then the nearest spot.
       const onWall = add(a, scale(d, r.t))
@@ -185,7 +247,7 @@ export function snapToWall(doc: Doc, layout: Layout | undefined, item: WallItem,
 }
 
 /** Whether a placed wall piece hangs where snapToWall would leave it (on a wall, off doors). */
-export function onWallOk(doc: Doc, layout: Layout, item: WallItem, p: Pick<Placement, 'x' | 'y' | 'rotation' | 'id'>): boolean {
+export function onWallOk(doc: Doc, layout: Layout, item: WallItem, p: Pick<Placement, 'x' | 'y' | 'rotation' | 'id'> & { mountY?: number }): boolean {
   const s = snapToWall(doc, layout, item, v(p.x, p.y), p.id)
   return !!s && Math.hypot(s.x - p.x, s.y - p.y) < 0.02
 }
@@ -351,14 +413,14 @@ export function reconcileWallDecor(prev: Doc, next: Doc, report?: WallDecorRepor
         let best: { spot: WallSpot; d: number } | null = null
         if (room && segs[h.wall]) {
           const [a, b] = segs[h.wall]
-          const r = bestOnWall(next, cur, room, h.wall, (h.t / Math.max(1e-9, h.L)) * dist(a, b), it, p.id)
+          const r = bestOnWall(next, cur, room, h.wall, (h.t / Math.max(1e-9, h.L)) * dist(a, b), it, p.id, p.mountY)
           if (r) best = { spot: r.spot, d: 0 }
         }
         if (room && !best) {
           // That wall is gone or full: the nearest spot on another wall of the room.
           const pt = v(p.x, p.y)
           segs.forEach(([a, b], wall) => {
-            const r = bestOnWall(next, cur, room, wall, dot(sub(pt, a), norm(sub(b, a))), it, p.id)
+            const r = bestOnWall(next, cur, room, wall, dot(sub(pt, a), norm(sub(b, a))), it, p.id, p.mountY)
             const d = r && dist(pt, r.spot)
             if (r && d != null && (!best || d < best.d)) best = { spot: r.spot, d }
           })

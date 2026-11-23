@@ -64,7 +64,7 @@ const CHIP_IDS: Record<string, [string, string][]> = {
   'coffee-table': [['Classic', 'coffee-rect'], ['Round', 'coffee-round'], ['Small', 'coffee-small']],
   ottoman: [['Square', 'ottoman-sq'], ['Pouf', 'pouf'], ['Storage', 'ottoman-rect']],
   'side-table': [['Square', 'side'], ['C-shape', 'side-c']],
-  'wall-art': [['Small', 'art-sm'], ['Medium', 'art-md'], ['Wide', 'art-lg']],
+  'wall-art': [['Small', 'art-sm'], ['Medium', 'art-md'], ['Wide', 'art-land'], ['Tall', 'art-tall'], ['Large', 'art-lg']],
 }
 const STARTER = new Map(STARTER_CATALOG.map((p) => [p.id, p]))
 
@@ -73,8 +73,24 @@ function sizeChips(entry: CatalogEntry): SizeChip[] {
   if (entry.presets) return entry.presets.map((p) => ({ label: p.name, name: `${p.name} bed`, width: p.width, depth: p.depth }))
   return (CHIP_IDS[entry.category] ?? []).flatMap(([label, id]) => {
     const p = STARTER.get(id)
-    return p ? [{ label, name: p.name, width: p.width, depth: p.depth, height: p.height }] : []
+    return p ? [{ label, name: p.name, width: p.width, depth: p.depth, height: p.height, color: p.color, look: shapeLook(entry.category, p) }] : []
   })
+}
+
+/** How a size's thumbnail on the "Pick one" row tells it apart: art drawn tall, wide or small. */
+function shapeLook(category: string, p: { width: number; height: number }): ThumbLook | undefined {
+  if (category !== 'wall-art') return undefined
+  if (p.height > p.width * 1.6) return { tall: true }
+  if (p.width > p.height * 1.25) return { wide: true }
+  return p.width < 0.5 ? { scale: 0.72 } : undefined
+}
+
+/** Pieces whose card, on a phone with its size chips tucked away, opens a "Pick one" row of sizes. */
+const SIZE_FIRST = new Set(['wall-art'])
+/** Whether a card's size chips are hidden (the collapsed drawer on a phone). */
+const chipsHidden = (btn: HTMLElement) => {
+  const row = btn.parentElement?.querySelector('.buy-presets')
+  return !!row && getComputedStyle(row).display === 'none'
 }
 /** A "Pick one" card as a preset: the starter piece's name and size, in the pick's colour. */
 export function pickChip(pick: Pick): SizeChip | null {
@@ -261,7 +277,15 @@ export function goodPicks<T>(cands: T[], trial: (c: T) => PickTrial): T[] {
   return [cands[best]]
 }
 
-const article = (name: string) => (/^[aeiou]/i.test(name) ? 'an' : 'a')
+/**
+ * "a sofa", "an armchair", "a pair of curtains": the name with its article (curtains and the like
+ * are a pair, not "a curtains"; a starter name's "(pair)" note is dropped).
+ */
+export function withArticle(name: string): string {
+  const n = name.replace(/\s*\(pair\)\s*$/i, '')
+  if (/^(curtains|drapes|blinds|shutters)\b/i.test(n)) return `a pair of ${n}`
+  return `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n}`
+}
 
 /** `top` rides just above the drawer: the selected piece's actions, so the drawer can stay open. */
 export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
@@ -299,6 +323,9 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     if (x !== grid.scrollLeft || y !== grid.scrollTop) grid.scrollTo({ left: x, top: y })
   }, [hint, tab])
   const [popped, setPopped] = useState<{ key: string; n: number } | null>(null)
+  // A card's "Pick one" row of sizes (phones), by category; gone on a tab switch or a new hint.
+  const [sizePick, setSizePick] = useState<string | null>(null)
+  useEffect(() => setSizePick(null), [tab, hint])
   const popTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(popTimer.current), [])
   const celebrate = (key: string) => {
@@ -309,6 +336,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
 
   /** `chose`: the player picked this colour on a "Pick one" card (not a plain tap on the hinted card), so it's remembered as their taste. */
   const place = (entry: CatalogEntry, preset?: SizeChip, chose = false) => {
+    setSizePick(null)
     const st = useStore.getState()
     const item = presetItem(entry, uid(), preset)
     // A goal about one room puts the piece in that room if it fits; a goal about one piece puts it
@@ -327,7 +355,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     const fam = chose && preset?.color ? familyOf(entry.category) : undefined
     if (fam) useGame.getState().setTaste(fam, preset!.color!)
     const name = (preset ? preset.name : displayName(entry)).replace(/^(\w)(?=[a-z])/, (c) => c.toLowerCase())
-    st.notify(`Placed ${article(name)} ${name}${inRoom(res.roomName)}.`)
+    st.notify(`Placed ${withArticle(name)}${inRoom(res.roomName)}.`)
     celebrate(entry.category + (preset ? `:${preset.label}` : ''))
   }
   const placeMine = (item: Item) => {
@@ -385,6 +413,10 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     if (vetted.all >= 2 && first) firstPick = first.mine ? first.onClick : firstChip ? () => place(hintEntry, firstChip) : undefined
   }
   const showPicker = pickCount >= 2
+  const sizeEntry = sizePick ? ENTRIES.get(sizePick) : undefined
+  const sizeCards: PickCard[] = sizeEntry
+    ? sizeChips(sizeEntry).map((c) => ({ key: `${sizeEntry.category}:${c.label}`, label: c.label, name: c.name, category: sizeEntry.category, color: c.color ?? sizeEntry.color, look: c.look, onClick: () => place(sizeEntry, c) }))
+    : []
 
   return (
     <div className="buy-drawer" role="region" aria-label="Buy furniture">
@@ -421,6 +453,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
         ))}
       </div>
 
+      {sizeEntry && !(hintEntry && showPicker) && !selected && <HintPicker title={displayName(sizeEntry)} cards={sizeCards} popped={popped?.key} />}
       {hintEntry && showPicker && !selected && <HintPicker title={displayName(hintEntry)} goal={hint?.title} room={hintRoom} cards={pickCards} popped={popped?.key} />}
       {hintEntry && !showPicker && !selected && (
         <div className="feel-hint-pill" role="status">
@@ -477,7 +510,12 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
               const chips = sizeChips(entry)
               return (
                 <div key={cat} onKeyDown={cardArrows} className={`buy-card ${isPopped(cat) || popped?.key.startsWith(cat + ':') ? 'pop' : ''}${hint?.category === cat ? ' hinted' : ''}`} style={{ ['--i' as string]: k }} draggable onDragStart={(e) => onDrag(e, cat)}>
-                  <button className="buy-hit" onClick={() => (hint?.category === cat && firstPick ? firstPick() : place(entry))} aria-label={`Place ${article(name)} ${name.toLowerCase()}`}>
+                  <button className="buy-hit" onClick={(e) => {
+                      if (hint?.category === cat && firstPick) return firstPick()
+                      // On a phone the size chips are tucked away: the first tap offers the sizes instead.
+                      if (SIZE_FIRST.has(cat) && chips.length > 1 && sizePick !== cat && chipsHidden(e.currentTarget)) return setSizePick(cat)
+                      place(entry)
+                    }} aria-label={`Place ${withArticle(name.toLowerCase())}`}>
                     <span className="buy-thumb">
                       <ItemThumb category={cat} color={entry.color} size={78} />
                     </span>
@@ -487,7 +525,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
                   {chips.length > 0 && (
                     <span className="buy-presets">
                       {chips.map((pr) => (
-                        <button key={pr.label} tabIndex={-1} className="buy-preset" onClick={() => place(entry, pr)} aria-label={`Place ${article(pr.name)} ${pr.name.toLowerCase()}, ${footprint(pr.width, pr.depth, units)}`} title={`${pr.name}, ${footprint(pr.width, pr.depth, units)}`}>
+                        <button key={pr.label} tabIndex={-1} className="buy-preset" onClick={() => place(entry, pr)} aria-label={`Place ${withArticle(pr.name.toLowerCase())}, ${footprint(pr.width, pr.depth, units)}`} title={`${pr.name}, ${footprint(pr.width, pr.depth, units)}`}>
                           {pr.label}
                         </button>
                       ))}
@@ -564,7 +602,7 @@ function HintPicker({ title, goal, room, cards, popped }: { title: string; goal?
             type="button"
             className={`feel-pick-card${c.mine ? ' mine' : ''}${popped === c.key ? ' pop' : ''}`}
             onClick={c.onClick}
-            aria-label={c.mine ? `Place your ${c.name.toLowerCase()} from your boxes` : `Place ${article(c.name)} ${c.name.toLowerCase()}, ${c.label}${c.taste ? ', your style' : ''}`}
+            aria-label={c.mine ? `Place your ${c.name.toLowerCase()} from your boxes` : `Place ${withArticle(c.name.toLowerCase())}, ${c.label}${c.taste ? ', your style' : ''}`}
             title={c.mine ? c.name : `${c.name}, ${c.label}`}
           >
             <span className="feel-pick-thumb">

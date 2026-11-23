@@ -100,6 +100,8 @@ export interface Placement {
   rotation: number
   /** Placement id of the furniture this sits on (table lamps). Same layout. x/y stay absolute plan coordinates. */
   on?: string
+  /** Wall decor only: height (m) of the piece's bottom edge when it was hung above or below another frame. Unset: the category's usual height (see wallDecor.mountBottom). */
+  mountY?: number
 }
 
 export interface Layout {
