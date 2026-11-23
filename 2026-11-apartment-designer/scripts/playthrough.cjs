@@ -61,7 +61,7 @@ async function play(p, step) {
   await step('goals', async () => { await p.keyboard.press('Escape'); await p.locator('[class*="goal"]').first().click({ timeout: 3000 }) });
   await step('goals-closed', async () => { await p.keyboard.press('Escape'); });
   await step('style-picker', async () => { await p.keyboard.press('Escape'); await p.locator('.sty-btn').first().click({ timeout: 3000 }) });
-  for (const st of ['Lifelike', 'Clay', 'Blueprint', 'Scan', 'Cartoon']) await step(`style-${st.toLowerCase()}`, async () => { await p.waitForTimeout(600); if (!(await p.locator('.sty-pop').isVisible().catch(() => false))) { await p.locator('.sty-btn').first().click(); await p.waitForTimeout(400) } await p.locator('.sty-pop [role=menuitemradio], .sty-pop button').filter({ hasText: st }).first().click({ timeout: 3000 }); await p.waitForTimeout(800) });
+  for (const st of ['Lifelike', 'Clay', 'Scan', 'Cartoon']) await step(`style-${st.toLowerCase()}`, async () => { await p.waitForTimeout(600); if (!(await p.locator('.sty-pop').isVisible().catch(() => false))) { await p.locator('.sty-btn').first().click(); await p.waitForTimeout(400) } await p.locator('.sty-pop [role=menuitemradio], .sty-pop button').filter({ hasText: st }).first().click({ timeout: 3000 }); await p.waitForTimeout(800) });
   await step('build-mode', async () => { await p.keyboard.press('Escape'); await clickText(p, /^Build/) });
   await step('look-mode', () => clickText(p, /^Look/));
   await step('look-walk', async () => { await clickText(p, /walk|eye|inside/i) });

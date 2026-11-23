@@ -458,3 +458,50 @@ Rolled over:
 - The along-wall drag on a full wall barely moves.
 
 307 tests pass.
+
+## Round 15 (2026-11-23 11:58-13:30 UTC)
+
+Reviewers:
+- a fresh first-time player, start to finish
+- a game-UX audit asking "does it still feel like a game, not a tool?"
+- a returning player on small phones
+
+The audit found the core loop lean, but about 17 systems visible from minute one. The fresh player reached Dream home after about 12 taps (~3 minutes), then found remixing felt like losing everything.
+
+Shipped:
+- **Declutter with unlocks:**
+  - Desktop size chips appear on hover (Furnish 43 → 26 controls).
+  - Settings is down to Units, plus "Scan in 3D" and Keyboard shortcuts (34 → 24 on phone, 47 → 28 on desktop).
+  - The Classic editor is only reachable with `?classic`, and the Shop sheet loses its developer text.
+  - Home management moved to "+ Add a home" in the Designs sheet.
+  - Remix appears at Designer home, the Album after the first photo, the Mine tab once you own something, and Styles at Moving in. Blueprint left the game picker.
+  - The locked Evening chip is gone.
+  - Before Cozy, bonus goals fold into one row, and visitors and stickers show from Cozy, matching the Next chip.
+  - The Details sheet is slimmer, and the "?" button moved into Settings.
+  - Unlock lines appear on level-up cards.
+- **Pacing:**
+  - Dream home now also needs most of the bonus goals a pick can finish, with new small goals: art over seats and beds, living-room curtains, a bookshelf.
+  - The sample takes about 20 Next steps (was 11) and the empty layout 24 (was 15), enforced by tests.
+  - A walkway dead end found along the way is fixed.
+- **Remix without the loss:** a remix shows its own progress ("Remix: 3 of 5", with the twist emoji) instead of a star drop. The picker says your pieces wait in Mine and the design keeps its stars, and your own pieces come first on pick cards.
+- **Twists:** the Talk corner twist can be finished from the chip (`talkCornerSpot` in `pickSpot`). Rooms are matched for dining tables, beds and desks.
+- **Teaching:** a one-time drag lesson on the 4th piece (a glowing target ring, then "Nice placement!"), and two-step nudges only for the goal the chip is showing.
+- **After Dream home:** the chip says "Take its photo" until the design has a photo, then "Remix this home".
+- **Phones:**
+  - Landscape phones get the side drawer again (cards no longer fall under the dock).
+  - Plan-view taps reach furniture before wall decor, and decor badges sit outside the walls.
+  - A pinch on the HUD no longer zooms the page.
+  - The design menu flips up on the SE, and rename inputs are 16px (no iOS zoom) and scroll into view.
+  - The goals close button is sticky.
+  - The welcome card clears the camera buttons.
+  - Toasts use the full width and lead with the key word.
+  - Card names fit on a short laptop at 200% text.
+
+Rolled over:
+- The Mine tab label is clipped ("Mi") on iPhone 14.
+- Open-floor and fresh-spots remixes need a drag to finish.
+- Nailing the drag lesson gives a sparkle but no star.
+- Plan decor badges can overlap wall dimension labels.
+- Older iOS can still pinch-zoom (no gesturestart guard).
+
+314 tests pass.
