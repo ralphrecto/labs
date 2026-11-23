@@ -34,6 +34,10 @@ export interface Part {
   noShadow?: boolean
   /** A print's canvas or a mirror's glass: keeps a tint in the Clay look, so it doesn't read as a blank plaque. */
   art?: boolean
+  /** Keep this exact colour in Clay too (a TV's dark screen, which would otherwise vanish into white). */
+  keep?: boolean
+  /** No outline (fine surface detail, like a rug's weave, that ink lines would turn into loud stripes). */
+  noInk?: boolean
 }
 
 // Thumbnail palette (src/game/ItemThumb.tsx), so the 3D shares one look with the drawer.
@@ -163,8 +167,8 @@ export function PartMesh({ part, base, highlight }: { part: Part; base: string; 
   return (
     <group position={part.pos} rotation={part.rot}>
       <mesh geometry={geo} scale={scale} castShadow={!part.noShadow} receiveShadow>
-        <Surface role={part.fabric ? 'soft' : 'item'} color={color} highlight={tint} art={part.art} />
-        {(!round || kind === 'cyl' || (kind === 'ball' && lines)) && <Ink highlight={highlight} soft={round} />}
+        <Surface role={part.fabric ? 'soft' : 'item'} color={color} highlight={tint} art={part.art} keep={part.keep} />
+        {!part.noInk && (!round || kind === 'cyl' || (kind === 'ball' && lines)) && <Ink highlight={highlight} soft={round} />}
       </mesh>
       {hull && (
         <mesh geometry={geo} scale={scale} material={outlineMaterial(highlight ?? PAL.ink, highlight ? 1.8 : 1.5)} raycast={noRaycast} onBeforeRender={hullBeforeRender} />

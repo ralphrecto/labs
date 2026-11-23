@@ -22,7 +22,7 @@ import { isPackedBox, unpackAndCelebrate } from '../game/unpack'
 const ScanBackdrop = lazy(() => import('./ScanBackdrop').then((m) => ({ default: m.ScanBackdrop })))
 import { ScanPoints } from './ScanPoints'
 import { floorTexture, Ink, StyleContext, StyleEnvironment, StyleLights, STYLE_STAGE, Surface, useStyle, woodTexture, type StyleId } from './style'
-import { scanPalette, toonFloor, type ScanPalette } from '../scan/palette'
+import { realFloor, scanPalette, toonFloor, type ScanPalette } from '../scan/palette'
 import { toScanData } from '../scan/align'
 import { WindowModel, type WindowSpec } from './WindowModel'
 import { clearOfItems, routeTo, sharedDoorways, walkObstacles, walkStep, walkTarget, wallSegmentsForWalking, type ItemBox, type WallSeg } from './walkCollision'
@@ -218,7 +218,8 @@ function RoomMesh({ room, wallMode, selected, doorways }: { room: Room; wallMode
 }
 
 /**
- * What a room's floor looks like in the style: the scanned floor image (posterized for Cartoon),
+ * What a room's floor looks like in the style: the scanned floor image (smoothly posterized for
+ * Cartoon, contrast-lifted for Lifelike),
  * oak planks for Lifelike without a scan, or a flat color.
  */
 function useFloorLook(room: Room, base: THREE.BufferGeometry, style: StyleId, palette: ScanPalette | null) {
@@ -226,7 +227,7 @@ function useFloorLook(room: Room, base: THREE.BufferGeometry, style: StyleId, pa
   const useScan = !!img && (style === 'toon' || style === 'real')
   const scanned = useMemo(() => {
     if (!useScan || !img) return null
-    const look = style === 'toon' ? toonFloor(img) : img
+    const look = style === 'toon' ? toonFloor(img) : realFloor(img)
     const g = base.clone()
     const pos = g.getAttribute('position')
     const uv = new Float32Array(pos.count * 2)
@@ -235,7 +236,7 @@ function useFloorLook(room: Room, base: THREE.BufferGeometry, style: StyleId, pa
       uv[i * 2 + 1] = (pos.getZ(i) - img.y0) / (img.height * img.cell)
     }
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
-    return { geometry: g, map: floorTexture(look, style === 'toon') }
+    return { geometry: g, map: floorTexture(look) }
   }, [useScan, img, style, base])
   useEffect(() => () => {
     scanned?.geometry.dispose()

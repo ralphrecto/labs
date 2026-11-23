@@ -97,8 +97,10 @@ function skyTexture(kind: 'smooth' | 'bands' | 'clay' | 'dusk') {
     t.minFilter = THREE.NearestFilter
     t.generateMipmaps = false
   } else {
+    // Square, so round stars stay round on a roughly square pane.
+    const S = kind === 'dusk' ? 128 : 4
     const c = document.createElement('canvas')
-    c.width = 4
+    c.width = S
     c.height = 128
     const g = c.getContext('2d')!
     const grad = g.createLinearGradient(0, 0, 0, 128)
@@ -117,17 +119,21 @@ function skyTexture(kind: 'smooth' | 'bands' | 'clay' | 'dusk') {
       grad.addColorStop(1, '#f6fbff')
     }
     g.fillStyle = grad
-    g.fillRect(0, 0, 4, 128)
+    g.fillRect(0, 0, S, 128)
     if (kind === 'dusk') {
-      // A few stars in the dark upper half.
-      g.fillStyle = '#fff4d8'
-      for (const [x, y] of [[0, 9], [2, 22], [1, 37], [3, 15], [0, 51]]) g.fillRect(x, y, 1, 1)
+      // A few small round stars in the dark upper half, brightest ones with a soft halo.
+      for (const [x, y, r] of [[14, 12, 1.3], [52, 26, 1], [90, 9, 1.4], [111, 38, 1], [33, 44, 0.9], [74, 52, 1.1], [120, 18, 0.8]]) {
+        g.fillStyle = 'rgba(255,244,216,0.22)'
+        g.beginPath()
+        g.arc(x, y, r * 2.2, 0, Math.PI * 2)
+        g.fill()
+        g.fillStyle = '#fff4d8'
+        g.beginPath()
+        g.arc(x, y, r, 0, Math.PI * 2)
+        g.fill()
+      }
     }
     t = new THREE.CanvasTexture(c)
-    if (kind === 'dusk') {
-      t.magFilter = THREE.NearestFilter
-      t.wrapS = THREE.RepeatWrapping
-    }
   }
   t.colorSpace = THREE.SRGBColorSpace
   t.needsUpdate = true
@@ -163,6 +169,8 @@ interface SurfaceProps {
   side?: THREE.Side
   /** A print or mirror glass (furnitureKit Part.art): Clay keeps a faint tint of its colour. */
   art?: boolean
+  /** A TV screen (furnitureKit Part.keep): Clay keeps its own dark colour instead of going white. */
+  keep?: boolean
 }
 
 /**
@@ -203,7 +211,7 @@ function toonDusk(hex: string, dusk: boolean) {
   return '#' + new THREE.Color(hex).lerp(new THREE.Color('#7d8cc9'), 0.3).getHexString()
 }
 
-function SurfaceMaterial({ role, color, highlight, map, side, art }: SurfaceProps) {
+function SurfaceMaterial({ role, color, highlight, map, side, art, keep }: SurfaceProps) {
   const { style } = useStyle()
   const evening = useGame((s) => s.evening)
   const edge = role === 'cap' || role === 'trim' ? role : null
@@ -224,11 +232,13 @@ function SurfaceMaterial({ role, color, highlight, map, side, art }: SurfaceProp
   if (role === 'daylight') {
     // No sun on the floor after dark.
     if (style === 'blueprint' || style === 'scan' || evening) return <meshBasicMaterial visible={false} />
-    if (style === 'toon') return <meshBasicMaterial color="#fff6dc" transparent opacity={0.4} depthWrite={false} side={side} polygonOffset polygonOffsetFactor={-2} />
+    // The patch's vertex alpha (WindowModel) drops to nothing where furniture stands on it.
+    if (style === 'toon') return <meshBasicMaterial color="#fff6dc" vertexColors transparent opacity={0.4} depthWrite={false} side={side} polygonOffset polygonOffsetFactor={-2} />
     return (
       <meshBasicMaterial
         color={style === 'clay' ? '#ffffff' : color}
         alphaMap={fadeTexture()}
+        vertexColors
         transparent
         opacity={style === 'clay' ? 0.45 : 0.55}
         blending={style === 'clay' ? THREE.NormalBlending : THREE.AdditiveBlending}
@@ -271,7 +281,7 @@ function SurfaceMaterial({ role, color, highlight, map, side, art }: SurfaceProp
     case 'clay':
       return (
         <meshStandardMaterial
-          color={art ? mix(CLAY_ITEM, color, 0.42) : role === 'item' || role === 'soft' ? mix(CLAY_ITEM, color, 0.12) : role === 'floor' ? CLAY_FLOOR : edge ? color : CLAY}
+          color={keep ? color : art ? mix(CLAY_ITEM, color, 0.42) : role === 'item' || role === 'soft' ? mix(CLAY_ITEM, color, 0.12) : role === 'floor' ? CLAY_FLOOR : edge ? color : CLAY}
           roughness={1}
           emissive={emissive}
           emissiveIntensity={emissiveIntensity}
@@ -465,13 +475,14 @@ export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; ex
   )
 }
 
-/** A floor image as a texture, mapped in plan meters through the floor's UVs. */
-export function floorTexture(img: { width: number; height: number; rgba: Uint8ClampedArray }, crisp: boolean) {
+/** A floor image as a texture, mapped in plan meters through the floor's UVs. Smoothly filtered, with mipmaps. */
+export function floorTexture(img: { width: number; height: number; rgba: Uint8ClampedArray }) {
   const t = new THREE.DataTexture(img.rgba, img.width, img.height, THREE.RGBAFormat)
   t.colorSpace = THREE.SRGBColorSpace
-  t.magFilter = crisp ? THREE.NearestFilter : THREE.LinearFilter
-  t.minFilter = THREE.LinearFilter
-  t.generateMipmaps = false
+  t.magFilter = THREE.LinearFilter
+  t.minFilter = THREE.LinearMipmapLinearFilter
+  t.generateMipmaps = true
+  t.anisotropy = 4
   t.needsUpdate = true
   return t
 }

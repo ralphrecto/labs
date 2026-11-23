@@ -275,15 +275,128 @@ export function toonHex(color: string, bands = 6): string {
   return hex(...toonRGB(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, bands))
 }
 
-/** A cartoon copy of the floor image: posterized colors and slightly bigger flat patches. */
+/** A box blur of radius `r` over the seen (opaque) pixels, run twice so it is close to a gaussian. */
+function blurFloor(img: FloorImage, r: number): Float32Array {
+  const { width: w, height: h, rgba } = img
+  let src = new Float32Array(w * h * 3)
+  for (let k = 0; k < w * h; k++) for (let c = 0; c < 3; c++) src[k * 3 + c] = rgba[k * 4 + c]
+  for (let pass = 0; pass < 2; pass++) {
+    const dst = new Float32Array(src.length)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const k = y * w + x
+        if (!rgba[k * 4 + 3]) continue
+        let rr = 0
+        let gg = 0
+        let bb = 0
+        let n = 0
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            const xx = x + dx
+            const yy = y + dy
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue
+            const kk = yy * w + xx
+            if (!rgba[kk * 4 + 3]) continue
+            rr += src[kk * 3]
+            gg += src[kk * 3 + 1]
+            bb += src[kk * 3 + 2]
+            n++
+          }
+        dst[k * 3] = rr / n
+        dst[k * 3 + 1] = gg / n
+        dst[k * 3 + 2] = bb / n
+      }
+    src = dst
+  }
+  return src
+}
+
+/** Bilinear sample of a w x h RGB float image at (fx, fy) in pixel units, ignoring unseen pixels. */
+function sampleRGB(rgb: Float32Array, alpha: Uint8ClampedArray, w: number, h: number, fx: number, fy: number, out: number[]): boolean {
+  const x0 = Math.max(0, Math.min(w - 1, Math.floor(fx)))
+  const y0 = Math.max(0, Math.min(h - 1, Math.floor(fy)))
+  const x1 = Math.min(w - 1, x0 + 1)
+  const y1 = Math.min(h - 1, y0 + 1)
+  const tx = Math.max(0, Math.min(1, fx - x0))
+  const ty = Math.max(0, Math.min(1, fy - y0))
+  out[0] = out[1] = out[2] = 0
+  let wsum = 0
+  for (const [x, y, wt] of [
+    [x0, y0, (1 - tx) * (1 - ty)],
+    [x1, y0, tx * (1 - ty)],
+    [x0, y1, (1 - tx) * ty],
+    [x1, y1, tx * ty],
+  ]) {
+    const k = y * w + x
+    if (!alpha[k * 4 + 3] || wt <= 0) continue
+    out[0] += rgb[k * 3] * wt
+    out[1] += rgb[k * 3 + 1] * wt
+    out[2] += rgb[k * 3 + 2] * wt
+    wsum += wt
+  }
+  if (!wsum) return false
+  out[0] /= wsum
+  out[1] /= wsum
+  out[2] /= wsum
+  return true
+}
+
+/**
+ * A cartoon copy of the floor image: blurred first (so scan speckle doesn't become a pixel
+ * mosaic), upsampled 3x so the colour bands get smooth outlines, then posterized into flat patches.
+ */
 export function toonFloor(img: FloorImage): FloorImage {
-  const out = new Uint8ClampedArray(img.rgba.length)
-  for (let k = 0; k < img.width * img.height; k++) {
-    if (!img.rgba[k * 4 + 3]) continue
-    const [r, g, b] = toonRGB(img.rgba[k * 4] / 255, img.rgba[k * 4 + 1] / 255, img.rgba[k * 4 + 2] / 255, 5)
-    out[k * 4] = r * 255
-    out[k * 4 + 1] = g * 255
-    out[k * 4 + 2] = b * 255
+  const { width: w, height: h } = img
+  const blurred = blurFloor(img, 1)
+  const up = Math.max(1, Math.min(3, Math.floor(1536 / Math.max(w, h))))
+  const W = w * up
+  const H = h * up
+  const out = new Uint8ClampedArray(W * H * 4)
+  const c = [0, 0, 0]
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const fx = (x + 0.5) / up - 0.5
+      const fy = (y + 0.5) / up - 0.5
+      // Unseen pixels stay unseen (transparent).
+      const sk = Math.min(h - 1, Math.floor(y / up)) * w + Math.min(w - 1, Math.floor(x / up))
+      if (!img.rgba[sk * 4 + 3]) continue
+      if (!sampleRGB(blurred, img.rgba, w, h, fx, fy, c)) continue
+      const [r, g, b] = toonRGB(c[0] / 255, c[1] / 255, c[2] / 255, 5)
+      const k = (y * W + x) * 4
+      out[k] = r * 255
+      out[k + 1] = g * 255
+      out[k + 2] = b * 255
+      out[k + 3] = 255
+    }
+  return { ...img, width: W, height: H, cell: img.cell / up, rgba: out }
+}
+
+/**
+ * The floor image for Lifelike: a scan's colours come out washed out (a rug barely shows on the
+ * boards), so stretch the contrast around the floor's average and add back a little saturation.
+ */
+export function realFloor(img: FloorImage): FloorImage {
+  const { width: w, height: h, rgba } = img
+  const soft = new Float32Array(w * h * 3)
+  for (let k = 0; k < w * h; k++) for (let c = 0; c < 3; c++) soft[k * 3 + c] = rgba[k * 4 + c]
+  let sum = 0
+  let n = 0
+  for (let k = 0; k < w * h; k++) {
+    if (!rgba[k * 4 + 3]) continue
+    sum += 0.299 * soft[k * 3] + 0.587 * soft[k * 3 + 1] + 0.114 * soft[k * 3 + 2]
+    n++
+  }
+  const mean = n ? sum / n : 128
+  const out = new Uint8ClampedArray(rgba.length)
+  for (let k = 0; k < w * h; k++) {
+    if (!rgba[k * 4 + 3]) continue
+    const r = soft[k * 3]
+    const g = soft[k * 3 + 1]
+    const b = soft[k * 3 + 2]
+    const l = 0.299 * r + 0.587 * g + 0.114 * b
+    // Lightness away from the mean x1.5; colour away from grey x1.25.
+    const l2 = mean + (l - mean) * 1.5
+    for (let ch = 0; ch < 3; ch++) out[k * 4 + ch] = l2 + ([r, g, b][ch] - l) * 1.25
     out[k * 4 + 3] = 255
   }
   return { ...img, rgba: out }

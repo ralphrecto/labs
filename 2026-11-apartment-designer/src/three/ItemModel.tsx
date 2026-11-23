@@ -305,7 +305,7 @@ function cabinet(item: Item): Part[] {
     out.push({ size: [Math.min(0.32, tw * 0.3), 0.02, 0.16], pos: [0, h + 0.01, tz], color: PAL.dark })
     out.push({ size: [0.06, 0.07, 0.03], pos: [0, h + 0.055, tz], color: PAL.dark })
     out.push({ size: [tw, th, 0.04], pos: [0, h + 0.09 + th / 2, tz], color: PAL.dark })
-    out.push({ size: [tw - 0.04, th - 0.04, 0.005], pos: [0, h + 0.09 + th / 2, tz + 0.021], color: PAL.screen, noShadow: true })
+    out.push({ size: [tw - 0.04, th - 0.04, 0.005], pos: [0, h + 0.09 + th / 2, tz + 0.021], color: PAL.screen, noShadow: true, keep: true })
   } else {
     // sideboard and wardrobe: doors with vertical pulls meeting in the middle of each pair
     const cols = clamp(Math.round(w / (wardrobe ? 0.5 : 0.42)), 1, 6)
@@ -420,7 +420,8 @@ function lamp(item: Item): Part[] {
     { kind: 'cyl', size: [s * 0.65, 0.03, s * 0.65], pos: [0, 0.015, 0], top: 0.85, seg: 16, color: PAL.dark },
     { kind: 'cyl', size: [0.025, h - shadeH - 0.02, 0.025], pos: [0, (h - shadeH) / 2, 0], seg: 12, color: PAL.metal },
     { kind: 'ball', size: [0.07, 0.09, 0.07], pos: [0, h - shadeH * 0.6, 0], color: PAL.shade, noShadow: true },
-    { kind: 'cyl', size: [s, shadeH, s], pos: [0, h - shadeH / 2, 0], top: 0.72, seg: 16, fabric: true },
+    // The shade is lit fabric: it doesn't cast a solid blob floating beside the stem's thin shadow.
+    { kind: 'cyl', size: [s, shadeH, s], pos: [0, h - shadeH / 2, 0], top: 0.72, seg: 16, fabric: true, noShadow: true },
   ]
 }
 
@@ -452,15 +453,69 @@ function rug(item: Item): Part[] {
   const { width: w, depth: d, color } = item
   const h = Math.max(0.006, item.height)
   const b = clamp(Math.min(w, d) * 0.08, 0.05, 0.16)
+  const fw = w - 2 * b
+  const fd = d - 2 * b
   const parts: Part[] = [
-    { size: [w, h * 0.7, d], pos: [0, h * 0.35, 0], color: shade(color, 0.82), fabric: true },
-    { size: [w - 2 * b, h * 0.85, d - 2 * b], pos: [0, h * 0.425, 0], fabric: true },
-    { size: [w - 2 * b - 0.08, h * 0.92, d - 2 * b - 0.08], pos: [0, h * 0.46, 0], color: shade(color, 1.16), fabric: true },
-    { size: [w - 2 * b - 0.12, h * 0.96, d - 2 * b - 0.12], pos: [0, h * 0.48, 0], fabric: true },
+    // a dark binding all round, then the field
+    { size: [w, h * 0.7, d], pos: [0, h * 0.35, 0], color: shade(color, 0.6), fabric: true, noShadow: true },
+    { size: [fw, h * 0.85, fd], pos: [0, h * 0.425, 0], fabric: true, noShadow: true },
+    { size: [fw - 0.08, h * 0.92, fd - 0.08], pos: [0, h * 0.46, 0], color: shade(color, 1.2), fabric: true, noShadow: true },
+    { size: [fw - 0.12, h * 0.96, fd - 0.12], pos: [0, h * 0.48, 0], fabric: true, noShadow: true },
   ]
-  const m = Math.min(w - 2 * b, d - 2 * b) * 0.38
-  if (m > 0.12) parts.push({ size: [m, h, m], pos: [0, h / 2, 0], rot: [0, Math.PI / 4, 0], color: shade(color, 1.16), fabric: true })
+  // A faint woven texture: thin stripes across the field, a touch darker than it.
+  const inner = { w: fw - 0.12, d: fd - 0.12 }
+  const long = inner.w >= inner.d
+  const span = long ? inner.w : inner.d
+  const n = Math.floor(span / 0.09)
+  for (let i = 1; i < n; i += 2) {
+    const t = -span / 2 + (span / n) * i
+    parts.push({
+      size: long ? [0.025, h * 0.97, inner.d] : [inner.w, h * 0.97, 0.025],
+      pos: long ? [t, h * 0.485, 0] : [0, h * 0.485, t],
+      color: shade(color, 0.93),
+      fabric: true,
+      noShadow: true,
+      noInk: true,
+    })
+  }
+  const m = Math.min(fw, fd) * 0.38
+  if (m > 0.12) parts.push({ size: [m, h, m], pos: [0, h / 2, 0], rot: [0, Math.PI / 4, 0], color: shade(color, 0.72), fabric: true, noShadow: true })
   return parts
+}
+
+/** What the floor under a piece looks like in each style, for a rug to stand out against. */
+const FLOOR_TONE: Partial<Record<string, string>> = { real: '#cfae86', toon: '#d9a874', clay: '#cbbca8', classic: '#ddd3bf' }
+
+/**
+ * A rug's colour, nudged so it reads against the floor: when its lightness is within `gap` of the
+ * floor's, it moves away from the floor (darker on a light floor, lighter on a dark one) to `gap`.
+ * Hue and saturation stay, so a sand rug on light oak becomes a deeper caramel, not a new colour.
+ */
+export function rugTone(rug: string, floor: string, gap = 0.2): string {
+  const r = hsl(rug)
+  const f = hsl(floor)
+  if (!r || !f) return rug
+  const d = r[2] - f[2]
+  if (Math.abs(d) >= gap) return rug
+  const darker = f[2] - gap
+  const lighter = f[2] + gap
+  // Keep the side the rug is already on, unless there's no room on that side.
+  let l = d < 0 || (d === 0 && f[2] >= 0.5) ? darker : lighter
+  if (l < 0.12) l = lighter
+  if (l > 0.9) l = darker
+  return hslHex(r[0], Math.min(1, r[1] * 1.1), clamp(l, 0.08, 0.94))
+}
+
+/** The floor colour under a placed rug in the current style (the scanned room colour when there is one). */
+function useFloorTone(item: Item): string | undefined {
+  const { style, palette } = useStyle()
+  const roomId = useStore((st) => {
+    if (item.category !== 'rug') return undefined
+    const p = activeLayout(st.doc).placements.find((x) => x.itemId === item.id)
+    return p && st.doc.rooms.find((r) => pointInPolygon({ x: p.x, y: p.y }, r.polygon))?.id
+  })
+  if (item.category !== 'rug') return undefined
+  return (roomId && palette?.floorColor[roomId]) || FLOOR_TONE[style]
 }
 
 function ottoman(item: Item): Part[] {
@@ -825,12 +880,16 @@ function useMountY(item: Item): number | undefined {
 
 export function ProceduralItem({ item, highlight }: { item: Item; highlight?: string }) {
   const { style } = useStyle()
-  const base = styleBase(style, item.category, item.color)
+  // A rug takes a tone that stands out from the floor it lies on.
+  const floor = useFloorTone(item)
+  const tone = floor ? rugTone(item.color, floor) : item.color
+  const look = useMemo(() => (tone === item.color ? item : { ...item, color: tone }), [item, tone])
+  const base = styleBase(style, item.category, tone)
   // A pendant's cord runs up to the real ceiling over its real table.
   const hostH = useStore((st) => (item.category === 'pendant' ? pendantHostHeight(st.doc, item.id) : undefined))
   const ceiling = useStore((st) => (item.category === 'pendant' ? pendantCeiling(st.doc, item.id) : undefined))
   const mountY = useMountY(item)
-  const specs = useMemo(() => parts(item, { hostH, ceiling, mountY }), [item, hostH, ceiling, mountY])
+  const specs = useMemo(() => parts(look, { hostH, ceiling, mountY }), [look, hostH, ceiling, mountY])
   const lineStyle = style === 'blueprint' || style === 'scan' || style === 'classic'
   const hl = ORGANIC.has(item.category) && !lineStyle ? undefined : highlight
   return (
