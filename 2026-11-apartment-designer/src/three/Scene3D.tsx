@@ -776,8 +776,9 @@ function Scene({
         if (alt) spot = alt
         else if (!behindWall(cur, item.depth, cam)) return
       }
-      d.lastClean = { ...cur, x: spot.x, y: spot.y, rotation: spot.rotation }
-      s.updatePlacement(d.id, { x: spot.x, y: spot.y, rotation: spot.rotation })
+      d.lastClean = { ...cur, x: spot.x, y: spot.y, rotation: spot.rotation, mountY: spot.mountY }
+      // mountY: a frame dropped on another frame hangs above or below it; otherwise it goes back to the usual height.
+      s.updatePlacement(d.id, { x: spot.x, y: spot.y, rotation: spot.rotation, mountY: spot.mountY })
       return
     }
     const w = hit(e)

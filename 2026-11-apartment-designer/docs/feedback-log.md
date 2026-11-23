@@ -428,3 +428,33 @@ Rolled over:
 - The measure step can snap to a diagonal.
 
 278 tests pass.
+
+## Round 14 (2026-11-23 05:22-06:45 UTC)
+
+Two implementers started on the round 13 leftovers right away. Alongside them, two reviewers ran: a gallery-wall decorator and a QA check of on-demand rendering. Two more implementers then fixed what those reviewers found, working on the merged code.
+
+Shipped:
+- **Wall decor follows the room:** `reconcileWallDecor` re-hangs each piece at the same spot along its wall after room, wall or opening edits. Curtains follow their window. Anything that no longer fits goes to Mine with a toast.
+- **Curtains fit their window:** `curtainSpan` gives the window width plus 30 cm each side, clamped at wall ends and doors. The rod and folds scale with the width.
+- **Seeing what you hung:**
+  - Selecting or buying a wall piece on a cut-away wall turns the camera to face it.
+  - A selected hidden piece shows as a ghost.
+  - First load, Look and recenter pick the view that shows the most decor (`decoratedDir`).
+  - A 3D drag no longer sends a frame to a hidden wall.
+- **Gallery walls:** a frame dropped on another hangs above or below it (`Placement.mountY`), and frames only block frames at overlapping heights.
+- **Art variety:** six motifs, landscape and tall prints, Large canvas keeps its blue, frame finishes (Black, White, Oak, Brass), tinted canvases in Clay, and an evening picture light.
+- **Wall decor polish:** bigger plan badges on touch screens, drawn above furniture. "Placed a pair of curtains". On phones, Framed art opens a size picker.
+- **Measuring:** taps prefer the wall over a corner, and a slanted line gets "That line isn't along a wall".
+- **Text scales:** every font size is in rem, and the fixed 13px root that blocked the browser setting is gone. Pixel-identical at default; at 200% text the drawers grow instead of clipping.
+- **Short screens:** laptops at 200% zoom (720x450) get the bottom-sheet drawer.
+- **Rendering:**
+  - The canvas redraws after a WebGL context restore and on pageshow.
+  - Orbit damping gets its tail drawn.
+  - A resize with no size change no longer reframes the camera.
+
+Rolled over:
+- 720x450 with both 200% zoom and 200% text still clips card names.
+- An item used in two layouts shares one curtain width.
+- The along-wall drag on a full wall barely moves.
+
+307 tests pass.
