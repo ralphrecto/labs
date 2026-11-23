@@ -429,7 +429,7 @@ Rolled over:
 
 278 tests pass.
 
-## Round 14 (2026-11-23 05:22-06:45 UTC)
+## Round 14 (2026-11-23 05:22-06:00 UTC)
 
 Two implementers started on the round 13 leftovers right away. Alongside them, two reviewers ran: a gallery-wall decorator and a QA check of on-demand rendering. Two more implementers then fixed what those reviewers found, working on the merged code.
 
