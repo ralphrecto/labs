@@ -432,6 +432,7 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
   const scanDraft = useStore((s) => s.scanDraft)
   const ready = useScanRuntime((s) => s.entries[scanId]?.status === 'ready')
   const [text, setText] = useState('')
+  const [skewed, setSkewed] = useState(false)
 
   // Put the plan into the real measure mode for this scan while the step is open.
   useEffect(() => {
@@ -481,9 +482,9 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
       </Title>
 
       <div className="onb-plan g-card">
-        <PlanView />
+        <PlanView onMeasureSkew={setSkewed} />
         <div className={`onb-plan-hint${draft && !draft.b ? ' second' : ''}`}>
-          <IconRuler /> {hint}
+          <IconRuler /> {draft?.b && skewed ? 'That line isn’t along a wall. Tap two points on the same wall.' : hint}
         </div>
         <div className="onb-units" role="group" aria-label="Units">
           <button className={`g-chip${units === 'metric' ? ' on' : ''}`} onClick={() => useStore.getState().setUnits('metric')}>
