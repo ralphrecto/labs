@@ -459,7 +459,7 @@ Rolled over:
 
 307 tests pass.
 
-## Round 15 (2026-11-23 11:58-13:30 UTC)
+## Round 15 (2026-11-23 11:58-12:55 UTC)
 
 Reviewers:
 - a fresh first-time player, start to finish
