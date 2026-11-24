@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { PlanView } from '../components/PlanView'
 import { formatLength, formatLengths, isWildScale, parseLengthNear, suggestLength } from '../model/units'
-import { calibrate, planToScan, toScanData } from '../scan/align'
+import { calibrate, planToScan, svgTransform, toScanData } from '../scan/align'
 import { SCAN_ACCEPT, isScanFileName } from '../scan/importers'
-import { importScanFile, scanCenter, scanEntry, useScanRuntime } from '../scan/runtime'
+import { importScanFile, scanCenter, scanCorners, scanEntry, underlayOf, useScanRuntime } from '../scan/runtime'
 import { SAMPLE_TRUTH, sampleFilePoint, samplePly } from '../scan/sampleScan'
 import { placementShift } from '../scan/apply'
 import { notScanFileMessage, reviewChoice, useScanUI, type ReviewObject } from '../scan/scanUi'
-import { useAnalysis } from '../analysis'
-import { activeLayout, loadSample, newEmptyDoc, switchHome, useStore } from '../store'
+import { loadSample, newEmptyDoc, switchHome, useStore } from '../store'
 import { listHomes } from '../storage'
-import { nextGoal, scoreHome } from './goals'
+import { useHomeScore, useNextGoal } from './Goals'
 import { useGame } from './gameStore'
 import { IconCheck, IconHome, IconRuler, IconScan, IconSparkle } from './icons'
 import './onboarding.css'
@@ -314,6 +313,9 @@ function ScanStep({ onImported, adding }: { onImported: (id: string, sample: boo
         <Tip n={3} art={<TipArtExport />} title="Send it here">
           Tap <b>Share</b>, then <b>Export</b>, choose <b>PLY</b> (or SPZ), then pick the file here. AirDrop or Save to Files works.
         </Tip>
+        <Tip n={4} art={<TipArtTape />} title="Measure one wall">
+          Have a tape measure handy: measure one wall, end to end. Phone scans don’t know their true size, and that one number sets it.
+        </Tip>
       </ol>
 
       <div
@@ -414,6 +416,17 @@ function TipArtExport() {
   )
 }
 
+function TipArtTape() {
+  return (
+    <svg viewBox="0 0 64 64" aria-hidden>
+      <rect x="8" y="20" width="30" height="30" rx="9" fill="var(--g-sun)" stroke="#e6a52c" strokeWidth="3" />
+      <circle cx="23" cy="35" r="6" fill="#fdf3e4" stroke="#e6a52c" strokeWidth="2.5" />
+      <rect x="36" y="40" width="22" height="9" rx="2" fill="#fdf3e4" stroke="var(--g-ink)" strokeWidth="2.5" />
+      <path d="M42 40v4M47 40v3M52 40v4" stroke="var(--g-ink)" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 /** A house outline with a scanning beam sweeping over it. */
 function ScanningArt() {
   return (
@@ -433,6 +446,23 @@ function MeasureStep({ scanId, onNext }: { scanId: string; onNext: () => void })
   const ready = useScanRuntime((s) => s.entries[scanId]?.status === 'ready')
   const [text, setText] = useState('')
   const [skewed, setSkewed] = useState(false)
+  // The length box appears on the second end's pointerdown, and the mousedown that follows moves
+  // focus to the page (the plan isn't focusable): focus the box once the tap is over, so the player
+  // can type the length straight away.
+  const hasEnd = scanDraft?.scanId === scanId && !!scanDraft.b
+  useEffect(() => {
+    if (!hasEnd) return
+    const focus = () => document.getElementById('onb-length-input')?.focus({ preventScroll: true })
+    focus()
+    const t = setTimeout(focus, 0)
+    window.addEventListener('pointerup', focus, { once: true })
+    window.addEventListener('click', focus, { once: true })
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('pointerup', focus)
+      window.removeEventListener('click', focus)
+    }
+  }, [hasEnd])
 
   // Put the plan into the real measure mode for this scan while the step is open.
   useEffect(() => {
@@ -979,15 +1009,59 @@ function DetectArt() {
 
 // ---------------------------------------------------------------- 5 · done
 
+/**
+ * The player's own place from above: each scan's top-down picture (what's on the floor, in its own
+ * colors) with the rooms found in it outlined. Falls back to the house drawing when there's no scan
+ * to show (or it isn't loaded).
+ */
+function ScanSnapshot({ fallback }: { fallback: ReactNode }) {
+  const scans = useStore((s) => s.doc.scans ?? [])
+  const rooms = useStore((s) => s.doc.rooms)
+  const entries = useScanRuntime((s) => s.entries)
+  const pics = useMemo(
+    () =>
+      scans.flatMap((ref) => {
+        if (!ref.visible || entries[ref.id]?.status !== 'ready') return []
+        const img = underlayOf(ref, 'top')
+        const corners = scanCorners(ref)
+        return img && corners ? [{ ref, img, corners }] : []
+      }),
+    [scans, entries],
+  )
+  if (!pics.length) return <>{fallback}</>
+  // Framed on the rooms found in it (a scan's bounds run past its walls); the scan itself without them.
+  const pts = rooms.length ? rooms.flatMap((r) => r.polygon) : pics.flatMap((p) => p.corners)
+  const minX = Math.min(...pts.map((p) => p.x))
+  const minY = Math.min(...pts.map((p) => p.y))
+  const w = Math.max(0.5, Math.max(...pts.map((p) => p.x)) - minX)
+  const h = Math.max(0.5, Math.max(...pts.map((p) => p.y)) - minY)
+  const pad = Math.max(w, h) * 0.06
+  const stroke = Math.max(w, h) * 0.012
+  return (
+    <svg className="onb-snap" viewBox={`${minX - pad} ${minY - pad} ${w + pad * 2} ${h + pad * 2}`} role="img" aria-label="Your place, seen from above">
+      {pics.map(({ ref, img }) => {
+        const u = img.underlay
+        return (
+          <g key={ref.id} transform={svgTransform(ref)}>
+            <image href={img.href} x={u.u0} y={u.v0} width={u.width * u.pixel} height={u.height * u.pixel} preserveAspectRatio="none" />
+          </g>
+        )
+      })}
+      {rooms.map((r) => (
+        <polygon key={r.id} points={r.polygon.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke="var(--g-coral)" strokeWidth={stroke} strokeLinejoin="round" opacity={0.85} />
+      ))}
+    </svg>
+  )
+}
+
 const CONFETTI = ['var(--g-coral)', 'var(--g-sun)', 'var(--g-sage)', 'var(--g-sky)', 'var(--g-plum)']
 
 function Done({ doorNext, onAddRoom }: { doorNext?: boolean; onAddRoom: () => void }) {
-  // The same goal the Next chip shows once the home opens.
-  const doc = useStore((s) => s.doc)
-  const layout = activeLayout(doc)
-  const analysis = useAnalysis(doc, layout)
-  const first = useMemo(() => nextGoal(scoreHome(doc, layout, analysis)), [doc, layout, analysis])
-  const hasScan = (doc.scans ?? []).length > 0
+  // The same goal the Next chip shows once the home opens: the same score (today's visitor in it)
+  // and the same pick (never a piece with nowhere to go).
+  const score = useHomeScore()
+  const first = useNextGoal(score)
+  const hasScan = useStore((s) => (s.doc.scans ?? []).length > 0)
   return (
     <div className="onb-center onb-done">
       <div className="onb-confetti" aria-hidden>
@@ -1005,7 +1079,7 @@ function Done({ doorNext, onAddRoom }: { doorNext?: boolean; onAddRoom: () => vo
         ))}
       </div>
       <div className="onb-done-art">
-        <HouseArt />
+        <ScanSnapshot fallback={<HouseArt />} />
         <IconSparkle className="onb-spark s1" />
         <IconSparkle className="onb-spark s2" />
         <IconSparkle className="onb-spark s3" />

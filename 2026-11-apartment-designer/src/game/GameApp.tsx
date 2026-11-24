@@ -246,6 +246,51 @@ function ghostPoints(item: Item, at: PlaceAt, stage: HTMLElement | null) {
   return pts.every((q) => q) ? pts.map((q) => ({ x: q!.x - r.left, y: q!.y - r.top })) : null
 }
 
+/** Move-in day's intro: on the raw scan, then a veil fades in, the style swaps under it, and it fades out. */
+const INTRO_SCAN_MS = 1500
+const INTRO_FADE_MS = 700
+type IntroPhase = 'scan' | 'veil' | 'out' | null
+
+/**
+ * Move-in day opens on the player's own scan (round 18): a moment in the Scan style with a beam
+ * sweeping over it, then a soft fade into their chosen style (about 2 s in all). Skipped with
+ * reduced motion, on the plan, when the player's style already is Scan, and when no scan is loaded
+ * and visible (nothing that renders quickly).
+ */
+function useScanIntro(phase: string, view: string): IntroPhase {
+  const prev = useRef(phase)
+  const [intro, setIntro] = useState<IntroPhase>(null)
+  useEffect(() => {
+    const was = prev.current
+    prev.current = phase
+    if (was !== 'onboarding' || phase !== 'play' || reduceMotion || view !== '3d') return
+    if (useGame.getState().renderStyle === 'scan') return
+    const ready = (useStore.getState().doc.scans ?? []).some((r) => r.visible && scanEntry(r.id)?.status === 'ready')
+    if (!ready) return
+    setIntro('scan')
+    // The clock starts on the first frames the scene actually paints (mounting the 3D view can take
+    // a moment on a slow phone), so the scan is on screen for the whole sweep.
+    const timers: ReturnType<typeof setTimeout>[] = []
+    let raf = requestAnimationFrame(() => {
+      raf = requestAnimationFrame(() => {
+        timers.push(
+          setTimeout(() => setIntro('veil'), INTRO_SCAN_MS),
+          setTimeout(() => setIntro('out'), INTRO_SCAN_MS + INTRO_FADE_MS * 0.4),
+          setTimeout(() => setIntro(null), INTRO_SCAN_MS + INTRO_FADE_MS),
+        )
+      })
+    })
+    return () => {
+      cancelAnimationFrame(raf)
+      timers.forEach(clearTimeout)
+      setIntro(null)
+    }
+    // Only on the move from onboarding into play; the view is read at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase])
+  return intro
+}
+
 function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | null }) {
   const stageRef = useRef<HTMLDivElement>(null)
   const dragged = useRef<Dragged | null>(null)
@@ -271,7 +316,9 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
   const phase = useGame((s) => s.phase)
   const mode = useGame((s) => s.mode)
   const cam = useCam()
-  const style = useGame((s) => s.renderStyle)
+  const playerStyle = useGame((s) => s.renderStyle)
+  const intro = useScanIntro(phase, view)
+  const style = intro === 'scan' || intro === 'veil' ? 'scan' : playerStyle
   // A room just given a mood: the view eases there for a moment (round 17).
   const moodFocus = useMoodFocus()
   const control = useMemo(
@@ -328,6 +375,13 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
     >
       {phase === 'onboarding' ? null : view === '3d' ? <Scene3D control={control} /> : <PlanView inset={inset} />}
       {phase === 'play' && mode !== 'look' && <SceneItems />}
+      {intro === 'scan' && (
+        <div className="hud-intro" aria-hidden>
+          <div className="hud-intro-beam" />
+          <span className="hud-intro-tag">Your scan</span>
+        </div>
+      )}
+      {(intro === 'veil' || intro === 'out') && <div className="hud-intro-veil" style={{ animationDuration: `${INTRO_FADE_MS}ms` }} aria-hidden />}
       {ghost && (
         <svg className="hud-drop-ghost" aria-hidden>
           <polygon points={ghost.map((q) => `${q.x},${q.y}`).join(' ')} />

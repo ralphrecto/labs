@@ -9,10 +9,24 @@ describe('friendlyRoomName', () => {
   })
   it('keeps a real name and guesses from furniture otherwise', () => {
     expect(friendlyRoomName('Kitchen.ply', [{ category: 'bed' }])).toBe('Kitchen')
-    expect(friendlyRoomName('Scan 2026-11-20 14.32', [])).toBe('Living room')
+    expect(friendlyRoomName('Scan 2026-11-20 14.32', [])).toBe('Your room')
+    expect(friendlyRoomName("Sam's Bedroom.ply", [])).toBe("Sam's Bedroom")
     expect(friendlyRoomName('Scan 2026-11-20 14.32', [{ category: 'chair' }, { category: 'bed' }])).toBe('Bedroom')
     expect(friendlyRoomName('3DGS_abc123', [{ category: 'desk' }])).toBe('Office')
     expect(friendlyRoomName('IMG_0042', [{ category: 'dining-table' }])).toBe('Dining room')
+  })
+})
+
+describe('friendlyRoomName for file slugs (round 18)', () => {
+  it('names the room type a file slug mentions, never the slug itself', () => {
+    expect(friendlyRoomName('my-living-room.ply', [{ category: 'bed' }])).toBe('Living room')
+    expect(friendlyRoomName('master_bedroom.spz', [])).toBe('Bedroom')
+    expect(friendlyRoomName('Sample living room.ply', [])).toBe('Living room')
+  })
+  it('guesses from the furniture, or says "Your room"', () => {
+    expect(friendlyRoomName('apartment-scan.ply', [{ category: 'sofa' }])).toBe('Living room')
+    expect(friendlyRoomName('My apartment.ply', [{ category: 'coffee-table' }])).toBe('Living room')
+    expect(friendlyRoomName('flat_01.ply', [{ category: 'chair' }])).toBe('Your room')
   })
 })
 

@@ -65,16 +65,39 @@ export function isGenericScanName(name: string) {
   return false
 }
 
-/** Name for the found room: the file's name if it says something, else a guess from the furniture. */
+/** Room types a scan's file name may mention, and the name the room gets for each. */
+const ROOM_WORDS: [RegExp, string][] = [
+  [/living|lounge|family ?room|sitting/i, 'Living room'],
+  [/bed ?room|master|guest ?room|nursery|kids? ?room/i, 'Bedroom'],
+  [/kitchen/i, 'Kitchen'],
+  [/dining/i, 'Dining room'],
+  [/office|study|den\b/i, 'Office'],
+  [/bath|shower|wc\b|toilet/i, 'Bathroom'],
+  [/hall|entry|foyer/i, 'Hallway'],
+  [/studio|loft/i, 'Studio'],
+]
+
+/**
+ * Name for the found room. The room name shows on the plan, on the piece labels and in the goals,
+ * so a file name ("my-living-room", "Scan 2026-11-20") never becomes it. A name the player typed
+ * themselves ("Sam's bedroom", "Kitchen") is kept; a file slug that names a room type gives that
+ * type ("Living room"); otherwise the furniture says what the room is, or it's just "Your room".
+ */
 export function friendlyRoomName(fileName: string, objects: { category: string }[]) {
   const name = fileName.trim().replace(/\.[a-z0-9]+$/i, '')
-  if (!isGenericScanName(name)) return name
-  const has = (c: string) => objects.some((o) => o.category === c)
+  const words = name.replace(/[-_.]+/g, ' ')
+  const type = ROOM_WORDS.find(([re]) => re.test(words))?.[1]
+  // A slug (dashes or underscores, no spaces) or an all-lowercase name reads as a file, not a name.
+  const slug = /[-_]/.test(name) && !/\s/.test(name)
+  const typed = !slug && !isGenericScanName(name) && /[A-Z]/.test(name) && !/^sample\b/i.test(name)
+  if (type && typed) return name
+  if (type) return type
+  const has = (...c: string[]) => objects.some((o) => c.includes(o.category))
   if (has('bed')) return 'Bedroom'
-  if (has('sofa')) return 'Living room'
+  if (has('sofa', 'armchair', 'tv-stand', 'coffee-table')) return 'Living room'
   if (has('desk')) return 'Office'
   if (has('dining-table')) return 'Dining room'
-  return 'Living room'
+  return 'Your room'
 }
 
 /** A picked file we don't read: say which formats do work, and how to get one out of Scaniverse. */

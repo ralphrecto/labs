@@ -518,3 +518,11 @@
   .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-cam { right: max(16px, env(safe-area-inset-right)); }
   .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-toast .toast { left: 50%; }
 }
+
+/* Move-in day opens on the player's own scan (round 18): a beam sweeps it, then a veil fades into their style. */
+.hud-intro { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
+.hud-intro-beam { position: absolute; left: 0; right: 0; top: -20%; height: 18%; background: linear-gradient(180deg, rgba(120, 200, 255, 0) 0%, rgba(120, 200, 255, 0.22) 70%, rgba(190, 235, 255, 0.75) 100%); box-shadow: 0 2px 18px rgba(150, 215, 255, 0.6); animation: hud-intro-sweep 1.5s cubic-bezier(0.45, 0, 0.3, 1) both; }
+@keyframes hud-intro-sweep { from { transform: translateY(0); } to { transform: translateY(640%); } }
+.hud-intro-tag { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: rgba(29, 33, 41, 0.72); color: #dff1ff; font-weight: 800; font-size: 0.875rem; letter-spacing: 0.04em; animation: g-rise 0.4s var(--g-ease, ease) both; }
+.hud-intro-veil { position: absolute; inset: 0; pointer-events: none; z-index: 1; background: #fff4e2; animation: hud-intro-veil 700ms ease-in-out both; }
+@keyframes hud-intro-veil { 0% { opacity: 0; } 40% { opacity: 1; } 100% { opacity: 0; } }
