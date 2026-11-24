@@ -1,12 +1,18 @@
 // Mood moments (round 17): the one card that asks how a room should feel, and the soft light a
 // chosen mood casts in the 3D view. The logic (which room, which goal, which colours) is in moods.ts.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { activeLayout, useStore } from '../store'
-import type { Doc, MoodId, Room } from '../model/types'
-import { bestLevelKey } from './goals'
+import type { Doc, MoodId, Opening, Room, Vec2 } from '../model/types'
+import { analyze } from '../analysis'
+import { placedItems } from '../model/checks'
+import { pointInPolygon, wallInwardNormal, wallSegments } from '../model/geometry'
+import { sharedDoorways } from '../three/walkCollision'
+import type { WallMode } from '../three/Scene3D'
+import { bestLevelKey, scoreHome } from './goals'
 import { useGame } from './gameStore'
-import { dueMoment, momentKey, moodGoals, moodLightSpot, moodOf, MOOD_IDS, MOODS, pickMood, piecesOf, withMood } from './moods'
+import { changeMood, dueMoment, momentKey, moodGoalId, moodGoals, moodLightSpot, moodOf, moodsDoneIn, MOOD_IDS, MOODS, pickMood, piecesOf } from './moods'
 import { setPickMoodSource } from './swatches'
 import { announce } from './announce'
 import { reduceMotion } from '../motion'
@@ -63,8 +69,11 @@ export function chooseMood(roomId: string, mood: MoodId) {
   const st = useStore.getState()
   const room = st.doc.rooms.find((r) => r.id === roomId)
   if (!room) return
-  const before = moodOf(activeLayout(st.doc), roomId)
-  st.update((d: Doc) => ({ ...d, layouts: d.layouts.map((l) => (l.id === d.activeLayoutId ? withMood(l, roomId, mood) : l)) }))
+  const l0 = activeLayout(st.doc)
+  const before = moodOf(l0, roomId)
+  // A finished mood is remembered on the design (round 18), so changing it keeps the room's star.
+  const scored = !!before && !!scoreHome(st.doc, l0, analyze(st.doc, l0)).goals.find((g) => g.id === moodGoalId(roomId))?.done
+  st.update((d: Doc) => ({ ...d, layouts: d.layouts.map((l) => (l.id === d.activeLayoutId ? changeMood(d, l, roomId, mood, scored) : l)) }))
   const m = MOODS[mood]
   const where = room.name.toLowerCase()
   if (before !== mood) focusMoodRoom(roomId)
@@ -72,7 +81,9 @@ export function chooseMood(roomId: string, mood: MoodId) {
   // the mood's colours (unless the room has what the mood asks for already).
   const d = useStore.getState().doc
   const l = activeLayout(d)
-  const g = moodGoals(d, l, piecesOf(d, l)).find((x) => x.roomId === roomId)
+  // The new mood's own pieces (even when the room keeps its star from a mood finished before).
+  const g = moodGoals(d, l, piecesOf(d, l), { live: true }).find((x) => x.roomId === roomId)
+  const kept = moodsDoneIn(l, roomId).length > 0
   if (g && !g.done && g.item && g.tab && before !== mood) {
     if (st.selection) st.select(null)
     useGame.getState().showGoal({ id: g.id, title: g.title, tab: g.tab, item: g.item, placeIn: g.placeIn })
@@ -83,7 +94,9 @@ export function chooseMood(roomId: string, mood: MoodId) {
       ? `${m.emoji} Your ${where} stays ${m.short.toLowerCase()}.`
       : g?.done
         ? `${m.emoji} ${m.short} ${where}: it's all there ★`
-        : before
+        : before && kept
+          ? `${m.emoji} Now ${m.short.toLowerCase()}! Your ★ stays. For the full look: ${m.adds}`
+          : before
           ? `${m.emoji} Now ${m.short.toLowerCase()}! New goal: ${m.adds} ★`
           : `${m.emoji} ${m.short} ${where}! Goal: ${m.adds} ★`,
   )
@@ -134,6 +147,9 @@ export function MoodCard() {
   }, [roomId])
   if (!moment) return null
   const { room, asked } = moment
+  // The room's mood star is earned (round 18): changing the mood keeps it.
+  const layoutNow = activeLayout(doc)
+  const earned = !!current && (moodsDoneIn(layoutNow, room.id).length > 0 || !!moodGoals(doc, layoutNow, piecesOf(doc, layoutNow), { live: true }).find((g) => g.roomId === room.id)?.done)
   const where = room.name.toLowerCase()
   const close = () => {
     restMoments()
@@ -183,7 +199,7 @@ export function MoodCard() {
           )
         })}
       </div>
-      <p className="mood-foot">{current ? `Now ${MOODS[current].short.toLowerCase()}. A new mood brings a new ★ goal of its own.` : 'Shapes its colours, its light and a ★ goal. You can change it later.'}</p>
+      <p className="mood-foot">{current ? (earned ? `Now ${MOODS[current].short.toLowerCase()}. Its ★ stays whichever mood you pick.` : `Now ${MOODS[current].short.toLowerCase()}. A new mood brings a new ★ goal of its own.`) : 'Shapes its colours, its light and a ★ goal. You can change it later.'}</p>
     </div>
   )
 }
@@ -209,56 +225,172 @@ export function MoodPreview({ id }: { id: MoodId }) {
   )
 }
 
-/** A soft round glow (white in the middle, clear at the edge), tinted per room by its material. */
-let glowTex: THREE.Texture | null = null
-function glowTexture(): THREE.Texture | null {
-  if (glowTex || typeof document === 'undefined') return glowTex
+/** Soft round glows, tinted per room by their material: `glow` is white in the middle and clear at the edge; `ring` is a halo, clear in the middle (round a rug). */
+const glowTex: Record<'glow' | 'ring', THREE.Texture | null> = { glow: null, ring: null }
+function glowTexture(kind: 'glow' | 'ring' = 'glow'): THREE.Texture | null {
+  if (glowTex[kind] || typeof document === 'undefined') return glowTex[kind]
   const c = document.createElement('canvas')
   c.width = c.height = 128
   const g = c.getContext('2d')
   if (!g) return null
   const r = g.createRadialGradient(64, 64, 0, 64, 64, 64)
-  r.addColorStop(0, 'rgba(255,255,255,1)')
-  r.addColorStop(0.55, 'rgba(255,255,255,0.55)')
-  r.addColorStop(1, 'rgba(255,255,255,0)')
+  const stops: [number, number][] = kind === 'glow' ? [[0, 1], [0.55, 0.55], [1, 0]] : [[0, 0.12], [0.5, 0.3], [0.72, 1], [1, 0]]
+  for (const [at, a] of stops) r.addColorStop(at, `rgba(255,255,255,${a})`)
   g.fillStyle = r
   g.fillRect(0, 0, 128, 128)
-  glowTex = new THREE.CanvasTexture(c)
-  glowTex.colorSpace = THREE.SRGBColorSpace
-  return glowTex
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  glowTex[kind] = t
+  return t
 }
 
-/** The room's floor, faintly washed in its mood's colour from the middle out (so a mood reads in daylight too). */
-function MoodGlow({ room, color, at, reach, evening }: { room: Room; color: string; at: { x: number; y: number }; reach: number; evening: boolean }) {
+/** A soft glow on the room's floor, centred at `at` and fading out by `radius`, cut to the room's outline (so it never shows past its walls). */
+function MoodGlow({ room, color, at, radius, opacity, ring }: { room: Room; color: string; at: Vec2; radius: number; opacity: number; ring?: boolean }) {
   const geom = useMemo(() => {
     const g = new THREE.ShapeGeometry(new THREE.Shape(room.polygon.map((p) => new THREE.Vector2(p.x, -p.y))))
-    // The glow's centre at the light, fading out by its reach.
     const pos = g.getAttribute('position')
     const uv = new Float32Array(pos.count * 2)
-    const R = reach * 1.15
     for (let i = 0; i < pos.count; i++) {
-      uv[i * 2] = (pos.getX(i) - at.x) / (2 * R) + 0.5
-      uv[i * 2 + 1] = (pos.getY(i) + at.y) / (2 * R) + 0.5
+      uv[i * 2] = (pos.getX(i) - at.x) / (2 * radius) + 0.5
+      uv[i * 2 + 1] = (pos.getY(i) + at.y) / (2 * radius) + 0.5
     }
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
     g.rotateX(-Math.PI / 2)
     return g
-  }, [room.polygon, at.x, at.y, reach])
+  }, [room.polygon, at.x, at.y, radius])
   useEffect(() => () => geom.dispose(), [geom])
-  const tex = glowTexture()
+  const tex = glowTexture(ring ? 'ring' : 'glow')
   if (!tex) return null
   return (
-    <mesh geometry={geom} position={[0, 0.004, 0]} renderOrder={1} raycast={() => null}>
-      <meshBasicMaterial map={tex} color={color} transparent opacity={evening ? 0.2 : 0.38} depthWrite={false} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} toneMapped={false} />
+    <mesh geometry={geom} position={[0, ring ? 0.012 : 0.004, 0]} renderOrder={1} raycast={() => null}>
+      <meshBasicMaterial map={tex} color={color} transparent opacity={opacity} depthWrite={false} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} toneMapped={false} />
     </mesh>
   )
 }
 
-/** Each mood room's soft light and floor glow in the 3D view (rendered inside the Canvas). */
-export function MoodLights() {
+/** The mood light: a spot aimed straight down whose cone meets the floor inside the room (round 18). */
+function MoodSpot({ at, height, radius, color, intensity }: { at: Vec2; height: number; radius: number; color: string; intensity: number }) {
+  const target = useMemo(() => new THREE.Object3D(), [])
+  target.position.set(at.x, 0, at.y)
+  const angle = Math.min(Math.PI / 3, Math.atan(radius / height))
+  return (
+    <>
+      <primitive object={target} />
+      <spotLight position={[at.x, height, at.y]} target={target} color={color} intensity={intensity} angle={angle} penumbra={0.85} distance={height / Math.cos(angle) + 0.25} decay={1} castShadow={false} />
+    </>
+  )
+}
+
+/** A soft wash on a wall's inner face, kept off its doors and windows. */
+interface WallWash {
+  wi: number
+  geom: THREE.BufferGeometry
+  /** A point on the wall's outer face and its outward normal: the camera past it means the wall is cut down. */
+  ox: number
+  oz: number
+  nx: number
+  nz: number
+  length: number
+}
+
+function wallWashes(room: Room, doorways: Opening[] | undefined): WallWash[] {
+  const top = room.ceilingHeight * 0.92
+  return wallSegments(room).map(([a, b], wi) => {
+    const L = Math.hypot(b.x - a.x, b.y - a.y)
+    const d = { x: (b.x - a.x) / (L || 1), y: (b.y - a.y) / (L || 1) }
+    const n = wallInwardNormal(room, wi)
+    const ops = [...room.openings, ...(doorways ?? [])].filter((o) => o.wall === wi).sort((x, y) => x.offset - y.offset)
+    // Solid parts of the wall (s0..s1 along it, y0..y1 up it), like RoomMesh's wall pieces.
+    const parts: [number, number, number, number][] = []
+    let cursor = 0
+    for (const o of ops) {
+      if (o.offset > cursor) parts.push([cursor, o.offset, 0, top])
+      const s0 = Math.max(cursor, o.offset)
+      const s1 = Math.min(L, o.offset + o.width)
+      if (s1 > s0) {
+        if (o.sill > 0.05) parts.push([s0, s1, 0, Math.min(top, o.sill)])
+        if (o.sill + o.height < top - 0.05) parts.push([s0, s1, o.sill + o.height, top])
+      }
+      cursor = Math.max(cursor, o.offset + o.width)
+    }
+    if (cursor < L) parts.push([cursor, L, 0, top])
+    const pos: number[] = []
+    const uv: number[] = []
+    const eps = 0.006
+    const at = (s: number, y: number) => {
+      pos.push(a.x + d.x * s + n.x * eps, y, a.y + d.y * s + n.y * eps)
+      uv.push(s / (L || 1), y / top)
+    }
+    for (const [s0, s1, y0, y1] of parts) {
+      if (s1 - s0 < 1e-3 || y1 - y0 < 1e-3) continue
+      at(s0, y0); at(s1, y0); at(s1, y1)
+      at(s0, y0); at(s1, y1); at(s0, y1)
+    }
+    const geom = new THREE.BufferGeometry()
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+    geom.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+    const t = room.wallThickness
+    return { wi, geom, ox: a.x - n.x * t, oz: a.y - n.y * t, nx: -n.x, nz: -n.y, length: L }
+  })
+}
+
+/**
+ * The mood's wall washes: every standing wall (Airy) or one accent wall (Bold: the wall its art
+ * hangs on, else its longest; when that wall is cut down for the view, the next in line). A wall
+ * cut down (the camera beyond it, or Low walls) shows none, so no glow floats where a wall was.
+ */
+function MoodWalls({ room, doorways, color, opacity, which, order, wallMode }: { room: Room; doorways: Opening[] | undefined; color: string; opacity: number; which: 'all' | 'accent'; order: number[]; wallMode: WallMode }) {
+  const washes = useMemo(() => wallWashes(room, doorways), [room, doorways])
+  useEffect(() => () => washes.forEach((w) => w.geom.dispose()), [washes])
+  const refs = useRef<(THREE.Mesh | null)[]>([])
+  useFrame(({ camera }) => {
+    const c = camera.position
+    const stands = (w: WallWash) => wallMode === 'full' || (wallMode === 'auto' && (c.x - w.ox) * w.nx + (c.z - w.oz) * w.nz <= 0)
+    const lead = which === 'accent' ? order.find((wi) => stands(washes[wi])) : undefined
+    washes.forEach((w, i) => {
+      const m = refs.current[i]
+      if (m) m.visible = which === 'all' ? stands(w) : i === lead
+    })
+  })
+  const tex = glowTexture()
+  if (!tex) return null
+  return (
+    <>
+      {washes.map((w, i) => (
+        <mesh key={w.wi} ref={(m) => void (refs.current[i] = m)} geometry={w.geom} renderOrder={1} raycast={() => null} visible={false}>
+          <meshBasicMaterial map={tex} color={color} transparent opacity={opacity} depthWrite={false} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} toneMapped={false} />
+        </mesh>
+      ))}
+    </>
+  )
+}
+
+/** The walls in accent order: the one nearest the room's wall art first, then longest first. */
+function accentOrder(room: Room, art: Vec2[]): number[] {
+  const segs = wallSegments(room)
+  const distTo = (p: Vec2, [a, b]: [Vec2, Vec2]) => {
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)))
+    return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy)
+  }
+  const artWalls = art.map((p) => segs.map((s, i) => [distTo(p, s), i] as const).sort((x, y) => x[0] - y[0])[0][1])
+  const byLength = segs.map((s, i) => [Math.hypot(s[1].x - s[0].x, s[1].y - s[0].y), i] as const).sort((x, y) => y[0] - x[0]).map((x) => x[1])
+  return [...new Set([...artWalls, ...byLength])]
+}
+
+/**
+ * Each mood room's light in the 3D view (rendered inside the Canvas), all kept inside the room
+ * (round 18): a spot aimed down whose pool stays off the walls, a floor glow cut to the room's
+ * outline, and the mood's own touch: Snug a warm amber pool, Airy a bright white wash on its
+ * walls, Bold a cool blue glow on its accent wall and round its rug.
+ */
+export function MoodLights({ wallMode = 'auto' }: { wallMode?: WallMode }) {
   const doc = useStore((s) => s.doc)
   const evening = useGame((s) => s.evening)
   const layout = activeLayout(doc)
+  const doorways = useMemo(() => sharedDoorways(doc.rooms), [doc.rooms])
+  const placed = useMemo(() => placedItems(doc, layout), [doc, layout])
   const lights = Object.entries(layout.moods ?? {}).flatMap(([roomId, id]) => {
     const room = doc.rooms.find((r) => r.id === roomId)
     const m = MOODS[id]
@@ -266,12 +398,23 @@ export function MoodLights() {
   })
   return (
     <>
-      {lights.map(({ room, m, at, height, reach }) => (
-        <group key={room.id}>
-          <pointLight position={[at.x, height, at.y]} color={m.light.color} intensity={evening ? m.light.intensity : m.light.day} distance={reach * 1.4} decay={1.2} castShadow={false} />
-          <MoodGlow room={room} color={m.light.floor} at={at} reach={reach} evening={evening} />
-        </group>
-      ))}
+      {lights.map(({ room, m, at, height, reach, inner }) => {
+        const L = m.light
+        const pool = Math.max(0.5, inner * L.pool * 0.95)
+        const here = placed.filter(({ p }) => pointInPolygon({ x: p.x, y: p.y }, room.polygon))
+        const rugs = L.rug ? here.filter(({ item }) => item.category === 'rug') : []
+        const art = L.wall?.walls === 'accent' ? here.filter(({ item }) => item.category === 'wall-art' || item.category === 'mirror').map(({ p }) => ({ x: p.x, y: p.y })) : []
+        return (
+          <group key={room.id}>
+            <MoodSpot at={at} height={height} radius={pool} color={L.color} intensity={evening ? L.intensity : L.day} />
+            <MoodGlow room={room} color={L.floor} at={at} radius={Math.min(reach * 1.15, pool * 1.6)} opacity={evening ? L.floorOpacity.evening : L.floorOpacity.day} />
+            {rugs.map(({ p, item }) => (
+              <MoodGlow key={p.id} room={room} color={L.rug!} at={{ x: p.x, y: p.y }} radius={Math.max(item.width, item.depth) * 0.72} opacity={evening ? 0.3 : 0.4} ring />
+            ))}
+            {L.wall && <MoodWalls room={room} doorways={doorways.get(room.id)} color={L.wall.color} opacity={evening ? L.wall.opacity.evening : L.wall.opacity.day} which={L.wall.walls} order={L.wall.walls === 'accent' ? accentOrder(room, art) : []} wallMode={wallMode} />}
+          </group>
+        )
+      })}
     </>
   )
 }

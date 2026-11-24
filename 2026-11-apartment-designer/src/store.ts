@@ -503,7 +503,7 @@ export const useStore = create<State>((set, get) => ({
       const ids = new Map(src.placements.map((p) => [p.id, uid()]))
       const placements = src.placements.map((p) => ({ ...p, id: ids.get(p.id)!, ...(p.on ? { on: ids.get(p.on) ?? p.on } : {}) }))
       // Room moods (round 17) are part of the design: the copy keeps them.
-      const copy: Layout = { id: nid, name: copyName(src.name, d.layouts.map((l) => l.name)), placements, ...(src.moods ? { moods: { ...src.moods } } : {}) }
+      const copy: Layout = { id: nid, name: copyName(src.name, d.layouts.map((l) => l.name)), placements, ...(src.moods ? { moods: { ...src.moods } } : {}), ...(src.moodsDone ? { moodsDone: { ...src.moodsDone } } : {}) }
       inheritBest(d, src.id, nid)
       return { ...d, layouts: [...d.layouts, copy], activeLayoutId: nid }
     }),

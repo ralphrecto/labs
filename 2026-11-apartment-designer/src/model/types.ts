@@ -114,6 +114,11 @@ export interface Layout {
   remix?: Remix
   /** How the player wants each room to feel (round 17 mood moments), by room id. See game/moods. */
   moods?: Record<string, MoodId>
+  /**
+   * Moods each room has finished before it was changed (round 18), by room id: a finished mood keeps
+   * its star when the room's mood changes (one star per room at most). See game/moods.changeMood.
+   */
+  moodsDone?: Record<string, MoodId[]>
 }
 
 /** A room's mood, chosen on a mood moment card: Bright & airy, Warm & snug, Bold & playful. */

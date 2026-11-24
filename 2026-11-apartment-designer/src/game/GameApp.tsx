@@ -286,7 +286,7 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
       hideFlags: mode === 'look',
       fullFrame: mode === 'look',
       focusRoom: moodFocus && mode !== 'look' ? moodFocus : mode === 'buy' ? focusRoom : null,
-      extras: <MoodLights />,
+      extras: <MoodLights wallMode={mode === 'look' && cam.eye ? 'full' : cam.wallMode} />,
     }),
     [cam, mode, style, inset, focusRoom, moodFocus],
   )

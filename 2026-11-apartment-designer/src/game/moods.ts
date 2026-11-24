@@ -33,10 +33,16 @@ export interface Mood {
   /** The tiny preview: wall, floor, sofa and lamp glow colours. */
   preview: { wall: string; floor: string; sofa: string; glow: string; accent: string }
   /**
-   * The room's mood light in the 3D view (a soft point light, `intensity` in the evening and a
-   * stronger `day` one so it still reads against daylight), and the soft glow on its floor.
+   * The room's mood light in the 3D view (round 18: a spot light aimed down whose cone stays inside
+   * the room, so nothing spills into a neighbouring hallway): its colour, `intensity` in the evening
+   * and a stronger `day` one so it still reads against daylight, and how wide its pool is (0..1 of
+   * the room's inner radius).
+   * Each mood also has its own touch by day: `floor` tints the pool on the floor (`floorOpacity`),
+   * and `wall` washes walls with a soft glow: every wall for Airy (white, lifting) and Snug (amber,
+   * mostly in the evening, where the pool alone would leave its walls dark), the accent wall
+   * (its art, else its longest) for Bold (cool blue, with a blue glow round its rug).
    */
-  light: { color: string; intensity: number; day: number; floor: string }
+  light: { color: string; intensity: number; day: number; pool: number; floor: string; floorOpacity: { day: number; evening: number }; wall?: { color: string; walls: 'all' | 'accent'; opacity: { day: number; evening: number } }; rug?: string }
 }
 
 export const MOODS: Record<MoodId, Mood> = {
@@ -49,7 +55,7 @@ export const MOODS: Record<MoodId, Mood> = {
     adds: 'mirror + plant',
     goal: { title: 'Airy: a mirror and a plant', hint: 'A mirror bounces the daylight round; a plant brings the outside in.', needs: [{ cats: ['mirror'] }, { cats: ['plant'] }] },
     preview: { wall: '#f4f1ea', floor: '#d9c4a5', sofa: '#e2d6b8', glow: '#e8f2ff', accent: '#5f8f5a' },
-    light: { color: '#f6f9ff', intensity: 9, day: 13, floor: '#e9f3ff' },
+    light: { color: '#f7faff', intensity: 14, day: 22, pool: 1, floor: '#ffffff', floorOpacity: { day: 0.5, evening: 0.22 }, wall: { color: '#ffffff', walls: 'all', opacity: { day: 0.34, evening: 0.2 } } },
   },
   snug: {
     id: 'snug',
@@ -60,7 +66,7 @@ export const MOODS: Record<MoodId, Mood> = {
     adds: 'rug + lamp',
     goal: { title: 'Snug: a soft rug and warm light', hint: 'A soft rug underfoot and a lamp for a warm pool of light.', needs: [{ cats: ['rug'] }, { cats: ['floor-lamp', 'table-lamp'] }] },
     preview: { wall: '#ead9c3', floor: '#8a6b4f', sofa: '#b5534a', glow: '#ffc27a', accent: '#e0b04f' },
-    light: { color: '#ffb066', intensity: 7, day: 11, floor: '#ff9f4a' },
+    light: { color: '#ffa04d', intensity: 12, day: 20, pool: 0.8, floor: '#ffa24f', floorOpacity: { day: 0.4, evening: 0.24 }, wall: { color: '#ffa857', walls: 'all', opacity: { day: 0.12, evening: 0.42 } } },
   },
   bold: {
     id: 'bold',
@@ -71,7 +77,7 @@ export const MOODS: Record<MoodId, Mood> = {
     adds: 'art + bold rug',
     goal: { title: 'Bold: big art and a bold rug', hint: 'Art on the wall and a rug in a bold colour (blue, terracotta, honey) make the room sing. Or paint yours.', needs: [{ cats: ['wall-art'] }, { cats: ['rug'], tone: true, paint: '#5b7bb5', paintName: 'cornflower blue' }] },
     preview: { wall: '#f1e6d8', floor: '#c7a98a', sofa: '#5b7bb5', glow: '#ffe0bd', accent: '#e0b04f' },
-    light: { color: '#ffe0bd', intensity: 7, day: 10, floor: '#8aa6e0' },
+    light: { color: '#ffe6cc', intensity: 9, day: 12, pool: 0.9, floor: '#ffe0bd', floorOpacity: { day: 0.16, evening: 0.1 }, wall: { color: '#4f7fe0', walls: 'accent', opacity: { day: 0.42, evening: 0.3 } }, rug: '#4f7fe0' },
   },
 }
 
@@ -121,11 +127,28 @@ export function withMood(layout: Layout, roomId: string, mood: MoodId | undefine
 }
 
 /**
+ * The design with this room's mood changed (round 18): a mood the room has finished is remembered
+ * (`Layout.moodsDone`), so the room's star stays when the player tries another mood. One star per
+ * room at most: switching back and forth can't add any. `scored` is whether goals.scoreHome counts
+ * the room's mood goal done (it leaves out cramped or packed pieces, which piecesOf counts).
+ */
+export function changeMood(doc: Doc, layout: Layout, roomId: string, mood: MoodId | undefined, scored = true): Layout {
+  const was = moodOf(layout, roomId)
+  const live = scored && was && moodGoals(doc, layout, piecesOf(doc, layout), { live: true }).find((g) => g.roomId === roomId)?.done
+  const done = layout.moodsDone?.[roomId] ?? []
+  const keep = live && !done.includes(was) ? { ...layout, moodsDone: { ...layout.moodsDone, [roomId]: [...done, was] } } : layout
+  return withMood(keep, roomId, mood)
+}
+
+/** The moods a room finished before its mood was changed (Layout.moodsDone). */
+export const moodsDoneIn = (layout: Layout, roomId: string): MoodId[] => (layout.moodsDone?.[roomId] ?? []).filter((m) => MOODS[m])
+
+/**
  * The mood goals for a design (one per room with a mood and still in the plan): a bonus worth a
  * star, done when the room has one of each piece group the mood asks for. Like a perk it is left
  * out of every level bar and cap (`perk: 'mood'`), so a mood adds a star but never holds a level.
  */
-export function moodGoals(doc: Doc, layout: Layout, pieces: MoodPiece[]): Goal[] {
+export function moodGoals(doc: Doc, layout: Layout, pieces: MoodPiece[], opts: { live?: boolean } = {}): Goal[] {
   const out: Goal[] = []
   if (!layout.moods) return out
   const items = new Map(doc.items.map((i) => [i.id, i.color]))
@@ -138,8 +161,27 @@ export function moodGoals(doc: Doc, layout: Layout, pieces: MoodPiece[]): Goal[]
     const toned = (p: MoodPiece) => inTone(id, colorOf.get(p.id ?? ''))
     const have = mood.goal.needs.map((n) => here.some((p) => n.cats.includes(p.category) && (!n.tone || toned(p))))
     const missing = mood.goal.needs.find((_, i) => !have[i])
-    const done = !missing
     const where = room.name.toLowerCase()
+    // A mood this room finished before (round 18) keeps its star: the goal stays done while the
+    // new mood's pieces come in (the card still opens the drawer on them), never a second star.
+    const kept = !opts.live && !!missing && moodsDoneIn(layout, roomId).length > 0
+    if (kept) {
+      const was = MOODS[moodsDoneIn(layout, roomId).slice(-1)[0]]
+      out.push({
+        id: moodGoalId(roomId),
+        title: mood.goal.title,
+        hint: `Your ${where} keeps its ★ from feeling ${was.short.toLowerCase()}. For the full ${mood.short.toLowerCase()} look: ${mood.adds}.`,
+        done: true,
+        progress: 1,
+        stars: 1,
+        roomId,
+        category: 'style',
+        bonus: true,
+        perk: 'mood',
+      })
+      continue
+    }
+    const done = !missing
     // A rug already down in another colour (round 17 review): the goal asks to paint it, not to
     // squeeze a second rug in; the chip paints it (Goals.showGoal).
     const repaint = missing?.tone && missing.paint ? here.find((p) => p.id && missing.cats.includes(p.category)) : undefined
@@ -243,12 +285,53 @@ export function dueMoment(doc: Doc, layout: Layout, level: number, pieces: MoodP
   return rooms.find((r) => !moodOf(layout, r.id) && !skipped.has(momentKey(doc, layout, r.id))) ?? null
 }
 
-/** Where a room's mood light hangs (plan x/y, a little below the ceiling) and how far it reaches. */
-export function moodLightSpot(room: Room): { at: Vec2; height: number; reach: number } {
-  const at = centroid(room.polygon)
+/**
+ * Where a room's mood light hangs (plan x/y, a little below the ceiling) and how far its pool may
+ * reach: `inner` is the distance from that spot to the nearest wall (round 18). The spot is the
+ * room's most inner point (not its centroid, which can sit outside an L-shaped room), so a cone of
+ * light no wider than `inner` at the floor never touches a wall or leaks into the next room.
+ */
+export function moodLightSpot(room: Room): { at: Vec2; height: number; reach: number; inner: number } {
+  const { at, inner } = innerPoint(room.polygon)
   // A pool of light in its own room, not a wash over the whole home.
   const reach = Math.max(1.8, Math.sqrt(polygonArea(room.polygon)) * 0.7)
-  return { at, height: Math.max(1.8, room.ceilingHeight - 0.45), reach }
+  return { at, height: Math.max(1.8, room.ceilingHeight - 0.45), reach, inner }
+}
+
+/** The point of a polygon farthest from its edges (a grid search, refined once), and that distance. */
+export function innerPoint(poly: Vec2[]): { at: Vec2; inner: number } {
+  const c = centroid(poly)
+  let best = { at: c, inner: pointInPolygon(c, poly) ? edgeDistance(c, poly) : 0 }
+  const xs = poly.map((p) => p.x)
+  const ys = poly.map((p) => p.y)
+  let [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
+  for (let pass = 0; pass < 2; pass++) {
+    const step = Math.max(x1 - x0, y1 - y0) / 24
+    if (!(step > 0)) break
+    for (let x = x0 + step / 2; x < x1; x += step)
+      for (let y = y0 + step / 2; y < y1; y += step) {
+        const p = { x, y }
+        if (!pointInPolygon(p, poly)) continue
+        const d = edgeDistance(p, poly)
+        // Prefer the centroid's side on near ties, so a plain rectangle keeps its light in the middle.
+        if (d > best.inner + 1e-3) best = { at: p, inner: d }
+      }
+    ;[x0, x1, y0, y1] = [best.at.x - step, best.at.x + step, best.at.y - step, best.at.y + step]
+  }
+  return best
+}
+
+function edgeDistance(p: Vec2, poly: Vec2[]): number {
+  let d = Infinity
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]
+    const b = poly[(i + 1) % poly.length]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)))
+    d = Math.min(d, Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy))
+  }
+  return d
 }
 
 /** The mood's colours for its card preview swatches. */

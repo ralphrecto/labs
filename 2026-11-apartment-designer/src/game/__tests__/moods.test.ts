@@ -7,7 +7,8 @@ import { LEVELS, goalMove, nextGoal, scoreHome } from '../goals'
 import { pickSpot } from '../BuyDrawer'
 import { defaultDrop, unpackDoc, useStore } from '../../store'
 import { findDrop } from '../../model/placement'
-import { dueMoment, inTone, latestMood, momentKey, moodDoneTitle, moodGoalId, moodGoals, moodOf, moodRepaint, MOODS, MOOD_IDS, pickMood, piecesOf, repaintDoc, toneNeeded, withMood, moodLightSpot } from '../moods'
+import { pointInPolygon } from '../../model/geometry'
+import { dueMoment, inTone, latestMood, momentKey, moodDoneTitle, moodGoalId, moodGoals, moodOf, moodRepaint, MOODS, MOOD_IDS, pickMood, piecesOf, repaintDoc, toneNeeded, withMood, moodLightSpot, changeMood, innerPoint } from '../moods'
 import { MOOD_TONES, PICKS, picksFor, WOODEN } from '../swatches'
 import { STARTER_CATALOG } from '../../model/starterCatalog'
 
@@ -326,6 +327,82 @@ describe('Mood goals by the Next chip (round 17 review)', () => {
     expect(g.done).toBe(true)
     expect(moodDoneTitle(d, layoutOf(d), g)).toBe('🕯️ Your living room feels snug')
     expect(moodDoneTitle(d, layoutOf(d), score(d).goals.find((x) => !x.perk)!)).toBeUndefined()
+  })
+
+  // Round 18: changing a room's mood cost the finished mood's star.
+  const change = (d: Doc, roomId: string, m: 'airy' | 'snug' | 'bold') => {
+    const scored = !!score(d).goals.find((x) => x.id === moodGoalId(roomId))?.done
+    d.layouts = d.layouts.map((l) => (l.id === d.activeLayoutId ? changeMood(d, l, roomId, m, scored) : l))
+  }
+  it('a finished mood keeps its star when the room changes mood', () => {
+    const d = sampleDoc({ settled: true })
+    const living = room(d, 'Living room')
+    change(d, living.id, 'snug')
+    place(d, 'floor-lamp', 0.4, 3.8)
+    expect(score(d).goals.find((x) => x.id === moodGoalId(living.id))?.done).toBe(true)
+    const finished = score(d).stars
+    // Airy asks for a mirror and a plant the room may not have: the star stays all the same.
+    change(d, living.id, 'airy')
+    expect(layoutOf(d).moods?.[living.id]).toBe('airy')
+    expect(layoutOf(d).moodsDone?.[living.id]).toEqual(['snug'])
+    const g = score(d).goals.find((x) => x.id === moodGoalId(living.id))!
+    expect(g).toMatchObject({ done: true, stars: 1 })
+    expect(g.hint).toMatch(/keeps its ★/)
+    expect(score(d).stars).toBe(finished)
+    // Taking the snug lamp away later doesn't cost it either: the finished mood is remembered.
+    layoutOf(d).placements = layoutOf(d).placements.filter((p) => d.items.find((i) => i.id === p.itemId)?.category !== 'floor-lamp')
+    expect(score(d).goals.find((x) => x.id === moodGoalId(living.id))?.done).toBe(true)
+  })
+
+  it("switching moods back and forth can't add stars (one per room)", () => {
+    const d = sampleDoc({ settled: true })
+    const living = room(d, 'Living room')
+    change(d, living.id, 'snug')
+    place(d, 'floor-lamp', 0.4, 3.8)
+    const finished = score(d).stars
+    for (const m of ['airy', 'snug', 'bold', 'snug', 'airy', 'bold'] as const) {
+      change(d, living.id, m)
+      expect(score(d).stars, m).toBe(finished)
+      expect(score(d).goals.filter((x) => x.roomId === living.id && x.perk === 'mood')).toHaveLength(1)
+    }
+    // Finishing a second mood too (Bold: art and a blue rug) still counts the room once.
+    place(d, 'wall-art', 2.0, 4.18)
+    d.items.find((i) => i.category === 'rug')!.color = MOOD_TONES.bold.palette[2]
+    expect(score(d).goals.find((x) => x.id === moodGoalId(living.id))?.done).toBe(true)
+    const both = score(d).stars
+    change(d, living.id, 'airy')
+    expect(score(d).stars).toBe(both)
+    change(d, living.id, 'bold')
+    expect(score(d).stars).toBe(both)
+    const roomMood = score(d).goals.filter((x) => x.roomId === living.id && x.perk === 'mood')
+    expect(roomMood.reduce((a, g) => a + (g.done ? g.stars : 0), 0)).toBe(1)
+    expect(new Set(layoutOf(d).moodsDone?.[living.id])).toEqual(new Set(['snug', 'bold']))
+    // An unfinished mood isn't remembered as finished.
+    const e = sampleDoc({ settled: true })
+    const bed = room(e, 'Bedroom')
+    change(e, bed.id, 'airy')
+    change(e, bed.id, 'snug')
+    expect(layoutOf(e).moodsDone).toBeUndefined()
+  })
+
+  it("a room's mood light stays inside the room: its pool never reaches a wall", () => {
+    const d = sampleDoc({ settled: true })
+    for (const r of d.rooms) {
+      const { at, inner, height } = moodLightSpot(r)
+      expect(inner).toBeGreaterThan(0)
+      // The cone's footprint (radius at most `inner`) fits inside the room.
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2
+        const p = { x: at.x + Math.cos(a) * inner * 0.99, y: at.y + Math.sin(a) * inner * 0.99 }
+        expect(pointInPolygon(p, r.polygon), r.name).toBe(true)
+      }
+      expect(height).toBeLessThan(r.ceilingHeight)
+    }
+    // An L-shaped room: the light hangs in its widest part, not at the centroid (which falls outside).
+    const L = [{ x: 0, y: 0 }, { x: 6, y: 0 }, { x: 6, y: 1.2 }, { x: 1.2, y: 1.2 }, { x: 1.2, y: 6 }, { x: 0, y: 6 }]
+    const ip = innerPoint(L)
+    expect(pointInPolygon(ip.at, L)).toBe(true)
+    expect(ip.inner).toBeGreaterThan(0.5)
   })
 
   it('a copy of a design keeps its room moods', () => {
