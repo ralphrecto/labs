@@ -112,7 +112,12 @@ export interface Layout {
   placements: Placement[]
   /** A remix: started from another design's big pieces, with a twist to meet (see TWISTS in game/goals). */
   remix?: Remix
+  /** How the player wants each room to feel (round 17 mood moments), by room id. See game/moods. */
+  moods?: Record<string, MoodId>
 }
+
+/** A room's mood, chosen on a mood moment card: Bright & airy, Warm & snug, Bold & playful. */
+export type MoodId = 'airy' | 'snug' | 'bold'
 
 /** The twist challenges a remix can take on. */
 export type TwistId = 'window-seat' | 'fresh-spots' | 'bed-swap' | 'talk-corner' | 'open-floor' | 'less-is-more'

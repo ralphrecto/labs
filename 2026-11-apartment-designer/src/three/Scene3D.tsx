@@ -1875,6 +1875,8 @@ export interface SceneControl {
   focusRoom?: string | null
   /** Look mode: frame the home between the look bar and the mode bar (phones: the whole screen). */
   fullFrame?: boolean
+  /** More to draw in the scene (the game's mood lights, round 17). */
+  extras?: ReactNode
 }
 
 export function Scene3D({ control }: { control?: SceneControl } = {}) {
@@ -1934,6 +1936,7 @@ export function Scene3D({ control }: { control?: SceneControl } = {}) {
         <color attach="background" args={[stage.sky ?? control?.sky ?? '#f6f4ef']} />
         <StyleContext.Provider value={styleEnv}>
           <Scene resetKey={control?.resetKey} eyeFov={eyeFov} wallMode={wallMode} eye={eye} autoRotate={control?.autoRotate && !eye} ground={control?.ground} inset={control?.inset} hideFlags={control?.hideFlags} focusRoom={control?.focusRoom} fullFrame={control?.fullFrame} />
+          {control?.extras}
         </StyleContext.Provider>
       </Canvas>
       {control && eye && <EyeHint />}

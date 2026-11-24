@@ -22,6 +22,8 @@ import { dropSpotAt, flushEditRun, rotatePlacementSmart } from './editActions'
 import { isWallDecor } from '../model/wallDecor'
 import { ItemThumb } from './ItemThumb'
 import { GoalsSheet, LevelUpCard, VibeMeter } from './Goals'
+import { MoodCard, MoodLights } from './MoodCard'
+import { MOODS, moodOf } from './moods'
 import { unpackAndCelebrate } from './unpack'
 import { useGame, type GameMode } from './gameStore'
 import { familyOf } from './swatches'
@@ -144,6 +146,7 @@ function GameApp() {
           </div>
           <SaveFailedToast />
           <LevelUpCard />
+          <MoodCard />
         </>
       )}
       </main>
@@ -281,6 +284,7 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
       hideFlags: mode === 'look',
       fullFrame: mode === 'look',
       focusRoom: mode === 'buy' ? focusRoom : null,
+      extras: <MoodLights />,
     }),
     [cam, mode, style, inset, focusRoom],
   )
@@ -881,6 +885,12 @@ function ContextBar({ slim = false }: { slim?: boolean }) {
         <Act label="Window" onClick={() => s.setMode('window')}>
           <I.IconWindow />
         </Act>
+        {/* A room with a mood (round 17) can change it here: the mood card opens again. */}
+        {moodOf(layout, r.id) && (
+          <Act label={`Mood: ${MOODS[moodOf(layout, r.id)!].short}`} onClick={() => useGame.getState().askMood(r.id)}>
+            <span aria-hidden style={{ fontSize: 20 }}>{MOODS[moodOf(layout, r.id)!].emoji}</span>
+          </Act>
+        )}
         <Act label="Details" onClick={() => open('details')}>
           <I.IconMore />
         </Act>

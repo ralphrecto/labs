@@ -1,5 +1,6 @@
 // Paint swatches and the "Pick one" variants the hint picker offers for each hinted category.
 // Pure data, so tests can check every pick against the starter catalog.
+import type { MoodId } from '../model/types'
 
 /** The paint swatches of the selected piece's bar (kept in step with GameApp's list). */
 export const SWATCHES = ['#7d8fa3', '#a3907d', '#c9c3b6', '#8a6b4f', '#3d3d3d', '#5f8f5a', '#c7a98a', '#e2d6b8', '#b5534a', '#e0b04f', '#5b7bb5', '#f2efe8']
@@ -129,14 +130,75 @@ const FAMILY: Record<string, Family> = {
 export const familyOf = (category: string): Family | undefined => FAMILY[category]
 
 /**
+ * How a room's mood (round 17) tints its picks: `palette` is the colours that read as the mood,
+ * `map` swaps a pick's usual colour for the mood's take on it (walnut turns oak in an airy room).
+ */
+export const MOOD_TONES: Record<MoodId, { palette: string[]; map: Record<string, string> }> = {
+  airy: {
+    palette: [linen, oak, '#e2d6b8', '#c9c3b6', sage, '#7fa7c9'],
+    map: { [walnut]: oak, [charcoal]: linen, [taupe]: '#c9c3b6', [terracotta]: '#e2d6b8', [honey]: linen, '#e8a27c': '#7fa7c9' },
+  },
+  snug: {
+    palette: [walnut, honey, terracotta, taupe, '#e8a27c'],
+    map: { [oak]: walnut, [linen]: honey, [charcoal]: walnut, [sage]: terracotta, '#7fa7c9': '#e8a27c' },
+  },
+  bold: {
+    palette: [terracotta, honey, '#5b7bb5', charcoal, '#e8a27c'],
+    map: { [taupe]: '#5b7bb5', [linen]: honey, [oak]: terracotta, [walnut]: charcoal, '#8fae84': '#5b7bb5' },
+  },
+}
+
+/** Where picksFor looks up the mood of the room a pick is for, when it isn't given (set by MoodCard). */
+let moodSource: (() => MoodId | undefined) | null = null
+export function setPickMoodSource(fn: (() => MoodId | undefined) | null) {
+  moodSource = fn
+}
+
+/**
+ * A room's mood applied to a category's picks: each pick takes the mood's colour for it (unless a
+ * sibling already wears that colour), and the first pick always wears one of the mood's colours,
+ * so the glowing card suits the room. The order (and so the first pick's shape and size) is kept:
+ * a mood never changes what fits where. Colour-only variants (a lamp in Linen or Honey) are named
+ * for their colour: they keep it, and the one in the mood's palette leads instead.
+ * Picks in the mood's palette are marked `mood`.
+ */
+export function moodPicks(list: Pick[], mood: MoodId): (Pick & { mood?: boolean })[] {
+  const tone = MOOD_TONES[mood]
+  const twins = list.length > 1 && list.every((p) => p.id === list[0].id)
+  if (twins) {
+    const marked = list.map((p) => ({ ...p, mood: tone.palette.includes(p.color) }))
+    return [...marked.filter((p) => p.mood), ...marked.filter((p) => !p.mood)]
+  }
+  const used = new Set(list.map((p) => p.color))
+  const out = list.map((p) => {
+    const to = tone.map[p.color]
+    let color = p.color
+    if (to && !used.has(to)) {
+      used.add(to)
+      color = to
+    }
+    return { ...p, color }
+  })
+  if (out[0] && !tone.palette.includes(out[0].color)) {
+    const free = tone.palette.find((c) => !out.some((p) => p.color === c))
+    if (free) out[0] = { ...out[0], color: free }
+  }
+  return out.map((p) => ({ ...p, mood: tone.palette.includes(p.color) }))
+}
+
+/**
  * The picks for a category, the one in the player's remembered colour first (marked `taste`).
  * Order is otherwise kept, so the first pick is stable for a player with no taste yet.
+ * In a room with a mood (round 17) the picks are drawn in the mood's colours (moodPicks), and the
+ * lead pick is shown as "your style" when no remembered colour leads.
  */
-export function picksFor(category: string, taste: Partial<Record<Family, string>> = {}): (Pick & { taste?: boolean })[] {
-  const list = PICKS[category] ?? []
+export function picksFor(category: string, taste: Partial<Record<Family, string>> = {}, mood: MoodId | undefined = moodSource?.()): (Pick & { taste?: boolean; mood?: boolean })[] {
+  const base = PICKS[category] ?? []
+  const list = mood ? moodPicks(base, mood) : base
   const fam = familyOf(category)
   const liked = fam ? taste[fam] : undefined
   const k = liked ? list.findIndex((p) => p.color === liked) : -1
-  if (k < 0) return list
-  return [{ ...list[k], taste: true }, ...list.filter((_, i) => i !== k)]
+  if (k >= 0) return [{ ...list[k], taste: true }, ...list.filter((_, i) => i !== k)]
+  if (mood && list[0] && (list[0] as { mood?: boolean }).mood) return [{ ...list[0], taste: true }, ...list.slice(1)]
+  return list
 }

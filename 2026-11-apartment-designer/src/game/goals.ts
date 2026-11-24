@@ -11,6 +11,7 @@ import { catalogEntry, itemFromCatalog } from '../model/catalog'
 import { findDrop, findDrops } from '../model/placement'
 import { isWallDecor } from '../model/wallDecor'
 import { VISIT_BY_ID, VISIT_STARS } from './visits'
+import { moodGoals } from './moods'
 
 export { VISITS, VISIT_BY_ID, VISIT_STARS, applicableVisits, localDay, todayVisit, type Visit } from './visits'
 
@@ -1420,6 +1421,10 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
       perk: 'drag',
     })
   }
+
+  // ---- Mood moments (round 17, src/game/moods.ts) ----------------------------
+  // A room's chosen mood adds its own bonus goal (a star, left out of the level bars like a perk).
+  for (const g of moodGoals(doc, layout, placed.filter((x) => x.clean && !cramped.has(x.id) && !packedIds.has(x.id)))) add(g)
 
   // What to move when a core goal's piece has nowhere to go: the biggest piece in the room it
   // belongs in (the bedroom for a bed), pieces that could live in another room first.
