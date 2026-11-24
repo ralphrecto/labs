@@ -7,9 +7,9 @@ import { BEDROOM, DINING, findDrop, HOSTED, nookTarget, OFFICE, type DropResult 
 import { isWallDecor } from '../model/wallDecor'
 import { STARTER_CATALOG } from '../model/starterCatalog'
 import { uid } from '../model/sample'
-import type { Doc, Item, Room, Units } from '../model/types'
+import type { Doc, Item, Room, Units, Vec2 } from '../model/types'
 import { formatLength } from '../model/units'
-import { activeLayout, defaultDrop, useStore } from '../store'
+import { activeLayout, defaultDrop as storeDrop, useStore } from '../store'
 import { analyze } from '../analysis'
 import { inOpenMiddle, openFloorCentre, scoreHome, starMove, talkCornerSpot, twistMove } from './goals'
 import { ImportDialog, Photo } from '../components/AddDialogs'
@@ -209,6 +209,33 @@ type Spot = { x: number; y: number; rotation: number; on?: string; roomName?: st
  * toast when the goal named a place that has no room.
  */
 export function pickSpot(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; fail?: string } {
+  return withDropMemo(() => pickSpotOnce(doc, item, hint))
+}
+
+/** The store's default drops asked for during one pick, by home and piece (round 17: asked up to three times a tap). */
+let dropMemo: WeakMap<Doc, Map<string, DropResult>> | null = null
+function withDropMemo<T>(fn: () => T): T {
+  if (dropMemo) return fn()
+  dropMemo = new WeakMap()
+  try {
+    return fn()
+  } finally {
+    dropMemo = null
+  }
+}
+function defaultDrop(doc: Doc, item: Item, near?: Vec2): DropResult {
+  if (!dropMemo) return storeDrop(doc, item, near)
+  let m = dropMemo.get(doc)
+  if (!m) dropMemo.set(doc, (m = new Map()))
+  const key = `${item.id}:${near ? `${near.x}:${near.y}` : ''}`
+  const hit = m.get(key)
+  if (hit) return hit.ok ? { ok: true, spot: { ...hit.spot } } : hit
+  const r = storeDrop(doc, item, near)
+  m.set(key, r)
+  return r.ok ? { ok: true, spot: { ...r.spot } } : r
+}
+
+function pickSpotOnce(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; fail?: string } {
   const bedside = bedsidePick(doc, item, hint)
   if (bedside) return bedside
   const r = pickSpotIn(doc, item, hint)
@@ -426,6 +453,10 @@ export interface PickTrial {
 
 /** Dry-run a pick card: place `item` exactly as a tap would, then score the home. */
 export function trialPick(doc: Doc, item: Item, hint: Hint | null): PickTrial {
+  return withDropMemo(() => trialPickOnce(doc, item, hint))
+}
+
+function trialPickOnce(doc: Doc, item: Item, hint: Hint | null): PickTrial {
   const layout = activeLayout(doc)
   const before = scoreHome(doc, layout, analyze(doc, layout))
   const warn = (a: ReturnType<typeof analyze>) => a.issues.filter((i) => i.severity !== 'info').length

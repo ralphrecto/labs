@@ -6,9 +6,9 @@ import { BEDROOM, BEDROOM_ONLY, DINING, LIVING, NEXT_TO_REACH, nookTarget, OFFIC
 import { add as add2, closestPointOnSegment, convexOverlap, orientedRect, dist, dot, lerp, norm, openingEndpoints, pointInPolygon, polygonArea, polygonInsideRoom, rot, scale, sub, v, wallInwardNormal, wallSegments } from '../model/geometry'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 import { centroid, normalizeAngle } from '../model/geometry'
-import type { Placement, TwistId } from '../model/types'
+import type { Item, Placement, TwistId } from '../model/types'
 import { catalogEntry, itemFromCatalog } from '../model/catalog'
-import { findDrop } from '../model/placement'
+import { findDrop, findDrops } from '../model/placement'
 import { isWallDecor } from '../model/wallDecor'
 import { VISIT_BY_ID, VISIT_STARS } from './visits'
 
@@ -65,6 +65,11 @@ export interface Goal {
    * adds a star but is left out of every level bar and cap, so it can lift a level, never hold one.
    */
   perk?: string
+  /**
+   * A remix's pick goal its source design already finished (round 17): placing that piece again is
+   * a replay, so Next offers the twist and goals new to this design (or ones the remix broke) first.
+   */
+  replay?: boolean
 }
 
 /** Rewards earned once per home, as scoreHome takes them: `drag` once the drag lesson was nailed here. */
@@ -354,7 +359,9 @@ export function nextGoal(score: HomeScore, fits?: (category: string, near?: stri
     if (visit.item && visit.tab ? !fits || fits(visit.item) : !!visit.near && !visit.tab) return visit
   }
   const live = visit && !visitReady ? open.filter((g) => g !== visit) : open
-  const lived = score.livingFirst ? [...live.filter((g) => LIVING_GOAL.test(g.id)), ...live.filter((g) => !LIVING_GOAL.test(g.id))] : live
+  const lived0 = score.livingFirst ? [...live.filter((g) => LIVING_GOAL.test(g.id)), ...live.filter((g) => !LIVING_GOAL.test(g.id))] : live
+  // A remix (round 17): goals new to this design, or ones it broke, before replays of the source's.
+  const lived = [...lived0.filter((g) => !g.replay), ...lived0.filter((g) => g.replay)]
   // The stars for the next level are in but a core goal holds it (levelBlocker names it): core goals
   // come first, so Next never wanders off to bonus goals that can't lift the level.
   const blocked = !!score.level.next && score.level.toNext === 0
@@ -377,7 +384,7 @@ export function nextGoal(score: HomeScore, fits?: (category: string, near?: stri
 function remixShuffle(score: HomeScore, pool: Goal[], g: Goal | undefined, fits?: (category: string, near?: string) => boolean): Goal | undefined {
   if (score.remixSeed === undefined || !g || !g.bonus || g.visit || !g.item || !g.tab || (g.progress ?? 0) > 0 || g.id.startsWith('twist:')) return g
   const alts = pool
-    .filter((x) => x !== g && x.id !== g.id && x.bonus && !x.visit && x.item && x.tab && !(x.progress ?? 0) && !x.id.startsWith('twist:'))
+    .filter((x) => x !== g && x.id !== g.id && x.bonus && !x.visit && x.item && x.tab && !(x.progress ?? 0) && !x.id.startsWith('twist:') && !!x.replay === !!g.replay)
     .filter((x) => !fits || fits(x.item!, x.near))
     .slice(0, 2)
   const options = [g, ...alts]
@@ -464,7 +471,54 @@ export function bankableLevel(score: HomeScore): number {
   return score.errors > 0 ? 0 : score.level.index
 }
 
-export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: VisitInput | null, perks?: Perks | null): HomeScore {
+/** How scoreHome works: `quick` skips the bedside drop probe (taken to fit), for ranking candidate moves. */
+export interface ScoreOptions {
+  quick?: boolean
+}
+
+/** Recent bedside drop probes, by home and arrangement (round 17: the same home is scored many times a tap). */
+const dropProbes = new Map<string, boolean>()
+function probeKey(doc: Doc, layout: Layout, bedId: string): string {
+  const ps = layout.placements.map((p) => `${p.id}:${p.itemId}:${p.x.toFixed(4)}:${p.y.toFixed(4)}:${p.rotation.toFixed(4)}:${p.on ?? ''}`).join('|')
+  const items = layout.placements.map((p) => {
+    const i = doc.items.find((x) => x.id === p.itemId)
+    return i ? `${i.category}:${i.width}:${i.depth}:${i.floorLevel ? 1 : 0}` : ''
+  })
+  return `${bedId}#${JSON.stringify(doc.rooms.map((r) => [r.polygon, r.openings]))}#${ps}#${items.join('|')}`
+}
+
+/**
+ * A goal's id with the placements in it named by their item (round 17): a remix gives its pieces
+ * new placement ids, so "nightstand:<bed>" in a remix and in its source compare by the bed itself.
+ */
+function goalKeyer(layout: Layout): (id: string) => string {
+  const item = new Map(layout.placements.map((p) => [p.id, p.itemId]))
+  return (id) =>
+    id
+      .split(':')
+      .map((seg) => (item.has(seg) ? `item=${item.get(seg)}` : seg))
+      .join(':')
+}
+
+/** The goals a remix's source design has done, keyed by goalKeyer; kept per source arrangement. */
+const sourceDoneCache = new Map<string, Set<string>>()
+function sourceDone(doc: Doc, layout: Layout): Set<string> {
+  const src = doc.layouts.find((l) => l.id === layout.remix?.from)
+  if (!src || src.id === layout.id) return new Set()
+  const sig = `${src.id}#${src.placements.map((p) => `${p.id}:${p.itemId}:${p.x.toFixed(3)}:${p.y.toFixed(3)}:${p.rotation.toFixed(3)}:${p.on ?? ''}`).join('|')}#${JSON.stringify(doc.rooms.map((r) => [r.id, r.polygon, r.openings]))}`
+  let done = sourceDoneCache.get(sig)
+  if (!done) {
+    // (Scored with the source's own remix left out: only what it finished counts, not how.)
+    const plain: Layout = { ...src, remix: undefined }
+    const key = goalKeyer(src)
+    done = new Set(scoreHome(doc, plain, analyze(doc, plain), null, null, { quick: true }).goals.filter((g) => g.done).map((g) => key(g.id)))
+    if (sourceDoneCache.size >= 8) sourceDoneCache.delete(sourceDoneCache.keys().next().value!)
+    sourceDoneCache.set(sig, done)
+  }
+  return done
+}
+
+export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: VisitInput | null, perks?: Perks | null, opts?: ScoreOptions): HomeScore {
   const placed: P[] = placedItems(doc, layout).map(({ p, item, body }) => {
     const center = v(p.x, p.y)
     const room = doc.rooms.find((r) => pointInPolygon(center, r.polygon))
@@ -807,7 +861,17 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
         return polygonInsideRoom(body, bed.room!.polygon) && !solid.some((x) => convexOverlap(body, x.body))
       })
     let canDrop: boolean | undefined
-    const dropOk = () => (canDrop ??= findDrop(doc, layout, itemFromCatalog(ns, '__bedside-probe'), { nextTo: bed.id }).ok)
+    const dropOk = () => {
+      if (canDrop !== undefined) return canDrop
+      if (opts?.quick) return (canDrop = true)
+      const key = probeKey(doc, layout, bed.id)
+      const hit = dropProbes.get(key)
+      if (hit !== undefined) return (canDrop = hit)
+      canDrop = findDrop(doc, layout, itemFromCatalog(ns, '__bedside-probe'), { nextTo: bed.id }).ok
+      if (dropProbes.size >= 64) dropProbes.delete(dropProbes.keys().next().value!)
+      dropProbes.set(key, canDrop)
+      return canDrop
+    }
     const sides = twin ? [nearest ? Math.sign(nearest.l.x) || 1 : open(1) || !open(-1) ? 1 : -1] : [-1, 1]
     for (const sd of sides) {
       const stand = near.filter((x) => Math.sign(x.l.x) === sd).sort((a, b) => a.gap - b.gap)[0]?.n
@@ -1429,6 +1493,16 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
   const rank = (g: Goal) => CATEGORY_ORDER.indexOf(g.category)
   goals.sort((a, b) => Number(a.done) - Number(b.done) || (b.progress ?? 0) - (a.progress ?? 0) || rank(a) - rank(b) || a.stars - b.stars)
 
+  // A remix (round 17): pick goals its source design finished, with nothing toward them here yet,
+  // are a replay of the original. (A goal with a piece in place but no longer right, the remix broke.)
+  if (layout.remix && !opts?.quick) {
+    const done = sourceDone(doc, layout)
+    if (done.size) {
+      const key = goalKeyer(layout)
+      for (const g of goals) if (!g.done && g.item && g.tab && !(g.progress ?? 0) && !g.visit && !g.id.startsWith('twist:') && done.has(key(g.id))) g.replay = true
+    }
+  }
+
   const livingFirst = !!rooms.length && !canSleep && livable.some((r) => LIVING.test(r.name) && !named(r))
   const remixSeed = layout.remix ? [...layout.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) : undefined
   return { stars, maxStars, coreMax, thresholds, level, goals, vibe, errors, headline, livingFirst, cap, remixSeed }
@@ -1542,6 +1616,8 @@ export interface ChipMove {
   rotation: number
   /** The goal the move is for, done after it (or a step closer). */
   done: boolean
+  /** Pieces moved along with it (round 17: the chairs at a dining table), by the same step. */
+  also?: { id: string; x: number; y: number; rotation: number }[]
 }
 type Spot = { x: number; y: number; rotation: number }
 
@@ -1553,6 +1629,10 @@ type Spot = { x: number; y: number; rotation: number }
  * be, and `accept` judges the result. A move never adds a warning or a snag. The most stars wins,
  * then one that finishes the goal, then the roomiest floor left for the pieces still to come (a
  * desk and its chair), then the shortest move. Up to a dozen spots per room are scored.
+ *
+ * Round 17: spots are ranked on a quick score (no bedside drop probe) and only the winner is scored
+ * in full. `group` pieces (the chairs at a table) move with it by the same step, never turned; the
+ * winner must also pass `verify` (a desk fits after), else the next best is tried.
  */
 function bestMove(
   doc: Doc,
@@ -1562,6 +1642,7 @@ function bestMove(
   accept: (after: HomeScore) => { ok: boolean; done: boolean },
   before: HomeScore,
   a0: Analysis,
+  opts: { group?: string[]; verify?: (after: Layout) => boolean; noGrid?: boolean } = {},
 ): ChipMove | null {
   const p = layout.placements.find((x) => x.id === pid)
   const item = p && doc.items.find((i) => i.id === p.itemId)
@@ -1569,8 +1650,14 @@ function bestMove(
   const warnings = (a: Analysis) => a.issues.filter((i) => i.severity !== 'info').length
   const base = warnings(a0)
   const snagged = new Set(before.goals.filter((g) => g.snag).map((g) => g.id))
-  const others: Layout = { ...layout, placements: layout.placements.filter((x) => x.id !== p.id && x.on !== p.id) }
+  const moving = new Set([p.id, ...(opts.group ?? [])])
+  const others: Layout = { ...layout, placements: layout.placements.filter((x) => !moving.has(x.id) && !(x.on && moving.has(x.on))) }
   const items = new Map(doc.items.map((i) => [i.id, i]))
+  const groupBodies = (opts.group ?? []).flatMap((id) => {
+    const x = layout.placements.find((q) => q.id === id)
+    const it = x && items.get(x.itemId)
+    return x && it ? [{ x, it }] : []
+  })
   const solids = others.placements.flatMap((x) => {
     const it = items.get(x.itemId)
     return it && !it.floorLevel && !x.on && !isWallDecor(it.category) ? [orientedRect(v(x.x, x.y), it.width / 2, it.depth / 2, x.rotation)] : []
@@ -1588,28 +1675,59 @@ function bestMove(
       }
     return n
   }
-  type Cand = { spot: Spot; stars: number; done: boolean; roomy: number; d: number }
-  let best: Cand | null = null
+  type Cand = { spot: Spot; stars: number; done: boolean; roomy: number; d: number; l2: Layout; a2: Analysis }
+  const cands: Cand[] = []
   const better = (a: Cand, b: Cand) => (a.stars !== b.stars ? a.stars > b.stars : a.done !== b.done ? a.done : a.roomy !== b.roomy ? a.roomy > b.roomy : a.d < b.d)
+  /** Scores the home with the piece at `spot`; `quick` ranks it (round 17), the winner is checked in full. */
+  const judge = (l2: Layout, a2: Analysis, quick: boolean) => {
+    const s2 = scoreHome(doc, l2, a2, null, null, { quick })
+    if (s2.goals.some((g) => g.snag && !snagged.has(g.id))) return null
+    const verdict = accept(s2)
+    return verdict.ok ? { stars: s2.stars, done: verdict.done } : null
+  }
   const consider = (spot: Spot, room?: Room) => {
     const dx = spot.x - p.x
     const dy = spot.y - p.y
-    const l2: Layout = { ...layout, placements: layout.placements.map((x) => (x.id === p.id ? { ...x, ...spot } : x.on === p.id ? { ...x, x: x.x + dx, y: x.y + dy } : x)) }
+    const l2: Layout = {
+      ...layout,
+      placements: layout.placements.map((x) => (x.id === p.id ? { ...x, ...spot } : moving.has(x.id) || (x.on && moving.has(x.on)) ? { ...x, x: x.x + dx, y: x.y + dy } : x)),
+    }
     const a2 = analyze(doc, l2)
     if (warnings(a2) > base) return
-    const s2 = scoreHome(doc, l2, a2)
-    if (s2.goals.some((g) => g.snag && !snagged.has(g.id))) return
-    const verdict = accept(s2)
-    if (!verdict.ok) return
-    const c: Cand = { spot, stars: s2.stars, done: verdict.done, roomy: room ? roomy(room, bodyAt(spot)) : 0, d: Math.hypot(dx, dy) }
-    if (!best || better(c, best)) best = c
+    const j = judge(l2, a2, true)
+    if (!j) return
+    cands.push({ spot, ...j, roomy: room ? roomy(room, bodyAt(spot)) : 0, d: Math.hypot(dx, dy), l2, a2 })
   }
+  /** The best candidate that still holds when scored in full. */
+  const pick = (): Cand | null => {
+    const sorted = cands.slice().sort((a, b) => (better(a, b) ? -1 : better(b, a) ? 1 : 0))
+    let fallback: Cand | null = null
+    for (const c of sorted) {
+      if (opts.verify && !opts.verify(c.l2)) continue
+      const j = judge(c.l2, c.a2, false)
+      if (j && j.stars >= c.stars) return { ...c, ...j }
+      // Rarely the full score is lower (the bedside probe): still a move, ranked on what it earns.
+      if (j && (!fallback || better({ ...c, ...j }, fallback))) fallback = { ...c, ...j }
+    }
+    return fallback
+  }
+  let best: Cand | null = null
   const home = doc.rooms.find((r) => pointInPolygon(v(p.x, p.y), r.polygon))
   const seen = new Set<string>()
+  // Round 17: a dozen spots in its own room, and two dozen in all, keep a tap quick.
+  const MAX_SCORED = 24
+  let scored = 0
   const tryRoom = (room: Room) => {
     const fits = (q: Spot) => {
       const body = bodyAt(q)
-      return polygonInsideRoom(body, room.polygon) && !solids.some((b) => convexOverlap(body, b)) && meets(body, v(q.x, q.y))
+      if (!polygonInsideRoom(body, room.polygon) || solids.some((b) => convexOverlap(body, b)) || !meets(body, v(q.x, q.y))) return false
+      if (!groupBodies.length) return true
+      // A group moves as it stands: same turn, every piece inside the room and clear.
+      if (Math.abs(normalizeAngle(q.rotation - p.rotation)) > 1e-6) return false
+      return groupBodies.every(({ x, it }) => {
+        const b = orientedRect(v(x.x + q.x - p.x, x.y + q.y - p.y), it.width / 2, it.depth / 2, x.rotation)
+        return polygonInsideRoom(b, room.polygon) && !solids.some((o) => convexOverlap(b, o)) && meets(b, v(x.x + q.x - p.x, x.y + q.y - p.y))
+      })
     }
     const near = (a: Spot, b: Spot) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y)
     const side = rot(v(1, 0), p.rotation)
@@ -1622,12 +1740,10 @@ function bestMove(
         }
     const c = centroid(room.polygon)
     const drops: Spot[] = []
-    for (const target of [c, ...room.polygon.map((q) => lerp(q, c, 0.25)), ...wallSegments(room).map(([a, b]) => lerp(lerp(a, b, 0.5), c, 0.2))]) {
-      const r = findDrop({ ...doc, rooms: [room] }, others, item, { near: target })
-      if (r.ok && fits(r.spot)) drops.push({ x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
-    }
+    const targets = [c, ...room.polygon.map((q) => lerp(q, c, 0.25)), ...wallSegments(room).map(([a, b]) => lerp(lerp(a, b, 0.5), c, 0.2))]
+    for (const r of findDrops({ ...doc, rooms: [room] }, others, item, targets)) if (r.ok && fits(r.spot)) drops.push({ x: r.spot.x, y: r.spot.y, rotation: r.spot.rotation })
     const grid: Spot[] = []
-    if (room === home) {
+    if (room === home && !opts.noGrid) {
       const xs = room.polygon.map((q) => q.x)
       const ys = room.polygon.map((q) => q.y)
       for (let x = Math.min(...xs) + 0.1; x < Math.max(...xs); x += 0.2)
@@ -1637,19 +1753,30 @@ function bestMove(
     let tries = 0
     for (const q of [...slides, ...drops.sort(near), ...grid.sort(near).slice(0, 4)]) {
       const key = `${q.x.toFixed(2)}:${q.y.toFixed(2)}:${normalizeAngle(q.rotation).toFixed(2)}`
-      if (seen.has(key) || tries >= 12) continue
+      if (seen.has(key) || tries >= 12 || scored >= MAX_SCORED) continue
       seen.add(key)
       tries++
+      scored++
       consider({ x: q.x, y: q.y, rotation: q.rotation }, room)
     }
   }
-  if (home) tryRoom(home)
+  if (home) {
+    tryRoom(home)
+    best = pick()
+  }
   for (const room of doc.rooms) {
-    if (best) break
-    if (room !== home && !UTILITY_ROOM.test(room.name)) tryRoom(room)
+    if (best || scored >= MAX_SCORED) break
+    if (room !== home && !UTILITY_ROOM.test(room.name)) {
+      tryRoom(room)
+      best = pick()
+    }
   }
   const b = best as Cand | null
-  return b ? { id: p.id, x: b.spot.x, y: b.spot.y, rotation: b.spot.rotation, done: b.done } : null
+  if (!b) return null
+  const dx = b.spot.x - p.x
+  const dy = b.spot.y - p.y
+  const also = groupBodies.map(({ x }) => ({ id: x.id, x: x.x + dx, y: x.y + dy, rotation: x.rotation }))
+  return { id: p.id, x: b.spot.x, y: b.spot.y, rotation: b.spot.rotation, done: b.done, ...(also.length ? { also } : {}) }
 }
 
 /**
@@ -1703,6 +1830,7 @@ export function goalMove(doc: Doc, layout: Layout, goalId: string): ChipMove | n
   const a0 = analyze(doc, layout)
   const before = scoreHome(doc, layout, a0)
   const goal = before.goals.find((g) => g.id === goalId)
+  if (goal && !goal.done && goal.item && goal.tab && goal.makeRoom) return roomMove(doc, layout, goal, before, a0)
   if (!goal || goal.done || goal.tab || !goal.near || !layout.placements.some((p) => p.id === goal.near)) return null
   const accept = (after: HomeScore) => {
     const g2 = after.goals.find((g) => g.id === goalId)
@@ -1710,6 +1838,78 @@ export function goalMove(doc: Doc, layout: Layout, goalId: string): ChipMove | n
     return { ok: g2.done || (g2.progress ?? 0) > (goal.progress ?? 0) + 1e-6, done: g2.done }
   }
   return bestMove(doc, layout, goal.near, () => true, accept, before, a0)
+}
+
+/**
+ * "Make room for a desk" in one tap (round 17): a core goal whose piece fits nowhere. The pieces
+ * that could make room are tried in turn (the one the goal names, a dining table with its chairs
+ * moved as one, then the biggest other pieces in that room): with that piece out of the way the
+ * drop search finds the new piece a spot, and the piece goes to the best clean spot clear of it,
+ * never at a cost in stars; the new piece must fit after. Null when no move makes room.
+ */
+function roomMove(doc: Doc, layout: Layout, goal: Goal, before: HomeScore, a0: Analysis): ChipMove | null {
+  let probe: Item
+  try {
+    probe = itemFromCatalog(catalogEntry(goal.item!), '__room-probe')
+  } catch {
+    return null
+  }
+  if (findDrop(doc, layout, probe).ok) return null
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const catOf = (id: string) => items.get(layout.placements.find((x) => x.id === id)?.itemId ?? '')?.category ?? ''
+  const solid = layout.placements.filter((x) => {
+    const it = items.get(x.itemId)
+    return it && !x.on && !it.floorLevel && !isWallDecor(it.category)
+  })
+  const body = (x: Placement) => {
+    const it = items.get(x.itemId)!
+    return orientedRect(v(x.x, x.y), it.width / 2, it.depth / 2, x.rotation)
+  }
+  /** A dining table and the chairs pulled up to it: they move as one. */
+  const tableGroup = (tableId: string) => {
+    const t = solid.find((x) => x.id === tableId)!
+    return solid.filter((x) => (catOf(x.id) === 'dining-chair' || catOf(x.id) === 'bench') && polygonGap(body(t), body(x)) <= RULES.chairToTable).map((x) => x.id)
+  }
+  const tableOf = (chairId: string) => {
+    const c = solid.find((x) => x.id === chairId)!
+    return solid.find((x) => catOf(x.id) === 'dining-table' && polygonGap(body(x), body(c)) <= RULES.chairToTable)?.id
+  }
+  const first = goal.makeRoom!.id
+  const tries: { pid: string; group: string[] }[] = []
+  const push = (pid: string | undefined) => {
+    if (!pid || tries.some((t) => t.pid === pid || t.group.includes(pid))) return
+    const cat = catOf(pid)
+    if (cat === 'dining-chair' || cat === 'bench') {
+      const t = tableOf(pid)
+      if (t) push(t)
+      if (tries.some((x) => x.group.includes(pid))) return
+    }
+    tries.push({ pid, group: cat === 'dining-table' ? tableGroup(pid) : [] })
+  }
+  push(first)
+  // Then the rest: smaller and spare pieces, then the bed (to another wall). The sofa and TV,
+  // which make the living room, stay put.
+  const cost = (x: Placement) => (catOf(x.id) === 'bed' ? 2 : ANCHORS.has(catOf(x.id)) ? 1 : 0)
+  const area = (x: Placement) => polygonArea(body(x))
+  for (const x of solid.filter((x) => catOf(x.id) !== 'sofa' && catOf(x.id) !== 'tv-stand').sort((a, b) => cost(a) - cost(b) || area(b) - area(a))) push(x.id)
+  const verify = (l2: Layout) => findDrop(doc, l2, probe).ok
+  let searched = 0
+  for (const t of tries.slice(0, 8)) {
+    // Where the new piece would go with this one out of the way (none: moving it won't help).
+    const gone = new Set([t.pid, ...t.group])
+    const without: Layout = { ...layout, placements: layout.placements.filter((x) => !gone.has(x.id) && !(x.on && gone.has(x.on))) }
+    const spot = findDrop(doc, without, probe)
+    if (!spot.ok) continue
+    // The move keeps clear of that spot and the floor in front of it (a desk's chair).
+    const keep = orientedRect(v(spot.spot.x, spot.spot.y), probe.width / 2 + 0.05, probe.depth / 2 + 0.45, spot.spot.rotation, v(0, 0.4))
+    const meets = (b: Vec2[]) => !convexOverlap(b, keep)
+    const accept = (after: HomeScore) => ({ ok: after.stars >= before.stars, done: true })
+    // (A big piece goes only where the drop search would stand it: against a wall, not out on the floor.)
+    const m = bestMove(doc, layout, t.pid, meets, accept, before, a0, { group: t.group, verify, noGrid: ANCHORS.has(catOf(t.pid)) && !t.group.length })
+    if (m) return m
+    if (++searched >= 4) break
+  }
+  return null
 }
 
 /**

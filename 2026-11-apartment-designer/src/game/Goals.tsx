@@ -801,9 +801,14 @@ function showGoal(g: Goal) {
       if (!m) return
       const p = activeLayout(s.doc).placements.find((x) => x.id === m.id)
       const name = s.doc.items.find((i) => i.id === p?.itemId)?.name.toLowerCase() ?? 'piece'
+      // A dining table moves with its chairs (round 17): one step to undo.
+      if (m.also?.length) s.beginGesture()
       s.updatePlacement(m.id, { x: m.x, y: m.y, rotation: m.rotation })
+      for (const q of m.also ?? []) s.updatePlacement(q.id, { x: q.x, y: q.y, rotation: q.rotation })
+      if (m.also?.length) s.endGesture()
       s.select({ kind: 'placement', id: m.id })
-      s.notify(m.done ? `Moved the ${name}. ${g.id === 'walkways' ? 'The way is clear!' : `${g.title} ✓`}` : `Moved the ${name}: a step closer.`)
+      const room = /^Make room for (.+)$/.exec(g.title)
+      s.notify(room ? `Moved the ${name}: room for ${room[1]} now.` : m.done ? `Moved the ${name}. ${g.id === 'walkways' ? 'The way is clear!' : `${g.title} ✓`}` : `Moved the ${name}: a step closer.`)
     }, 40)
     return
   }
