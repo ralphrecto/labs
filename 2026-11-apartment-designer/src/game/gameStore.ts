@@ -96,6 +96,14 @@ interface GameState {
   setUnpacked: (u: GameState['unpacked']) => void
   /** Remember the colour of a placed pick for its family. */
   setTaste: (family: Family, color: string) => void
+  /** Mood moments the player waved off ("Not now"), by moods.momentKey: that room isn't asked again on that design. */
+  moodSkips: string[]
+  skipMood: (key: string) => void
+  /** A room whose mood card the player asked for (to change its mood): shown at once. */
+  moodAsk: string | null
+  askMood: (roomId: string | null) => void
+  /** After a mood card closes, the next due one waits until the design has this many pieces (a few more). */
+  moodQuiet: number
   /** Today's visitor and the stickers collected so far (one per visit ever finished). */
   visit: VisitState
   /** On a new local day (or the first time), pick today's visitor for this home. */
@@ -121,6 +129,7 @@ const TASTE_KEY = 'apartment-designer:taste'
 export const VISIT_KEY = 'apartment-designer:visit'
 
 const DRAG_STAR_KEY = 'homebody:drag-star'
+const MOOD_SKIPS_KEY = 'homebody:mood-skips'
 const UNLOCKS_SEEN_KEY = 'homebody:unlocks-seen'
 const FRESH_UNLOCKS_KEY = 'homebody:fresh-unlocks'
 /** The buttons each level unlocks, which glow "new" the first time. */
@@ -296,6 +305,16 @@ export const useGame = create<GameState>((set, get) => ({
   photoRequest: 0,
   unpacked: null,
   taste: readTaste(),
+  moodSkips: readList(MOOD_SKIPS_KEY),
+  skipMood: (key) => {
+    if (get().moodSkips.includes(key)) return
+    const moodSkips = [...get().moodSkips, key]
+    writeList(MOOD_SKIPS_KEY, moodSkips)
+    set({ moodSkips })
+  },
+  moodAsk: null,
+  askMood: (moodAsk) => set({ moodAsk }),
+  moodQuiet: 0,
   visit: readVisit(),
   classic: (() => {
     try {
