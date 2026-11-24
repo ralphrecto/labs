@@ -551,3 +551,26 @@ Rolled over:
 - Moving the coffee table alone leaves its rug behind.
 - Rug detection only checked on the sample scan; a pale speck remains at one wall in Cartoon.
 - Chip taps measured 2-4 s headless on phone; time on a real device.
+
+## Round 18 (2026-11-24 11:36-12:45 UTC)
+
+Playthrough: phone and desktop pass (only the known headless style-tap flakes). Reviewers (on the merged mid-round build): a returning phone player over three faked days, and a scan-first desktop newcomer using "Try ours" and an uploaded `.ply`.
+
+Shipped:
+- **Moods:** a finished mood's star is kept when you change your mind (`Layout.moodsDone`, a `mood-kept:<room>` goal), and the new mood becomes an open ✨ goal with a restyle step or two. A mood goal only finishes with at least one new or repainted piece (`Layout.moodBase`). Mood light is a downward spot sized to stay inside the room, plus wall and floor glows; Snug is amber, Airy bright white, Bold a cool accent wall and rug halo.
+- **Every twist finishes by Next:** Bed swap moves the bed with its nightstands, Window seat turns the sofa to a window, Less is more spends its 10-piece budget on core goals and can put away the newest extra. A chip-only test per twist reaches Dream home.
+- **Coming back:** yesterday's visitor leaving is explained on the welcome card (`visit.gone` in the store), the card leads with today's visitor, already-pleased visitors are re-rolled (and cheered if chosen), two-step wishes once you have 4+ stickers, a pleased visitor adds a polaroid with their sticker to the album, the chip offers one bonus goal a day at Dream home before Remix, and the "New" glow on designs clears once opened or after a day.
+- **Scanned homes:** one-room homes count as at least 20 core stars and get extra bonus goals, and scanned pieces earn at most Lived-in (a one-room scan now takes about 15 Next steps, was 6). The Welcome home card shows your own scan and the same first goal as the chip; the game opens with a short sweep in Scan style that fades into your style; the scan guide says to measure one wall; the length box takes focus; rugs draw under furniture in the detection plan; rooms are named from their furniture.
+- **Rug detection:** robust to sun, shade, furniture shadows and sparse phone scans (25 synthetic scene tests; prefers missing a rug to inventing one); planks continue under a moved rug and along walls, and the Cartoon speck is gone.
+- **Room sense and speed:** smaller desk or dresser offered for the bedroom first; desks in a living room go to a corner away from seating and the TV; the rug follows a moved coffee table (drag or chip, one undo); office chairs avoid rugs. Chip taps are about 3-4x faster in node (sample tap-only median 38-85 ms) through caches, shared trial ids, early-exit overlaps and deferred card checks.
+
+442 tests pass.
+
+Rolled over:
+- Welcome lead, daily bonus and album polaroid have no unit tests.
+- Small rooms where a desk and dining set don't fit can still block Dream home on "A spot to work".
+- Two-room scanned homes keep the old pacing.
+- Dining-table and desk taps still 0.3-0.6 s; time on a real phone.
+- Mood glows are fixed overlays; Bold's accent wall glow is a soft blob on long walls.
+- Round rugs import as rectangles; rug detection still untested on a real Scaniverse export.
+- Scan intro and welcome snapshot not checked at phone width.
