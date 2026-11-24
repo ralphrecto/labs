@@ -258,6 +258,7 @@ function ReviewOverlay({ px, fs, shift }: { px: number; fs: number; shift: { x: 
   const td = cloud && topDownImage(cloud, estimate.room?.ceilingHeight ?? 2.6)
   const room = review.includeRoom ? estimate.room : null
   const accent = '#2f6fde'
+  const drawn = useMemo(() => [...objects].sort((a, b) => Number(b.category === 'rug') - Number(a.category === 'rug')), [objects])
   return (
     <g transform={`translate(${shift.x} ${shift.y})`}>
       {td && (
@@ -292,7 +293,8 @@ function ReviewOverlay({ px, fs, shift }: { px: number; fs: number; shift: { x: 
           />
         )
       })}
-      {objects.map((o) => {
+      {/* Rugs first, under the furniture that stands on them; every label over every piece. */}
+      {drawn.map((o) => {
         const focused = review.focusId === o.id
         return (
           <g key={o.id} transform={`translate(${o.x} ${o.y}) rotate(${(o.rotation * 180) / Math.PI})`} pointerEvents="all" style={{ cursor: 'pointer' }}>
@@ -313,9 +315,17 @@ function ReviewOverlay({ px, fs, shift }: { px: number; fs: number; shift: { x: 
             />
             {/* Front edge */}
             <line x1={-o.width / 2 + 0.03} y1={o.depth / 2 - 0.03} x2={o.width / 2 - 0.03} y2={o.depth / 2 - 0.03} stroke="#ffffff" strokeWidth={2.5 * px} pointerEvents="none" />
+          </g>
+        )
+      })}
+      {drawn.map((o) => {
+        // A rug's label sits along its front edge, clear of the table standing in its middle.
+        const rugY = o.category === 'rug' && objects.some((x) => x !== o && x.category !== 'rug' && Math.hypot(x.x - o.x, x.y - o.y) < Math.min(o.width, o.depth) / 2) ? o.depth / 2 - Math.min(fs, o.depth / 4) : 0
+        return (
+          <g key={o.id} transform={`translate(${o.x} ${o.y}) rotate(${(o.rotation * 180) / Math.PI})`} pointerEvents="none">
             <text
               x={0}
-              y={0}
+              y={rugY}
               fontSize={Math.min(fs, (o.width / Math.max(4, o.name.length)) * 1.6)}
               textAnchor="middle"
               dominantBaseline="middle"
