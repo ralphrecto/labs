@@ -530,3 +530,24 @@ Rolled over:
 - "Entrance" room label overlaps a wall length in the phone plan.
 - Pacing still feels like a checklist: add a choice that matters every few goals (mood, style) or a hand-placed piece.
 - Evening light unlock has no "New" glow.
+
+## Round 17 (2026-11-24 02:20-05:35 UTC)
+
+Playthrough: phone and desktop pass (only the known headless Scan-style flake). A usage limit paused implementers 03:50-04:53. Reviewers (on the merged mid-round build): cozy first-time phone player, desktop interior designer and art director.
+
+Shipped:
+- **Mood moments** (`moods.ts`, `MoodCard.tsx`): at Lived-in, Cozy and Designer home (once the home has 7, 11 and 15 pieces), one card asks how a room should feel: Bright & airy, Warm & snug or Bold & playful, with tiny previews and what the goal adds. The choice is stored on the design (`Layout.moods`), tints that room's pick cards (wood stays wood; accents go on rugs, art and soft goods), adds a one-star mood goal that never holds a level, and adds a soft pool of light and floor glow in the room. The camera eases to the room after choosing. Each mood goal gets its own headline when it finishes. Bold repaints an existing rug instead of buying a second one. Moods carry into copies and remixes, and can be changed from the selected room.
+- **Remix depth:** Fresh start reaches Dream home by Next alone (`roomMove` moves a table with its chairs, small pieces first, the bed last). Remixes lead with new or broken goals and mark already-finished ones as replays. Fresh start moves now prefer another wall or a turn, vary per remix, carry the TV, coffee table and rug with the sofa, and keep doorways clear (`doorKeepOut`; a piece on a door landing is now a warning). Desks try a study, then a bedroom, before the living room.
+- **Speed:** walkway search reuses grids (2.7x faster), `findDrops` batches drop searches, `bestMove` fully scores only the winner. Median twist move 592 ms to about 100 ms.
+- **Scanned home:** the scan floor stops cleanly at the room outline, Lifelike planks are crisper, top-layer sampling makes the scanned rug read, and a detected rug becomes a real, movable rug piece (`findRugs`). Shadows are softer per style and in windowless homes.
+- **Small:** the Entrance tag and room names avoid wall lengths and badges in the plan; the Evening toggle glows "New" when unlocked at Cozy.
+
+382 tests pass. Pacing unchanged (sample about 19 Next steps to Dream home, about 22 when answering mood cards).
+
+Rolled over:
+- Changing a mood still costs its star.
+- Mood light spills slightly into neighbouring hallways.
+- A desk or dresser can still land in the living room when the bedroom truly has no room; office chairs can land on rugs as a last resort.
+- Moving the coffee table alone leaves its rug behind.
+- Rug detection only checked on the sample scan; a pale speck remains at one wall in Cartoon.
+- Chip taps measured 2-4 s headless on phone; time on a real device.
