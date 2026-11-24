@@ -701,6 +701,49 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
       const r = (text.length * fs * 0.9 * 0.58) / 2 + 20 * px
       labelBoxes.push({ minX: t.x - r, maxX: t.x + r, minY: t.y - fs * 0.5 - 20 * px, maxY: t.y + fs * 0.5 + 20 * px })
     }
+  // Wall lengths are placed first (outside the wall, past decor badges); the entrance tag and the room
+  // names then take spots clear of them, so no two labels ever sit on each other.
+  const wallDims: { key: string; roomId: string; m: Vec2; ang: number; text: string }[] = []
+  for (const room of doc.rooms)
+    wallSegments(room).forEach(([a, b], i) => {
+      const l = dist(a, b)
+      if (l * vs.k < 40) return
+      const mid = scale(add(a, b), 0.5)
+      // A wall two rooms share (the same length, just across the wall) is measured once.
+      if (dimsDone.some((o) => Math.abs(o.l - l) < 0.02 && dist(o.mid, mid) < Math.max(0.3, room.wallThickness * 3))) return
+      dimsDone.push({ l, mid })
+      // Outside the wall line; an inside wall takes whichever side is clear of furniture, or none.
+      const n = wallInwardNormal(room, i)
+      const u = norm(sub(b, a))
+      const half = v(Math.abs(u.x) * fs * 1.6 + Math.abs(u.y) * fs * 0.6, Math.abs(u.y) * fs * 1.6 + Math.abs(u.x) * fs * 0.6)
+      const clear = (q: Vec2) => pieceBoxes.every((o) => o.maxX < q.x - half.x || o.minX > q.x + half.x || o.maxY < q.y - half.y || o.minY > q.y + half.y)
+      const text = formatLength(l, units)
+      const along = (text.length * fs * 0.92 * 0.58) / 2 + 4 * px
+      const across = fs * 0.6
+      const hx = Math.abs(u.x) * along + Math.abs(u.y) * across
+      const hy = Math.abs(u.y) * along + Math.abs(u.x) * across
+      const boxAt = (q: Vec2): Box => ({ minX: q.x - hx, maxX: q.x + hx, minY: q.y - hy, maxY: q.y + hy })
+      const halfN = Math.abs(n.x) * hx + Math.abs(n.y) * hy
+      const m = wallLabelSpot({ mid, n, wallT: room.wallThickness, decorWallT, px, badgeR, halfN, badges: badgeBoxes, boxAt, ok: (q) => clear(q) && !boxesHit(boxAt(q)) })
+      if (!m) return
+      labelBoxes.push(boxAt(m))
+      let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI
+      if (ang > 90) ang -= 180
+      if (ang < -90) ang += 180
+      wallDims.push({ key: `${room.id}:${i}`, roomId: room.id, m, ang, text })
+    })
+  // The "Entrance" tag by the front door: off the doorway, clear of wall lengths and decor badges.
+  const entranceTags = new Map<string, Vec2>()
+  for (const room of doc.rooms)
+    for (const o of room.openings) {
+      if (!o.entrance || !doorSwing(room, o)) continue
+      const [a, b] = openingEndpoints(room, o)
+      const q = entranceLabelSpot({ a, b, n: wallInwardNormal(room, o.wall), fs, px, avoid: [...labelBoxes, ...badgeBoxes] })
+      entranceTags.set(o.id, q)
+      labelBoxes.push(entranceLabelBox(q, fs))
+    }
+  // Room names avoid pieces, wall lengths, the entrance tag and decor badges.
+  const nameAvoid = [...pieceBoxes, ...labelBoxes, ...badgeBoxes]
   // Labels a piece doesn't need: a lamp on a table, a rug under the sofa or the table, a pendant over the table.
   const solidBodies = placementsWithItems
     .filter(({ item, p }) => !item.floorLevel && !p.on && item.category !== 'pendant' && !isWallDecor(item.category))
@@ -753,8 +796,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
           const outer = offsetPolygon(room.polygon, room.wallThickness)
           const d = `M${outer.map((p) => `${p.x},${p.y}`).join('L')}Z M${room.polygon.map((p) => `${p.x},${p.y}`).join('L')}Z`
           const areaText = units === 'metric' ? `${polygonArea(room.polygon).toFixed(1)} m²` : `${Math.round(polygonArea(room.polygon) * 10.7639)} ft²`
-          // The name and area sit in a free spot of the room, or not at all: never under a piece.
-          const c = roomLabelSpot(room.polygon, centroid(room.polygon), fs, Math.max(room.name.length, areaText.length) * fs * 0.58, pieceBoxes)
+          // The name and area sit in a free spot of the room, or not at all: never under a piece or a label.
+          const c = roomLabelSpot(room.polygon, centroid(room.polygon), fs, Math.max(room.name.length, areaText.length) * fs * 0.58, nameAvoid)
           return (
             <g key={room.id}>
               <polygon
@@ -835,8 +878,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
                   <g pointerEvents="none" fill="none" stroke={selected ? COLORS.accent : COLORS.wall} strokeWidth={1.2 * px}>
                     <line x1={swing[0].x} y1={swing[0].y} x2={swing[swing.length - 1].x} y2={swing[swing.length - 1].y} strokeWidth={2.5 * px} />
                     <polyline points={swing.slice(1).map((p) => `${p.x},${p.y}`).join(' ')} strokeDasharray={`${4 * px} ${3 * px}`} />
-                    {o.entrance && (
-                      <text x={(a.x + b.x) / 2 - n.x * 0.45} y={(a.y + b.y) / 2 - n.y * 0.45 + fs * 0.35} fontSize={fs * 0.9} textAnchor="middle" stroke="none" fill={COLORS.muted} fontFamily="system-ui, sans-serif">
+                    {o.entrance && entranceTags.has(o.id) && (
+                      <text x={entranceTags.get(o.id)!.x} y={entranceTags.get(o.id)!.y + fs * 0.35} fontSize={fs * 0.9} textAnchor="middle" stroke="none" fill={COLORS.muted} fontFamily="system-ui, sans-serif">
                         Entrance
                       </text>
                     )}
@@ -849,39 +892,11 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset
 
         {/* Wall dimensions */}
         <g pointerEvents="none" fontSize={fs * 0.92} fontFamily="system-ui, sans-serif" textAnchor="middle" fill={COLORS.text}>
-          {doc.rooms.map((room) =>
-            wallSegments(room).map(([a, b], i) => {
-              const l = dist(a, b)
-              if (l * vs.k < 40) return null
-              const mid = scale(add(a, b), 0.5)
-              // A wall two rooms share (the same length, just across the wall) is measured once.
-              if (dimsDone.some((o) => Math.abs(o.l - l) < 0.02 && dist(o.mid, mid) < Math.max(0.3, room.wallThickness * 3))) return null
-              dimsDone.push({ l, mid })
-              // Outside the wall line; an inside wall takes whichever side is clear of furniture, or none.
-              const n = wallInwardNormal(room, i)
-              const u = norm(sub(b, a))
-              const half = v(Math.abs(u.x) * fs * 1.6 + Math.abs(u.y) * fs * 0.6, Math.abs(u.y) * fs * 1.6 + Math.abs(u.x) * fs * 0.6)
-              const clear = (q: Vec2) => pieceBoxes.every((o) => o.maxX < q.x - half.x || o.minX > q.x + half.x || o.maxY < q.y - half.y || o.minY > q.y + half.y)
-              const text = formatLength(l, units)
-              const along = (text.length * fs * 0.92 * 0.58) / 2 + 4 * px
-              const across = fs * 0.6
-              const hx = Math.abs(u.x) * along + Math.abs(u.y) * across
-              const hy = Math.abs(u.y) * along + Math.abs(u.x) * across
-              const boxAt = (q: Vec2): Box => ({ minX: q.x - hx, maxX: q.x + hx, minY: q.y - hy, maxY: q.y + hy })
-              const halfN = Math.abs(n.x) * hx + Math.abs(n.y) * hy
-              const m = wallLabelSpot({ mid, n, wallT: room.wallThickness, decorWallT, px, badgeR, halfN, badges: badgeBoxes, boxAt, ok: (q) => clear(q) && !boxesHit(boxAt(q)) })
-              if (!m) return null
-              labelBoxes.push(boxAt(m))
-              let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI
-              if (ang > 90) ang -= 180
-              if (ang < -90) ang += 180
-              return (
-                <text key={`${room.id}:${i}`} x={m.x} y={m.y} transform={`rotate(${ang} ${m.x} ${m.y})`} dominantBaseline="middle" opacity={selectedRoom?.id === room.id ? 1 : 0.7}>
-                  {text}
-                </text>
-              )
-            }),
-          )}
+          {wallDims.map((w) => (
+            <text key={w.key} x={w.m.x} y={w.m.y} transform={`rotate(${w.ang} ${w.m.x} ${w.m.y})`} dominantBaseline="middle" opacity={selectedRoom?.id === w.roomId ? 1 : 0.7}>
+              {w.text}
+            </text>
+          ))}
         </g>
 
         {/* Clearance zones */}
@@ -1314,13 +1329,39 @@ function insideScan(ref: ScanRef, p: Vec2) {
 
 export type { Doc, Layout }
 
-type Box = { minX: number; minY: number; maxX: number; maxY: number }
+export type Box = { minX: number; minY: number; maxX: number; maxY: number }
+
+/** The "Entrance" tag's box (world) when centred at `q`. */
+export function entranceLabelBox(q: Vec2, fs: number): Box {
+  const hw = ('Entrance'.length * fs * 0.9 * 0.58) / 2 + fs * 0.2
+  const hh = fs * 0.55
+  return { minX: q.x - hw, maxX: q.x + hw, minY: q.y - hh, maxY: q.y + hh }
+}
+
+/**
+ * Where the "Entrance" tag goes: outside the front door (`a`–`b`, `n` the room's inward normal); if a
+ * wall length or decor badge (`avoid`) is there, slid along the wall either way, then further out.
+ */
+export function entranceLabelSpot(o: { a: Vec2; b: Vec2; n: Vec2; fs: number; px: number; avoid: Box[] }): Vec2 {
+  const { a, b, n, fs, px, avoid } = o
+  const mid = scale(add(a, b), 0.5)
+  const u = norm(sub(b, a))
+  const hits = (q: Vec2) => {
+    const bx = entranceLabelBox(q, fs)
+    return avoid.some((o) => o.maxX > bx.minX && o.minX < bx.maxX && o.maxY > bx.minY && o.minY < bx.maxY)
+  }
+  const tries: Vec2[] = []
+  for (const out of [0.45, 0.45 + fs, 0.45 + 2 * fs, 0.45 + 4 * fs])
+    for (const s of [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]) tries.push(add(add(mid, scale(n, -out)), scale(u, s * 6 * px)))
+  return tries.find((q) => !hits(q)) ?? tries[0]
+}
+
 
 /**
  * Where a room's name and area go: its centre if that's free, else the free spot nearest it
  * (inside the room, clear of every piece), or null when the room has no room for them.
  */
-function roomLabelSpot(poly: Vec2[], c: Vec2, fs: number, w: number, boxes: Box[]): Vec2 | null {
+export function roomLabelSpot(poly: Vec2[], c: Vec2, fs: number, w: number, boxes: Box[]): Vec2 | null {
   const free = (q: Vec2) => {
     const b = { minX: q.x - w / 2, maxX: q.x + w / 2, minY: q.y - fs * 1.1, maxY: q.y + fs * 1.5 }
     if (![v(b.minX, b.minY), v(b.maxX, b.minY), v(b.maxX, b.maxY), v(b.minX, b.maxY)].every((p) => pointInPolygon(p, poly))) return false

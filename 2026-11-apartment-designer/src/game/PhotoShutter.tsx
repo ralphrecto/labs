@@ -4,7 +4,7 @@ import { renderForCapture } from '../three/capture'
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { activeLayout, useStore } from '../store'
-import { useGame } from './gameStore'
+import { UNLOCK_BUTTONS, useGame } from './gameStore'
 import { useHomeScore } from './Goals'
 import { LEVELS } from './goals'
 import { reduceMotion } from '../motion'
@@ -81,6 +81,11 @@ export function composePolaroid(shot: HTMLCanvasElement, name: string, level: st
   return out
 }
 
+// Reaching Cozy unlocks the Evening toggle: it glows "New" (round 16's fresh unlocks) until first used.
+// Registered here, where the toggle lives; idempotent. (A `Cozy: ['evening']` entry in UNLOCK_BUTTONS
+// itself would make this line unnecessary.)
+UNLOCK_BUTTONS.Cozy ??= ['evening']
+
 const fileName = (name: string) => `${name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'home'}.png`
 
 /** The shutter (only in Look mode) and the polaroid card it opens. */
@@ -93,6 +98,7 @@ export function PhotoShutter() {
   // Evening is a reward: it unlocks once the home has reached Cozy (in this design).
   const COZY = LEVELS.indexOf('Cozy')
   const eveningOpen = Math.max(score.level.index, score.best) >= COZY
+  const eveningFresh = useGame((g) => g.freshUnlocks.includes('evening'))
   const [snap, setSnap] = useState<Snap | null>(null)
   const [flash, setFlash] = useState(0)
   useEffect(() => () => void (snap && URL.revokeObjectURL(snap.url)), [snap])
@@ -168,10 +174,13 @@ export function PhotoShutter() {
         (eveningOpen ? (
           <button
             type="button"
-            className={`photo-evening${evening ? ' on' : ''}`}
-            onClick={() => useGame.getState().setEvening(!evening)}
+            className={`photo-evening${evening ? ' on' : ''}${eveningFresh ? ' g-new' : ''}`}
+            onClick={() => {
+              useGame.getState().spendUnlock('evening')
+              useGame.getState().setEvening(!evening)
+            }}
             aria-pressed={evening}
-            aria-label={evening ? 'Evening light on. Switch to day' : 'Switch to evening light'}
+            aria-label={evening ? 'Evening light on. Switch to day' : eveningFresh ? 'Switch to evening light (new)' : 'Switch to evening light'}
           >
             <span aria-hidden>{evening ? '☾' : '☀'}</span>
             {evening ? 'Evening' : 'Day'}
