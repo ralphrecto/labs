@@ -27,11 +27,12 @@ import {
   wallInwardNormal,
   wallSegments,
   closestPointOnSegment,
+  normalizeAngle,
 } from './geometry'
 import type { Doc, Item, Layout, Placement, Room, Vec2 } from './types'
 import { findWallDrop, isWallDecor } from './wallDecor'
 import { catalogEntry, itemFromCatalog } from './catalog'
-import { chairBackNeed, CHAIR_REACH, doorKeepOut, DRAWER_PIECES, MIN_DRAWER_FRONT, polygonGap, sideCompanion, TABLE_PULL_OUT, walkingPaths } from './checks'
+import { chairBackNeed, CHAIR_REACH, doorKeepOut, DRAWER_PIECES, homeKey, Memo, MIN_DRAWER_FRONT, polygonGap, sideCompanion, TABLE_PULL_OUT, walkingPaths } from './checks'
 
 export { chairBackNeed, MIN_DRAWER_FRONT, polygonGap, TABLE_PULL_OUT }
 
@@ -88,6 +89,9 @@ const FILL_MAX = 0.35
 const FILL_MAX_BEDROOM = 0.42
 /** Small things that may go in a bathroom or hall. */
 const UTILITY_OK = new Set(['plant', 'box', 'rug'])
+
+/** The living room's seating and TV: a desk sharing the room keeps clear of them (round 18). */
+const LOUNGE = new Set(['sofa', 'armchair', 'coffee-table', 'ottoman', 'tv-stand'])
 
 /** How much each kind of room suits a category. Unlisted rooms score 0. */
 const AFFINITY: Record<string, [RegExp, number][]> = {
@@ -413,6 +417,44 @@ function floorDrops(doc: Doc, layout: Layout, item: DropItem, opts: { walkCheck?
       if (eat.length && !DINING.test(room.name)) s -= Math.min(...eat.map((r) => Math.min(dist(c, centroid(r.polygon)), 6))) * 0.8
     }
     if (srcSpots.some((q) => dist(q, c) < 0.6)) s -= 6
+    if (cat === 'desk') s += loungeDesk(c, rotation, body, room)
+    return s
+  }
+
+  /**
+   * A desk in a room that is also the living room (round 18: the bedroom and study had no wall for
+   * it) works from a corner, out of the way: clear of the sofa, armchairs, coffee table and TV,
+   * never in the floor between the TV and the dining table, and with its end near a corner rather
+   * than in the middle of a wall.
+   */
+  function loungeDesk(c: Vec2, rotation: number, body: Vec2[], room: Room): number {
+    if (OFFICE.test(room.name) || BEDROOM.test(room.name)) return 0
+    const here = solids.filter((o) => o.room?.id === room.id)
+    const lounge = here.filter((o) => LOUNGE.has(o.item.category))
+    const tables = here.filter((o) => o.item.category === 'dining-table')
+    if (!lounge.length && !tables.length) return 0
+    let s = 0
+    // The desk with its chair pulled up.
+    const seat = orientedRect(c, hw, 0.45, rotation, v(0, hd + 0.45))
+    for (const o of lounge) {
+      const g = Math.min(polygonGap(body, o.body), polygonGap(seat, o.body))
+      if (g < 1.2) s -= (1.2 - g) * 10
+    }
+    // The floor between a TV (or the sofa) and the dining table is the way between the two halves of the room.
+    for (const a of lounge.filter((o) => o.item.category === 'tv-stand' || o.item.category === 'sofa'))
+      for (const t of tables) {
+        const p = v(a.p.x, a.p.y)
+        const q = v(t.p.x, t.p.y)
+        const L = dist(p, q)
+        if (L < 0.5) continue
+        const u = dot(sub(c, p), norm(sub(q, p))) / L
+        const off = closestPointOnSegment(c, p, q).distance
+        if (u > 0.1 && u < 0.9 && off < 1.6) s -= 12 * (1 - off / 1.6) + 4
+      }
+    // Its end tucked toward a corner of the room.
+    const ends = [-1, 1].map((sd) => add(c, rot(v(sd * hw, -hd), rotation)))
+    const corner = Math.min(...ends.flatMap((e) => room.polygon.map((q) => dist(e, q))))
+    s += Math.max(0, 1.2 - corner) * 8
     return s
   }
 
@@ -701,6 +743,12 @@ function floorDrops(doc: Doc, layout: Layout, item: DropItem, opts: { walkCheck?
     cands.push(...near)
   }
 
+  // A desk chair rolls on bare floor (round 18): a spot on a rug only when the desk has no other.
+  if (cat === 'office-chair' && rugs.length) {
+    const bare = cands.filter((c) => !rugs.some((o) => convexOverlap(c.body, o.body, 0.01)))
+    if (bare.length) cands.splice(0, cands.length, ...bare)
+  }
+
   // Asked to go beside one piece (a lamp for the armchair's reading corner): keep only spots within reach of it, when there are any.
   const target = opts.nextTo ? others.find((o) => o.id === opts.nextTo) : undefined
   if (target) {
@@ -872,6 +920,24 @@ function floorDrops(doc: Doc, layout: Layout, item: DropItem, opts: { walkCheck?
  * bonus (the camera target, or the piece being copied).
  */
 export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?: Vec2; walkCheck?: boolean; nextTo?: string } = {}): DropResult {
+  const key = dropKey(doc, layout, item, opts)
+  return copyDrop(dropMemo.get(key) ?? dropMemo.set(key, findDropOnce(doc, layout, item, opts)))
+}
+
+/**
+ * Recent drop searches, by home, piece and options (round 18): a Next chip tap dry-runs each pick
+ * card, then places one and renders, asking the same search several times; it is the costly part.
+ */
+const dropMemo = new Memo<DropResult>(64)
+const copyDrop = (r: DropResult): DropResult => (r.ok ? { ok: true, spot: { ...r.spot } } : { ...r })
+function dropKey(doc: Doc, layout: Layout, item: DropItem, opts: object): string {
+  // A remix's source arrangement steers the search too.
+  const src = layout.remix ? doc.layouts.find((l) => l.id === layout.remix!.from) : undefined
+  const srcKey = src ? `${JSON.stringify(layout.remix)}#${src.placements.map((p) => `${p.itemId}:${p.x}:${p.y}`).join('|')}` : ''
+  return `${item.category}|${item.name}|${item.width}|${item.depth}|${(item as Partial<Item>).height ?? ''}|${item.floorLevel ? 1 : 0}|${JSON.stringify(item.clearance)}#${JSON.stringify(opts)}#${srcKey}#${homeKey(doc, layout)}`
+}
+
+function findDropOnce(doc: Doc, layout: Layout, item: DropItem, opts: { near?: Vec2; walkCheck?: boolean; nextTo?: string }): DropResult {
   if (HOSTED.has(item.category)) return findHostDrop(doc, layout, item, opts)
   // Wall decor hangs on a wall (wallDecor.ts) and plays no part in the floor search below.
   if (isWallDecor(item.category)) return findWallDrop(doc, layout, item, opts)
@@ -881,8 +947,10 @@ export function findDrop(doc: Doc, layout: Layout, item: DropItem, opts: { near?
 /** findDrop for each of several `near` targets, from one search (round 17: the Next chip's move candidates). */
 export function findDrops(doc: Doc, layout: Layout, item: DropItem, nears: Vec2[], opts: { walkCheck?: boolean; nextTo?: string } = {}): DropResult[] {
   if (HOSTED.has(item.category) || isWallDecor(item.category)) return nears.map((near) => findDrop(doc, layout, item, { ...opts, near }))
-  return floorDrops(doc, layout, item, opts, nears)
+  const key = `${JSON.stringify(nears)}#${dropKey(doc, layout, item, opts)}`
+  return (dropsMemo.get(key) ?? dropsMemo.set(key, floorDrops(doc, layout, item, opts, nears))).map(copyDrop)
 }
+const dropsMemo = new Memo<DropResult[]>(32)
 
 /** Knee room plus a coffee table, in front of a sofa (m): kept free of other pieces until it has one. */
 const COFFEE_ZONE = 1.1
@@ -1127,4 +1195,81 @@ export function reconcileHosts(prev: Doc, next: Doc, report?: ReconcileReport): 
     return { ...layout, placements }
   })
   return changed ? { ...next, layouts } : next
+}
+
+/** Pieces a rug lies under that take it along when moved on their own (round 18). */
+export const RUG_RIDERS = new Set(['coffee-table', 'ottoman'])
+
+/**
+ * A coffee table (or ottoman) moved on its own takes the rug under it along (round 18), as the
+ * Next chip's sofa carry does. When the table ends up in front of a sofa, the rug is re-centred
+ * under the two (between the sofa's front and the table's far edge, as a new rug would go);
+ * otherwise it moves and turns with the table. Either way it slides a little along its length when
+ * that keeps it inside a room, and stays put when no pose fits. `before` and `after` are the home
+ * either side of one move or drag; a rug that moved itself is left alone. Returns `after` unchanged
+ * when nothing needs carrying.
+ */
+export function carryRugs(before: Doc, after: Doc): Doc {
+  const l0 = before.layouts.find((l) => l.id === before.activeLayoutId)
+  const l1 = after.layouts.find((l) => l.id === after.activeLayoutId)
+  if (!l0 || !l1 || l0 === l1 || l0.id !== l1.id) return after
+  const items = new Map(after.items.map((i) => [i.id, i]))
+  const was = new Map(l0.placements.map((p) => [p.id, p]))
+  const body = (p: Placement) => {
+    const it = items.get(p.itemId)!
+    return orientedRect(v(p.x, p.y), it.width / 2, it.depth / 2, p.rotation)
+  }
+  const still = (p: Placement) => {
+    const q = was.get(p.id)
+    return !!q && q.x === p.x && q.y === p.y && q.rotation === p.rotation
+  }
+  const fits = (c: Vec2, hw: number, hd: number, rotation: number) => after.rooms.some((rm) => polygonInsideRoom(orientedRect(c, hw, hd, rotation), rm.polygon))
+  const moves = new Map<string, Placement>()
+  for (const t of l1.placements) {
+    const t0 = was.get(t.id)
+    const ti = items.get(t.itemId)
+    if (!t0 || !ti || t.on || !RUG_RIDERS.has(ti.category) || still(t)) continue
+    // (A table is the same turned half way round: a half turn carries the rug as no turn.)
+    let turn = normalizeAngle(t.rotation - t0.rotation)
+    if (turn > Math.PI / 2 + 1e-6) turn -= Math.PI
+    if (turn > Math.PI / 2 + 1e-6) turn -= Math.PI
+    const tb0 = body(t0)
+    // The sofa the table now stands in front of, if any.
+    const sofa = l1.placements.find((o) => {
+      const oi = items.get(o.itemId)
+      if (oi?.category !== 'sofa' || o.on) return false
+      const l = rot(sub(v(t.x, t.y), v(o.x, o.y)), -o.rotation)
+      return l.y > oi.depth / 2 && Math.abs(l.x) < oi.width / 2 + 0.3 && polygonGap(body(o), body(t)) < 1
+    })
+    for (const r of l1.placements) {
+      const ri = items.get(r.itemId)
+      if (ri?.category !== 'rug' || !still(r) || moves.has(r.id) || !convexOverlap(tb0, body(r), 0.01)) continue
+      const poses: { c: Vec2; rotation: number; along: Vec2 }[] = []
+      if (sofa) {
+        const si = items.get(sofa.itemId)!
+        const sc = v(sofa.x, sofa.y)
+        const tl = rot(sub(v(t.x, t.y), sc), -sofa.rotation)
+        // Its long side along the sofa's, as it lay before (or across, when it lay across).
+        const rel = normalizeAngle(r.rotation - (was.get(sofa.id)?.rotation ?? sofa.rotation))
+        const across = Math.abs(Math.sin(rel)) > 0.7
+        const ext = across ? ri.width / 2 : ri.depth / 2
+        const mid = (si.depth / 2 + tl.y + ti.depth / 2) / 2
+        const y = mid - ext < si.depth / 2 - 0.1 ? mid : si.depth / 2 - 0.25 + ext
+        const rotation = normalizeAngle(sofa.rotation + (across ? Math.PI / 2 : 0))
+        poses.push({ c: add(sc, rot(v(tl.x, y), sofa.rotation)), rotation, along: rot(v(1, 0), sofa.rotation) })
+      }
+      const rotation = normalizeAngle(r.rotation + turn)
+      poses.push({ c: add(v(t.x, t.y), rot(sub(v(r.x, r.y), v(t0.x, t0.y)), turn)), rotation, along: rot(v(1, 0), rotation) })
+      search: for (const pose of poses)
+        for (const u of [0, 0.2, -0.2, 0.4, -0.4, 0.6, -0.6, 0.8, -0.8]) {
+          const o = add(pose.c, scale(pose.along, u))
+          // Inside a room, and still under the table that moved.
+          if (!fits(o, ri.width / 2, ri.depth / 2, pose.rotation) || !convexOverlap(orientedRect(o, ri.width / 2, ri.depth / 2, pose.rotation), body(t), 0.01)) continue
+          moves.set(r.id, { ...r, x: o.x, y: o.y, rotation: pose.rotation })
+          break search
+        }
+    }
+  }
+  if (!moves.size) return after
+  return { ...after, layouts: after.layouts.map((l) => (l === l1 ? { ...l, placements: l.placements.map((p) => moves.get(p.id) ?? p) } : l)) }
 }

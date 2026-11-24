@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { catalogEntry, itemFromCatalog, type CatalogEntry } from './model/catalog'
 import { add, dist, norm, pointInPolygon, scale, sub } from './model/geometry'
-import { findDrop, HOSTED, reconcileHosts, type DropResult } from './model/placement'
+import { carryRugs, findDrop, HOSTED, reconcileHosts, type DropResult } from './model/placement'
 import { reconcileWallDecor, wallDecorMessage, type WallDecorReport } from './model/wallDecor'
 import { emptyDoc, rectRoom, sampleDoc, uid } from './model/sample'
 import type { SnapSettings } from './model/snapping'
@@ -269,7 +269,9 @@ export const useStore = create<State>((set, get) => ({
       // Drop the history entry if nothing actually changed.
       const last = s.past[s.past.length - 1]
       if (last === s.doc) return { gesture: false, past: s.past.slice(0, -1) }
-      return { gesture: false }
+      // A coffee table dragged (or moved by the chip) on its own takes its rug along, in the same undo step (round 18).
+      const doc = last ? carryRugs(last, s.doc) : s.doc
+      return doc === s.doc ? { gesture: false } : { gesture: false, doc }
     }),
   undo: () =>
     set((s) => {

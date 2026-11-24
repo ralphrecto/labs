@@ -16,7 +16,7 @@ import { ImportDialog, Photo } from '../components/AddDialogs'
 import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
 import { ItemThumb } from './ItemThumb'
-import { familyOf, picksFor, type Pick, type ThumbLook } from './swatches'
+import { familyOf, picksFor, type Family, type Pick, type ThumbLook } from './swatches'
 import { inTone, toneNeeded } from './moods'
 import './buy.css'
 import './feel.css'
@@ -201,7 +201,7 @@ const BESIDE = new Set(['floor-lamp', 'table-lamp', 'side-table'])
 type Hint = { category: string; roomId?: string; near?: string; title?: string; goalId?: string }
 
 /** Rooms a piece belongs in (round 15): with no room named by the goal, a dining table goes to the dining area. */
-const HOME_ROOM: Record<string, RegExp> = { 'dining-table': DINING, bed: BEDROOM, wardrobe: BEDROOM, desk: OFFICE }
+const HOME_ROOM: Record<string, RegExp> = { 'dining-table': DINING, bed: BEDROOM, wardrobe: BEDROOM, desk: OFFICE, dresser: BEDROOM }
 type Spot = { x: number; y: number; rotation: number; on?: string; roomName?: string }
 
 /**
@@ -279,10 +279,16 @@ function withChairRoom(doc: Doc, item: Item, hint: Hint | null, r: { spot?: Spot
   return r
 }
 
+/**
+ * The placement id a piece being tried out takes (round 18: one id for every trial, so the same
+ * spot tried twice in a tap, by keepStars and then the pick card's dry run, is analysed once).
+ */
+const TRIAL_ID = '__pick'
+
 /** The home's stars with `item` placed at `spot` (and how many stars it has now). */
 function starsWith(doc: Doc, item: Item, spot: Spot): number {
   const layout = activeLayout(doc)
-  const l2 = { ...layout, placements: [...layout.placements, { id: '__stars', itemId: item.id, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}) }] }
+  const l2 = { ...layout, placements: [...layout.placements, { id: TRIAL_ID, itemId: item.id, x: spot.x, y: spot.y, rotation: spot.rotation, ...(spot.on ? { on: spot.on } : {}) }] }
   const d2 = { ...doc, items: [...doc.items, item], layouts: doc.layouts.map((l) => (l.id === layout.id ? l2 : l)) }
   return scoreHome(d2, l2, analyze(d2, l2)).stars
 }
@@ -305,11 +311,11 @@ function keepStars(doc: Doc, item: Item, hint: Hint | null, r: { spot?: Spot }):
   if (firstStars >= now) return r
   // The piece set down where it would go, then moved (as the chip moves pieces) to the spot with
   // the most stars, if one beats it.
-  const layout2 = { ...layout, placements: [...layout.placements, { id: '__keep', itemId: item.id, x: first.x, y: first.y, rotation: first.rotation, ...(first.on ? { on: first.on } : {}) }] }
+  const layout2 = { ...layout, placements: [...layout.placements, { id: TRIAL_ID, itemId: item.id, x: first.x, y: first.y, rotation: first.rotation, ...(first.on ? { on: first.on } : {}) }] }
   const doc2 = { ...doc, items: [...doc.items, item], layouts: doc.layouts.map((l) => (l.id === layout.id ? layout2 : l)) }
   // A remix's twist knows where its pieces belong (out of the open floor's middle): try its move first.
   const tm = first.on || !layout.remix ? null : twistMove(doc2, layout2)
-  const m = first.on ? null : tm?.id === '__keep' ? tm : starMove(doc2, layout2, '__keep')
+  const m = first.on ? null : tm?.id === TRIAL_ID ? tm : starMove(doc2, layout2, TRIAL_ID)
   if (!m) return r
   const room = doc.rooms.find((x) => pointInPolygon(v(m.x, m.y), x.polygon))
   const spot = { x: m.x, y: m.y, rotation: m.rotation, roomName: room?.name }
@@ -401,7 +407,7 @@ function pickSpotIn(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; fai
   if (there?.ok) return { spot: { ...there.spot, roomName: room!.name } }
   // No room named and no piece to stand by: a piece with a room of its own goes there when it fits cleanly
   // (round 17: a desk in a study, else a bedroom, before the living room).
-  const homes = !room && !hint?.near ? [HOME_ROOM[item.category], ...(DESK_ROOMS[item.category] ?? [])].filter(Boolean) : []
+  const homes = !room && !hint?.near ? homeRooms(item.category) : []
   for (const re of homes) {
     const own = doc.rooms.find((r) => re.test(r.name) && !UTILITY_ROOM.test(r.name))
     if (!own) continue
@@ -489,7 +495,12 @@ export interface PickTrial {
   warnings: number
   /** Goals done now that the piece would undo (a long coffee table squeezing a walkway). */
   broken: number
+  /** For a piece with a room of its own (a desk, a dresser): whether it would land there (round 18). */
+  home?: boolean
 }
+
+/** The rooms a piece belongs in, best first (a desk: a study, then a bedroom); none for most pieces. */
+const homeRooms = (category: string): RegExp[] => [...new Set([HOME_ROOM[category], ...(DESK_ROOMS[category] ?? [])].filter(Boolean))]
 
 /** Dry-run a pick card: place `item` exactly as a tap would, then score the home. */
 export function trialPick(doc: Doc, item: Item, hint: Hint | null): PickTrial {
@@ -504,13 +515,16 @@ function trialPickOnce(doc: Doc, item: Item, hint: Hint | null): PickTrial {
   const drop = p.fail ? null : p.spot ? { ok: true as const, spot: p.spot } : defaultDrop(doc, item)
   if (!drop?.ok) return { ok: false, stars: before.stars, warnings: Infinity, broken: 0 }
   const s = drop.spot
-  const l2 = { ...layout, placements: [...layout.placements, { id: '__pick', itemId: item.id, x: s.x, y: s.y, rotation: s.rotation, ...(s.on ? { on: s.on } : {}) }] }
+  const l2 = { ...layout, placements: [...layout.placements, { id: TRIAL_ID, itemId: item.id, x: s.x, y: s.y, rotation: s.rotation, ...(s.on ? { on: s.on } : {}) }] }
   const d2 = { ...doc, items: [...doc.items, item], layouts: doc.layouts.map((l) => (l.id === layout.id ? l2 : l)) }
   const a2 = analyze(d2, l2)
   const after = scoreHome(d2, l2, a2)
   const doneAfter = new Set(after.goals.filter((g) => g.done).map((g) => g.id))
   const broken = before.goals.filter((g) => g.done && !g.visit && !doneAfter.has(g.id)).length
-  return { ok: true, stars: after.stars, warnings: warn(a2) - warn(analyze(doc, layout)), broken }
+  const homes = homeRooms(item.category)
+  const room = homes.length ? doc.rooms.find((r) => pointInPolygon(v(s.x, s.y), r.polygon)) : undefined
+  const home = homes.length ? !!room && !UTILITY_ROOM.test(room.name) && homes.some((re) => re.test(room.name)) : undefined
+  return { ok: true, stars: after.stars, warnings: warn(a2) - warn(analyze(doc, layout)), broken, ...(home !== undefined ? { home } : {}) }
 }
 
 /**
@@ -521,7 +535,10 @@ export function goodPicks<T>(cands: T[], trial: (c: T) => PickTrial): T[] {
   if (cands.length < 2) return cands
   const t = cands.map(trial)
   const clean = cands.filter((_, i) => t[i].ok && t[i].broken === 0 && t[i].warnings <= 0)
-  if (clean.length) return clean
+  // Round 18: a size that fits the piece's own room (a writing desk in the bedroom) comes before
+  // one that would land in the living room.
+  const home = (c: T) => (t[cands.indexOf(c)].home === false ? 1 : 0)
+  if (clean.length) return clean.slice().sort((a, b) => home(a) - home(b))
   const cost = (x: PickTrial) => (x.ok ? 0 : 1000) + 10 * x.broken + x.warnings - x.stars / 100
   let best = 0
   t.forEach((x, i) => {
@@ -538,6 +555,67 @@ export function withArticle(name: string): string {
   const n = name.replace(/\s*\(pair\)\s*$/i, '')
   if (/^(curtains|drapes|blinds|shutters)\b/i.test(n)) return `a pair of ${n}`
   return `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n}`
+}
+
+type VetChip = { chip: SizeChip; taste: boolean }
+
+/**
+ * The "Pick one" variants worth offering (goodPicks), dry-run where a tap would put each one.
+ * Round 18: the dry runs are the costly part of a Next chip tap (a drop search or three per
+ * variant), so they run after the drawer has painted, one variant per task; until they're done
+ * every variant shows. `now()` finishes them at once (a tap on the hinted card before then).
+ */
+function useVettedPicks(doc: Doc, hint: Hint | null, hintEntry: CatalogEntry | undefined, taste: Partial<Record<Family, string>>) {
+  const all = useMemo<VetChip[]>(
+    () =>
+      hintEntry
+        ? picksFor(hintEntry.category, taste).flatMap((pk) => {
+            const chip = pickChip(pk)
+            return chip ? [{ chip, taste: !!pk.taste }] : []
+          })
+        : [],
+    [hintEntry, taste],
+  )
+  // One dry run per variant for this home and hint, kept while they last.
+  const run = useMemo(() => ({ trials: new Map<VetChip, PickTrial>(), chips: null as VetChip[] | null }), [doc, hint, all])
+  const [, setDone] = useState<object | null>(null)
+  const trialOf = (c: VetChip) => {
+    let t = run.trials.get(c)
+    if (!t) run.trials.set(c, (t = trialPick(doc, presetItem(hintEntry!, '__pick_item', c.chip), hint)))
+    return t
+  }
+  const finish = (): VetChip[] => {
+    if (run.chips) return run.chips
+    try {
+      run.chips = goodPicks(all, trialOf)
+    } catch {
+      run.chips = all
+    }
+    return run.chips
+  }
+  useEffect(() => {
+    if (all.length < 2 || run.chips) return
+    let i = 0
+    let timer: ReturnType<typeof setTimeout>
+    const step = () => {
+      try {
+        if (i < all.length) trialOf(all[i++])
+      } catch {
+        i = all.length
+      }
+      if (i < all.length) timer = setTimeout(step, 0)
+      else {
+        finish()
+        setDone(run)
+      }
+    }
+    // (A frame's grace first: the drawer and its cards paint before any dry run.)
+    timer = setTimeout(step, 16)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run])
+  if (all.length < 2) return { all: all.length, chips: all, pending: false, now: () => all }
+  return { all: all.length, chips: run.chips ?? all, pending: !run.chips, now: finish }
 }
 
 /** `top` rides just above the drawer: the selected piece's actions, so the drawer can stay open. */
@@ -662,19 +740,7 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
   const doc = useStore((s) => s.doc)
   // Each variant is dry-run where a tap would put it: one that would undo a goal (a long coffee
   // table closing a walkway) or wedge in with a warning isn't offered while a cleaner one is.
-  const vetted = useMemo(() => {
-    if (!hintEntry) return { all: 0, chips: [] }
-    const all = picksFor(hintEntry.category, taste).flatMap((pk) => {
-      const chip = pickChip(pk)
-      return chip ? [{ chip, taste: !!pk.taste }] : []
-    })
-    if (all.length < 2) return { all: all.length, chips: all }
-    try {
-      return { all: all.length, chips: goodPicks(all, (c) => trialPick(doc, presetItem(hintEntry, '__pick_item', c.chip), hint)) }
-    } catch {
-      return { all: all.length, chips: all }
-    }
-  }, [doc, hint, hintEntry, taste])
+  const vetted = useVettedPicks(doc, hint, hintEntry, taste)
   const pickCards: PickCard[] = []
   let pickCount = 0
   let firstPick: (() => void) | undefined
@@ -705,7 +771,12 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     // A piece of yours comes first even with no colours to pick from (curtains, a mirror): the hinted
     // card places it rather than buying a copy (round 16).
     if (first?.mine) firstPick = first.onClick
-    else if (vetted.all >= 2 && firstChip) firstPick = () => place(hintEntry, firstChip)
+    // (Tapped before the dry runs are done: they finish first, so the card placed is a vetted one.)
+    else if (vetted.all >= 2 && firstChip)
+      firstPick = () => {
+        const sure = vetted.pending ? vetted.now()[0]?.chip : firstChip
+        place(hintEntry, sure ?? firstChip)
+      }
   }
   const showPicker = pickCount >= 2 || (pickCards.length >= 2 && !!pickCards[0].mine)
   const sizeEntry = sizePick ? ENTRIES.get(sizePick) : undefined
