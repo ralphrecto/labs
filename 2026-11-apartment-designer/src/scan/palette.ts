@@ -143,22 +143,47 @@ export function scanPalette(scans: ScanPoints[], rooms: Room[], opts: PaletteOpt
   if (top) {
     // Cells the fill may reach: inside a room, plus a cell's margin so the texture's edge pixels aren't blank.
     let inside: Uint8Array | undefined
+    // The band along the walls whose points were left out: it's filled with boards continued from further in.
+    let edge: Uint8Array | undefined
     if (rooms.length) {
       const grown = rooms.map((r) => offsetPolygon(r.polygon, cell * 1.5))
       inside = new Uint8Array(top.w * top.h)
+      edge = new Uint8Array(top.w * top.h)
       for (let j = 0; j < top.h; j++)
         for (let i = 0; i < top.w; i++) {
           const q = { x: top.x0 + (i + 0.5) * cell, y: top.y0 + (j + 0.5) * cell }
-          if (grown.some((g) => pointInPolygon(q, g))) inside[j * top.w + i] = 1
+          if (!grown.some((g) => pointInPolygon(q, g))) continue
+          inside[j * top.w + i] = 1
+          if (!insets.some((g) => pointInPolygon(q, g))) edge[j * top.w + i] = 1
         }
     }
+    let holes: Uint8Array | undefined
     if (o.eraseRugs) {
-      for (const rug of findRugPatches(top)) for (const k of grow([...rug.cells, ...rug.rim], top.w, top.h, 2)) {
+      // Rugs are found on their own grid (the one findRugs uses, sized to the scan's density), then
+      // marked on the picture's finer one, with a cell's margin.
+      const rc = rugCell(pts)
+      const rt = rc === cell ? top : floorTop(pts, rc, extra)
+      holes = new Uint8Array(top.w * top.h)
+      if (rt)
+        for (const rug of findRugPatches(rt))
+          for (const k of grow([...rug.cells, ...rug.rim], rt.w, rt.h, 1)) {
+            const rx = k % rt.w
+            const ry = (k - rx) / rt.w
+            const i0 = Math.floor((rt.x0 + rx * rc - top.x0) / cell)
+            const i1 = Math.ceil((rt.x0 + (rx + 1) * rc - top.x0) / cell)
+            const j0 = Math.floor((rt.y0 + ry * rc - top.y0) / cell)
+            const j1 = Math.ceil((rt.y0 + (ry + 1) * rc - top.y0) / cell)
+            for (let j = Math.max(0, j0); j < Math.min(top.h, j1); j++) for (let i = Math.max(0, i0); i < Math.min(top.w, i1); i++) holes[j * top.w + i] = 1
+          }
+      const marked: number[] = []
+      for (let k = 0; k < holes.length; k++) if (holes[k]) marked.push(k)
+      for (const k of grow(marked, top.w, top.h, 1)) {
+        holes[k] = 1
         top.count[k] = 0
         top.seen[k] = 0
       }
     }
-    palette.floor = finishFloor({ ...top, inside }, top.x0, top.y0, cell)
+    palette.floor = finishFloor({ ...top, inside, holes, edge }, top.x0, top.y0, cell)
   }
   return palette
 }
@@ -172,6 +197,19 @@ function floorCell(pts: Float32Array) {
   const density = n / (occupied.size * 0.01)
   const c = Math.sqrt(8 / density)
   return Math.round(Math.max(0.025, Math.min(0.05, c)) * 200) / 200
+}
+
+/**
+ * The cell size for finding rugs: about 10 floor points per cell, so a sparse photo scan (an
+ * iPhone without LiDAR) still gives each cell a steady colour and height. 5 to 12 cm.
+ */
+export function rugCell(pts: Float32Array) {
+  const n = pts.length / 6
+  if (n < 100) return 0.05
+  const occupied = new Set<number>()
+  for (let i = 0; i < n; i++) occupied.add(Math.floor(pts[i * 6] / 0.1) * 100003 + Math.floor(pts[i * 6 + 1] / 0.1))
+  const density = n / (occupied.size * 0.01)
+  return Math.round(Math.max(0.05, Math.min(0.15, Math.sqrt(10 / density))) * 100) / 100
 }
 
 /** Cells within r (8-neighbourhood steps) of the given ones. */
@@ -294,7 +332,7 @@ export interface RugPatch {
  * Rugs on a scanned floor: compact, roughly rectangular patches whose colour stands clear of the
  * floor's own (the boards' plank-to-plank shading doesn't count). Works on floorTop's cells.
  */
-export function findRugPatches(top: { sum: Float32Array; count: Uint32Array; seen: Uint32Array; w: number; h: number; cell: number }): RugPatch[] {
+export function findRugPatches(top: { sum: Float32Array; count: Uint32Array; seen: Uint32Array; topH: Float32Array; w: number; h: number; cell: number }): RugPatch[] {
   const { count, seen, w, h, cell } = top
   // Each cell's top-layer colour. A sparse rug leaves cells whose few points are all boards seen
   // through it; those take the colour of the top-layer cells around them.
@@ -333,20 +371,84 @@ export function findRugPatches(top: { sum: Float32Array; count: Uint32Array; see
   const seenCells: number[] = []
   for (let k = 0; k < w * h; k++) if (have[k]) seenCells.push(k)
   if (seenCells.length < 50) return []
-  const med = [0, 1, 2].map((c) => {
-    const a = seenCells.map((k) => sum[k * 3 + c]).sort((x, y) => x - y)
+  const medianOf = (a: number[]) => {
+    a.sort((x, y) => x - y)
     return a[a.length >> 1]
-  })
-  const dist = new Float32Array(w * h)
-  for (const k of seenCells) {
-    let d = 0
-    for (let c = 0; c < 3; c++) d += (sum[k * 3 + c] - med[c]) ** 2
-    dist[k] = Math.sqrt(d)
   }
-  const ds = seenCells.map((k) => dist[k]).sort((x, y) => x - y)
-  const cut = Math.max(0.12, 3 * ds[Math.floor(ds.length * 0.6)])
+  const med = [0, 1, 2].map((c) => medianOf(seenCells.map((k) => sum[k * 3 + c])))
+  // Two ways a cell can stand out from the boards: its lightness (as a ratio, so a dark floor
+  // counts the same as a pale one) and its hue (chromaticity, which light and shade barely move).
+  const lnL = (k: number) => Math.log(0.02 + 0.299 * sum[k * 3] + 0.587 * sum[k * 3 + 1] + 0.114 * sum[k * 3 + 2])
+  const chroma = (k: number, out: number[]) => {
+    const s = sum[k * 3] + sum[k * 3 + 1] + sum[k * 3 + 2]
+    out[0] = s > 0.12 ? sum[k * 3] / s : NaN
+    out[1] = s > 0.12 ? sum[k * 3 + 1] / s : NaN
+  }
+  const medL = medianOf(seenCells.map(lnL))
+  const cr: number[] = [0, 0]
+  const chr = new Float32Array(w * h * 2)
+  for (const k of seenCells) {
+    chroma(k, cr)
+    chr[k * 2] = cr[0]
+    chr[k * 2 + 1] = cr[1]
+  }
+  const lit = seenCells.filter((k) => !Number.isNaN(chr[k * 2]))
+  const medC = [0, 1].map((c) => (lit.length ? medianOf(lit.map((k) => chr[k * 2 + c])) : 0))
+  const dL = new Float32Array(w * h)
+  const dC = new Float32Array(w * h)
+  for (const k of seenCells) {
+    dL[k] = Math.abs(lnL(k) - medL)
+    dC[k] = Number.isNaN(chr[k * 2]) ? 0 : Math.hypot(chr[k * 2] - medC[0], chr[k * 2 + 1] - medC[1])
+  }
+  // Thresholds adapt to how noisy the floor is (a sparse photo scan, busy boards).
+  const q60 = (a: Float32Array) => seenCells.map((k) => a[k]).sort((x, y) => x - y)[Math.floor(seenCells.length * 0.6)]
+  const cutL = Math.max(0.16, 3 * q60(dL))
+  const cutC = Math.max(0.035, 3 * q60(dC))
   let mask = new Uint8Array(w * h)
-  for (const k of seenCells) if (dist[k] > cut) mask[k] = 1
+  for (const k of seenCells) if (dL[k] > cutL || dC[k] > cutC) mask[k] = 1
+  // A cell that only differs in lightness must also sit above the boards near it, or it's light
+  // and shade (a sunny patch, the shadow round a sofa) and is dropped before patches are traced.
+  // Heights are smoothed over 3x3 cells; the boards' height comes from a coarse map (blocks of about
+  // a metre) of the unmasked cells' heights, so a gently warped scan floor doesn't fool it.
+  const B = Math.max(4, Math.round(1 / cell))
+  const bw = Math.ceil(w / B)
+  const bh = Math.ceil(h / B)
+  const blocks: number[][] = Array.from({ length: bw * bh }, () => [])
+  for (const k of seenCells) {
+    if (mask[k] || Number.isNaN(top.topH[k])) continue
+    const x = k % w
+    blocks[Math.floor((k - x) / w / B) * bw + Math.floor(x / B)].push(top.topH[k])
+  }
+  let baseH = blocks.map((b) => (b.length >= 8 ? medianOf(b) : NaN))
+  for (let pass = 0; pass < bw + bh && baseH.some(Number.isNaN); pass++) {
+    const next = baseH.slice()
+    for (let b = 0; b < bw * bh; b++) {
+      if (!Number.isNaN(baseH[b])) continue
+      const bx = b % bw
+      const by = (b - bx) / bw
+      const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => (bx + dx >= 0 && by + dy >= 0 && bx + dx < bw && by + dy < bh ? baseH[(by + dy) * bw + bx + dx] : NaN)).filter((q) => !Number.isNaN(q))
+      if (nb.length) next[b] = nb.reduce((a, q) => a + q, 0) / nb.length
+    }
+    baseH = next
+  }
+  const rise = (k: number) => {
+    const x = k % w
+    const y = (k - x) / w
+    const own: number[] = []
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx
+        const yy = y + dy
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue
+        const hh = top.topH[yy * w + xx]
+        if (!Number.isNaN(hh)) own.push(hh)
+      }
+    const base = baseH[Math.floor(y / B) * bw + Math.floor(x / B)]
+    return own.length && !Number.isNaN(base) ? medianOf(own) - base : 0
+  }
+  const shadeOnly: number[] = []
+  for (const k of seenCells) if (mask[k] && dC[k] <= cutC && rise(k) < RUG_RISE * 0.75) shadeOnly.push(k)
+  for (const k of shadeOnly) mask[k] = 0
   // Open the mask (erode, then grow back) so thin lines (a sofa's foot, a skirting) drop out.
   const step = (src: Uint8Array, erode: boolean) => {
     const out = new Uint8Array(w * h)
@@ -425,6 +527,22 @@ export function findRugPatches(top: { sum: Float32Array; count: Uint32Array; see
     const sideA = Math.sqrt(12 * l1)
     const sideB = Math.sqrt(12 * l2)
     if (sideB * cell < 0.5 || cells.length / (sideA * sideB) < 0.7) continue
+    // Mostly seen: a sofa's contact shadow rings its unseen footprint, and the hole fill makes that a block.
+    let seenIn = 0
+    for (const k of cells) if (have[k]) seenIn++
+    if (seenIn < 0.8 * cells.length) continue
+    // A rug lies on the boards: its top layer sits higher than the floor around it. Sunlight and
+    // shade only change brightness, at the boards' own height, so a patch that isn't raised must
+    // differ in hue over most of it to count. When in doubt, it's not a rug.
+    const inPatch = new Set(cells)
+    const ringH: number[] = []
+    for (const k of grow(cells, w, h, 4)) if (!inPatch.has(k) && !mask[k] && !Number.isNaN(top.topH[k])) ringH.push(top.topH[k])
+    const patchH: number[] = []
+    for (const k of cells) if (!Number.isNaN(top.topH[k])) patchH.push(top.topH[k])
+    const raised = ringH.length >= 15 && patchH.length >= 15 && medianOf(patchH) - medianOf(ringH) >= RUG_RISE
+    let hued = 0
+    for (const k of cells) if (have[k] && dC[k] > Math.max(cutC, HUE_MIN)) hued++
+    if (!raised && hued < 0.55 * seenIn) continue
     const color = [0, 1, 2].map((c) => {
       const a = cells.map((k) => sum[k * 3 + c]).sort((x, y) => x - y)
       return a[a.length >> 1]
@@ -432,7 +550,6 @@ export function findRugPatches(top: { sum: Float32Array; count: Uint32Array; see
     // The patch's ragged rim: nearby cells closer to the rug's colour than to the boards (or with no
     // top layer of their own), so painting the rug out leaves no pale scraps at its corners.
     const rim: number[] = []
-    const inPatch = new Set(cells)
     for (const k of grow(cells, w, h, 6)) {
       if (inPatch.has(k)) continue
       if (!have[k]) {
@@ -473,6 +590,9 @@ function topLayer(img: { w: number; h: number; count: Uint32Array; start: Uint32
   const sum = new Float32Array(w * h * 3)
   const cnt = new Uint32Array(w * h)
   const fallback = new Float32Array(w * h * 3)
+  // Median height of each cell's top layer (NaN where it has none): a rug sits above the boards.
+  const topH = new Float32Array(w * h).fill(NaN)
+  const hs2: number[] = []
   const near = new Float32Array(NEAR_CAP + 25)
   const ch: number[][] = [[], [], []]
   const median = (a: number[]) => {
@@ -511,13 +631,24 @@ function topLayer(img: { w: number; h: number; count: Uint32Array; start: Uint32
       const mid = hs[m >> 1]
       const cut = top - Math.max(LAYER_TOL, 0.6 * (top - mid))
       for (let c = 0; c < 3; c++) ch[c].length = 0
-      for (let j = start[k]; j < start[k] + count[k]; j++) if (hgt[j] >= cut && hgt[j] <= RUG_MAX) for (let c = 0; c < 3; c++) ch[c].push(rgb[j * 3 + c])
+      hs2.length = 0
+      for (let j = start[k]; j < start[k] + count[k]; j++)
+        if (hgt[j] >= cut && hgt[j] <= RUG_MAX) {
+          for (let c = 0; c < 3; c++) ch[c].push(rgb[j * 3 + c])
+          hs2.push(hgt[j])
+        }
       if (!ch[0].length) continue
       for (let c = 0; c < 3; c++) sum[k * 3 + c] = median(ch[c])
+      topH[k] = median(hs2)
       cnt[k] = 1
     }
-  return { sum, count: cnt, fallback, seen: count, w, h }
+  return { sum, count: cnt, fallback, seen: count, topH, w, h }
 }
+
+/** How much higher a patch's top layer must sit than the boards around it to read as a rug (m). */
+const RUG_RISE = 0.004
+/** Hue difference (chromaticity) a flat patch needs over most of it to count as a rug without the rise. */
+const HUE_MIN = 0.06
 
 /** Points in a cell at which it keeps its own colour through the softening blur. */
 const DENSE = 6
@@ -528,7 +659,7 @@ const DENSE = 6
  * with a blur that only sparse cells get in full: where the scan is dense, each cell keeps its own
  * colour, so the boards stay crisp.
  */
-function finishFloor(img: { sum: Float32Array; count: Uint32Array; w: number; h: number; fallback?: Float32Array; seen?: Uint32Array; inside?: Uint8Array }, x0: number, y0: number, cell: number): FloorImage {
+function finishFloor(img: { sum: Float32Array; count: Uint32Array; w: number; h: number; fallback?: Float32Array; seen?: Uint32Array; inside?: Uint8Array; holes?: Uint8Array; edge?: Uint8Array }, x0: number, y0: number, cell: number): FloorImage {
   const { w, h } = img
   let rgb = new Float32Array(w * h * 3)
   let have = new Uint8Array(w * h)
@@ -539,6 +670,15 @@ function finishFloor(img: { sum: Float32Array; count: Uint32Array; w: number; h:
     rgb[k * 3 + 1] = img.sum[k * 3 + 1] / n
     rgb[k * 3 + 2] = img.sum[k * 3 + 2] / n
     have[k] = 1
+  }
+  // Where a rug was, and the band along the walls: continue the boards from the floor beside them,
+  // so the planks run on instead of blurring into a flat patch.
+  const own = new Float32Array(w * h)
+  for (let k = 0; k < w * h; k++) if (img.seen && img.count[k]) own[k] = 0.8 * Math.min(1, img.seen[k] / DENSE)
+  if (img.holes || img.edge) {
+    const target = new Uint8Array(w * h)
+    for (let k = 0; k < w * h; k++) if (!have[k] && ((img.holes && img.holes[k]) || (img.edge && img.edge[k] && (!img.inside || img.inside[k])))) target[k] = 1
+    synthBoards(rgb, have, own, target, w, h)
   }
   // Grow into gaps a few cells (furniture shadows, sparse splats).
   for (let pass = 0; pass < 4; pass++) {
@@ -638,13 +778,98 @@ function finishFloor(img: { sum: Float32Array; count: Uint32Array; w: number; h:
           b += rgb[kk * 3 + 2]
           n++
         }
-      const own = img.seen && img.count[k] ? 0.8 * Math.min(1, img.seen[k] / DENSE) : 0
-      out[k * 4] = (own * rgb[k * 3] + (1 - own) * (r / n)) * 255
-      out[k * 4 + 1] = (own * rgb[k * 3 + 1] + (1 - own) * (g / n)) * 255
-      out[k * 4 + 2] = (own * rgb[k * 3 + 2] + (1 - own) * (b / n)) * 255
+      const o = own[k]
+      out[k * 4] = (o * rgb[k * 3] + (1 - o) * (r / n)) * 255
+      out[k * 4 + 1] = (o * rgb[k * 3 + 1] + (1 - o) * (g / n)) * 255
+      out[k * 4 + 2] = (o * rgb[k * 3 + 2] + (1 - o) * (b / n)) * 255
       out[k * 4 + 3] = 255
     }
   return { x0, y0, cell, width: w, height: h, rgba: out }
+}
+
+/**
+ * Fill `target` cells with boards copied from the floor beside them. Planks are found as the axis
+ * the colour changes least along; each line of cells along it copies the strip of seen floor next
+ * to the gap, mirrored back and forth (so the grain doesn't repeat with a seam), from the nearer
+ * side, crossfading where the two sides meet. Lines with no floor on either side (a band along a
+ * wall that runs with the planks) then mirror across the planks instead. Anything left is for the
+ * ordinary fill. `own` takes the copied cell's crispness.
+ */
+function synthBoards(rgb: Float32Array, have: Uint8Array, own: Float32Array, target: Uint8Array, w: number, h: number) {
+  const lum = (k: number) => 0.299 * rgb[k * 3] + 0.587 * rgb[k * 3 + 1] + 0.114 * rgb[k * 3 + 2]
+  let ax = 0
+  let ay = 0
+  let nx = 0
+  let ny = 0
+  for (let y = 0; y < h - 1; y++)
+    for (let x = 0; x < w - 1; x++) {
+      const k = y * w + x
+      if (!have[k] || target[k]) continue
+      if (have[k + 1] && !target[k + 1]) {
+        ax += Math.abs(lum(k) - lum(k + 1))
+        nx++
+      }
+      if (have[k + w] && !target[k + w]) {
+        ay += Math.abs(lum(k) - lum(k + w))
+        ny++
+      }
+    }
+  if (!nx || !ny) return
+  const alongX = ax / nx <= ay / ny
+  const src = have.slice()
+  for (let k = 0; k < w * h; k++) if (target[k]) src[k] = 0
+  const done = new Uint8Array(w * h)
+  const MAXSRC = 16
+  const pingpong = (i: number, n: number) => {
+    const m = i % (2 * n)
+    return m < n ? m : 2 * n - 1 - m
+  }
+  const fillLines = (horizontal: boolean) => {
+    const lines = horizontal ? h : w
+    const len = horizontal ? w : h
+    const at = (line: number, t: number) => (horizontal ? line * w + t : t * w + line)
+    for (let line = 0; line < lines; line++) {
+      let t = 0
+      while (t < len) {
+        if (!target[at(line, t)] || done[at(line, t)]) {
+          t++
+          continue
+        }
+        const a = t
+        while (t < len && target[at(line, t)] && !done[at(line, t)]) t++
+        const b = t - 1
+        // The seen floor on each side, nearest first, skipping the odd empty cell.
+        const side = (start: number, dir: number) => {
+          const out: number[] = []
+          for (let s = start, gaps = 0; s >= 0 && s < len && out.length < MAXSRC; s += dir) {
+            const k = at(line, s)
+            if (target[k] && !done[k]) break
+            if (src[k]) out.push(k)
+            else if (++gaps > 4) break
+          }
+          return out
+        }
+        const left = side(a - 1, -1)
+        const right = side(b + 1, 1)
+        if (left.length < 3 && right.length < 3) continue
+        const n = b - a + 1
+        for (let i = 0; i < n; i++) {
+          const k = at(line, a + i)
+          const fromL = left.length >= 3 ? left[pingpong(i, left.length)] : -1
+          const fromR = right.length >= 3 ? right[pingpong(n - 1 - i, right.length)] : -1
+          // Weight of the left copy: all of it near the left, crossfading over the middle few cells.
+          let wl = fromR < 0 ? 1 : fromL < 0 ? 0 : Math.max(0, Math.min(1, 0.5 - (i - (n - 1) / 2) / 3))
+          if (fromL < 0) wl = 0
+          for (let c = 0; c < 3; c++) rgb[k * 3 + c] = (fromL >= 0 ? wl * rgb[fromL * 3 + c] : 0) + (fromR >= 0 ? (1 - wl) * rgb[fromR * 3 + c] : 0)
+          own[k] = (fromL >= 0 ? wl * own[fromL] : 0) + (fromR >= 0 ? (1 - wl) * own[fromR] : 0)
+          done[k] = 1
+        }
+      }
+    }
+  }
+  fillLines(alongX)
+  fillLines(!alongX)
+  for (let k = 0; k < w * h; k++) if (done[k]) have[k] = 1
 }
 
 // ------------------------------------------------------------------ cartoon colors
