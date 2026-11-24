@@ -126,6 +126,9 @@ const FAMILY: Record<string, Family> = {
   'floor-lamp': 'light', 'table-lamp': 'light', pendant: 'light',
 }
 
+/** Wooden furniture: a mood tints it only in wood tones (moodPicks). */
+export const WOODEN = new Set(['coffee-table', 'dining-table', 'dining-chair', 'nightstand', 'dresser', 'desk', 'side-table'])
+
 /** The material family a category's colour counts toward, if any (plants have none). */
 export const familyOf = (category: string): Family | undefined => FAMILY[category]
 
@@ -133,16 +136,22 @@ export const familyOf = (category: string): Family | undefined => FAMILY[categor
  * How a room's mood (round 17) tints its picks: `palette` is the colours that read as the mood,
  * `map` swaps a pick's usual colour for the mood's take on it (walnut turns oak in an airy room).
  */
-export const MOOD_TONES: Record<MoodId, { palette: string[]; map: Record<string, string> }> = {
+export const MOOD_TONES: Record<MoodId, { palette: string[]; map: Record<string, string>; woods: string[] }> = {
   airy: {
+    // Wooden pieces stay wood (round 17 review: a white dining set vanished on the pale floor):
+    // a weathered ash that still stands off every style's floor.
+    woods: ['#8f8174', walnut],
     palette: [linen, oak, '#e2d6b8', '#c9c3b6', sage, '#7fa7c9'],
     map: { [walnut]: oak, [charcoal]: linen, [taupe]: '#c9c3b6', [terracotta]: '#e2d6b8', [honey]: linen, '#e8a27c': '#7fa7c9' },
   },
   snug: {
+    woods: [walnut, '#6b5a4c'],
     palette: [walnut, honey, terracotta, taupe, '#e8a27c'],
     map: { [oak]: walnut, [linen]: honey, [charcoal]: walnut, [sage]: terracotta, '#7fa7c9': '#e8a27c' },
   },
   bold: {
+    // No terracotta dressers: the mood's colour goes on rugs, art and soft goods.
+    woods: [charcoal, walnut],
     palette: [terracotta, honey, '#5b7bb5', charcoal, '#e8a27c'],
     map: { [taupe]: '#5b7bb5', [linen]: honey, [oak]: terracotta, [walnut]: charcoal, '#8fae84': '#5b7bb5' },
   },
@@ -162,9 +171,18 @@ export function setPickMoodSource(fn: (() => MoodId | undefined) | null) {
  * for their colour: they keep it, and the one in the mood's palette leads instead.
  * Picks in the mood's palette are marked `mood`.
  */
-export function moodPicks(list: Pick[], mood: MoodId): (Pick & { mood?: boolean })[] {
+export function moodPicks(list: Pick[], mood: MoodId, category?: string): (Pick & { mood?: boolean })[] {
   const tone = MOOD_TONES[mood]
   const twins = list.length > 1 && list.every((p) => p.id === list[0].id)
+  // Wooden furniture keeps to wood tones (round 17 review): the lead takes the mood's wood, the
+  // rest keep their own woods; the mood's accent colours go on rugs, art and soft goods.
+  if (category && WOODEN.has(category) && !twins && list[0]) {
+    const lead = tone.woods[0]
+    return list.map((p, i) => {
+      const color = i === 0 ? lead : p.color === lead ? list[0].color : p.color
+      return { ...p, color, mood: tone.woods.includes(color) }
+    })
+  }
   if (twins) {
     const marked = list.map((p) => ({ ...p, mood: tone.palette.includes(p.color) }))
     return [...marked.filter((p) => p.mood), ...marked.filter((p) => !p.mood)]
@@ -194,7 +212,7 @@ export function moodPicks(list: Pick[], mood: MoodId): (Pick & { mood?: boolean 
  */
 export function picksFor(category: string, taste: Partial<Record<Family, string>> = {}, mood: MoodId | undefined = moodSource?.()): (Pick & { taste?: boolean; mood?: boolean })[] {
   const base = PICKS[category] ?? []
-  const list = mood ? moodPicks(base, mood) : base
+  const list = mood ? moodPicks(base, mood, category) : base
   const fam = familyOf(category)
   const liked = fam ? taste[fam] : undefined
   const k = liked ? list.findIndex((p) => p.color === liked) : -1

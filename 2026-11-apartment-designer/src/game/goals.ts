@@ -373,6 +373,12 @@ export function nextGoal(score: HomeScore, fits?: (category: string, near?: stri
     const held = pool.find((g) => !g.bonus && (!g.tab || !g.item))
     if (held) return held
   }
+  // At the top level (round 17 review) a room's mood goal leads the bonus goals: it's the one the
+  // player chose, and the chip would otherwise step aside for Remix before reaching it.
+  if (!score.level.next) {
+    const mood = pickFrom(pool.filter((g) => g.perk === 'mood'), fits)
+    if (mood) return mood
+  }
   return remixShuffle(score, pool, pickFrom(pool, fits), fits)
 }
 
@@ -400,6 +406,8 @@ function remixShuffle(score: HomeScore, pool: Goal[], g: Goal | undefined, fits?
  */
 function pickFrom(pool: Goal[], fits?: (category: string, near?: string) => boolean): Goal | undefined {
   for (const g of pool) {
+    // A room's mood goal met by painting a piece it has (round 17: a Bold room's oak rug): no purchase, nothing to fit.
+    if (g.perk === 'mood' && !g.tab && g.near) return g
     if (!g.tab || !g.item) continue
     if (!fits || fits(g.item, g.near)) return g
     // A side table elsewhere in the room wouldn't light that side of the bed: no stand-in.

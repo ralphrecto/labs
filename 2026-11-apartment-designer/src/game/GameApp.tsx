@@ -22,7 +22,7 @@ import { dropSpotAt, flushEditRun, rotatePlacementSmart } from './editActions'
 import { isWallDecor } from '../model/wallDecor'
 import { ItemThumb } from './ItemThumb'
 import { GoalsSheet, LevelUpCard, VibeMeter } from './Goals'
-import { MoodCard, MoodLights } from './MoodCard'
+import { MoodCard, MoodLights, useMoodFocus } from './MoodCard'
 import { MOODS, moodOf } from './moods'
 import { unpackAndCelebrate } from './unpack'
 import { useGame, type GameMode } from './gameStore'
@@ -272,6 +272,8 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
   const mode = useGame((s) => s.mode)
   const cam = useCam()
   const style = useGame((s) => s.renderStyle)
+  // A room just given a mood: the view eases there for a moment (round 17).
+  const moodFocus = useMoodFocus()
   const control = useMemo(
     () => ({
       ...cam,
@@ -283,10 +285,10 @@ function Stage({ inset, focusRoom }: { inset: SceneInset; focusRoom: string | nu
       inset,
       hideFlags: mode === 'look',
       fullFrame: mode === 'look',
-      focusRoom: mode === 'buy' ? focusRoom : null,
+      focusRoom: moodFocus && mode !== 'look' ? moodFocus : mode === 'buy' ? focusRoom : null,
       extras: <MoodLights />,
     }),
-    [cam, mode, style, inset, focusRoom],
+    [cam, mode, style, inset, focusRoom, moodFocus],
   )
   return (
     <div
