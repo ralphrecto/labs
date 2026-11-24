@@ -107,9 +107,11 @@ interface GameState {
   /** Today's visitor and the stickers collected so far (one per visit ever finished). */
   visit: VisitState
   /** On a new local day (or the first time), pick today's visitor for this home. */
-  rollVisit: (doc: Doc, day?: string, met?: (visitId: string) => boolean) => void
+  rollVisit: (doc: Doc, day?: string, met?: (visitId: string) => boolean, far?: (visitId: string) => boolean) => void
   /** Today's visitor (this one: a stale id from before a new day is ignored) is happy: mark the day done and collect the sticker. */
   completeVisit: (visitId: string) => void
+  /** The welcome back has said yesterday's visitor went home. */
+  clearGone: () => void
 }
 
 export interface VisitState {
@@ -118,6 +120,11 @@ export interface VisitState {
   visitId: string
   done: boolean
   stickers: string[]
+  /**
+   * Yesterday's visitor, pleased, who took their stars home (round 18): read from the save before
+   * today's visitor is rolled, kept until the welcome back has said so (clearGone).
+   */
+  gone?: string
 }
 
 const ONBOARDED_KEY = 'apartment-designer:onboarded'
@@ -133,7 +140,40 @@ const MOOD_SKIPS_KEY = 'homebody:mood-skips'
 const UNLOCKS_SEEN_KEY = 'homebody:unlocks-seen'
 const FRESH_UNLOCKS_KEY = 'homebody:fresh-unlocks'
 /** The buttons each level unlocks, which glow "new" the first time. */
-export const UNLOCK_BUTTONS: Record<string, string[]> = { 'Moving in': ['style'], Cozy: ['evening'], 'Designer home': ['remix'] }
+export const UNLOCK_BUTTONS: Record<string, string[]> = { 'Moving in': ['style'], Cozy: ['evening'], 'Designer home': ['remix', 'designs'] }
+const FRESH_AT_KEY = 'homebody:fresh-unlocks-at'
+/** A "new" glow fades by itself after this long (round 18: it still showed on day 3). */
+export const FRESH_FOR_MS = 24 * 3600 * 1000
+/** The buttons still glowing "new": each until it's first used, or a day after it unlocked. */
+function readFresh(now = Date.now()): string[] {
+  const list = readList(FRESH_UNLOCKS_KEY)
+  let at: Record<string, number> = {}
+  try {
+    const v = JSON.parse(localStorage.getItem(FRESH_AT_KEY) ?? '{}')
+    if (v && typeof v === 'object') at = v
+  } catch {
+    // Unreadable: every glow starts its day now.
+  }
+  const keep = list.filter((id) => !(typeof at[id] === 'number' && now - at[id] > FRESH_FOR_MS))
+  const next = Object.fromEntries(keep.map((id) => [id, typeof at[id] === 'number' ? at[id] : now]))
+  try {
+    localStorage.setItem(FRESH_AT_KEY, JSON.stringify(next))
+  } catch {
+    // Private mode.
+  }
+  if (keep.length !== list.length) writeList(FRESH_UNLOCKS_KEY, keep)
+  return keep
+}
+function noteFresh(ids: string[], now = Date.now()) {
+  try {
+    const v = JSON.parse(localStorage.getItem(FRESH_AT_KEY) ?? '{}')
+    const at = v && typeof v === 'object' ? v : {}
+    for (const id of ids) at[id] ??= now
+    localStorage.setItem(FRESH_AT_KEY, JSON.stringify(at))
+  } catch {
+    // Private mode.
+  }
+}
 function readList(key: string): string[] {
   try {
     const v = JSON.parse(localStorage.getItem(key) ?? '[]')
@@ -163,15 +203,19 @@ export function readVisit(): VisitState {
     const v = JSON.parse(localStorage.getItem(VISIT_KEY) ?? 'null')
     if (!v || typeof v !== 'object') return empty
     const stickers: string[] = Array.isArray(v.stickers) ? v.stickers.filter((x: unknown): x is string => typeof x === 'string' && !!VISIT_BY_ID[x]) : []
-    // Yesterday's visitor has gone home: only the stickers carry over (so no stars come and go on load).
-    if (v.date !== localDay() || typeof v.visitId !== 'string' || !VISIT_BY_ID[v.visitId]) return { ...empty, stickers }
+    // Yesterday's visitor has gone home: only the stickers carry over (so no stars come and go on load),
+    // and who it was, if pleased, so the welcome back can say why their stars left.
+    if (v.date !== localDay() || typeof v.visitId !== 'string' || !VISIT_BY_ID[v.visitId]) {
+      const gone = v.date && v.date !== localDay() && v.done && typeof v.visitId === 'string' && VISIT_BY_ID[v.visitId] ? v.visitId : undefined
+      return { ...empty, stickers, ...(gone ? { gone } : {}) }
+    }
     return { date: v.date, visitId: v.visitId, done: !!v.done, stickers }
   } catch {
     return empty
   }
 }
 
-function saveVisit(v: VisitState) {
+function saveVisit({ gone: _gone, ...v }: VisitState) {
   try {
     localStorage.setItem(VISIT_KEY, JSON.stringify(v))
   } catch {
@@ -294,10 +338,12 @@ export const useGame = create<GameState>((set, get) => ({
   pinch: null,
   setPinch: (pinch) => set({ pinch }),
   unlocksSeen: readList(UNLOCKS_SEEN_KEY),
-  freshUnlocks: readList(FRESH_UNLOCKS_KEY),
+  freshUnlocks: readFresh(),
   spendUnlock: (id) => {
-    if (!get().freshUnlocks.includes(id)) return
-    const freshUnlocks = get().freshUnlocks.filter((x) => x !== id)
+    // (Remix used: Your designs, where it lives, stops glowing too.)
+    const spent = id === 'remix' ? ['remix', 'designs'] : [id]
+    if (!get().freshUnlocks.some((x) => spent.includes(x))) return
+    const freshUnlocks = get().freshUnlocks.filter((x) => !spent.includes(x))
     writeList(FRESH_UNLOCKS_KEY, freshUnlocks)
     set({ freshUnlocks })
   },
@@ -376,6 +422,7 @@ export const useGame = create<GameState>((set, get) => ({
     const freshUnlocks = [...new Set([...s.freshUnlocks, ...(UNLOCK_BUTTONS[name] ?? [])])]
     writeList(UNLOCKS_SEEN_KEY, unlocksSeen)
     writeList(FRESH_UNLOCKS_KEY, freshUnlocks)
+    noteFresh(UNLOCK_BUTTONS[name] ?? [])
     set({ levelUp: { key: Date.now(), index, name, unlock: true }, unlocksSeen, freshUnlocks })
   },
   clearLevelUp: () => set({ levelUp: null }),
@@ -395,13 +442,16 @@ export const useGame = create<GameState>((set, get) => ({
       }
       return { taste }
     }),
-  rollVisit: (doc, day = localDay(), met) =>
+  rollVisit: (doc, day = localDay(), met, far) =>
     set((s) => {
       if (s.visit.date === day && s.visit.visitId) return s
-      const visit = { date: day, visitId: todayVisit(doc, day, s.visit.stickers, met).id, done: false, stickers: s.visit.stickers }
+      // (A visitor rolled on a day that turned over while playing: the one before has gone home too.)
+      const gone = s.visit.gone ?? (s.visit.date && s.visit.done ? s.visit.visitId : undefined)
+      const visit = { date: day, visitId: todayVisit(doc, day, s.visit.stickers, met, far).id, done: false, stickers: s.visit.stickers, ...(gone ? { gone } : {}) }
       saveVisit(visit)
       return { visit }
     }),
+  clearGone: () => set((s) => (s.visit.gone ? { visit: { ...s.visit, gone: undefined } } : s)),
   completeVisit: (visitId) =>
     set((s) => {
       if (!s.visit.visitId || s.visit.visitId !== visitId || s.visit.done) return s

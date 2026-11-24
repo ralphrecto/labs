@@ -119,6 +119,11 @@ export interface Layout {
    * its star when the room's mood changes (one star per room at most). See game/moods.changeMood.
    */
   moodsDone?: Record<string, MoodId[]>
+  /**
+   * What each room already had when its mood was chosen (round 18), as "itemId:color" keys: the
+   * mood's goal counts only pieces placed, brought in or repainted after, so it always asks for a step.
+   */
+  moodBase?: Record<string, string[]>
 }
 
 /** A room's mood, chosen on a mood moment card: Bright & airy, Warm & snug, Bold & playful. */

@@ -170,4 +170,37 @@ describe('visit state', () => {
     expect(second.visitId).not.toBe(first.visitId)
     if (typeof localStorage !== 'undefined') expect(JSON.parse(localStorage.getItem(VISIT_KEY)!).date).toBe('2026-11-23')
   })
+
+  it('remembers yesterday’s pleased visitor until the welcome back has said so (round 18)', () => {
+    const d = sampleDoc()
+    const g = useGame.getState()
+    g.rollVisit(d, '2026-11-22')
+    const first = useGame.getState().visit
+    g.completeVisit(first.visitId)
+    g.rollVisit(d, '2026-11-23')
+    expect(useGame.getState().visit.gone).toBe(first.visitId)
+    // (Never saved: a reload reads it from yesterday's entry instead.)
+    if (typeof localStorage !== 'undefined') expect(JSON.parse(localStorage.getItem(VISIT_KEY)!).gone).toBeUndefined()
+    useGame.getState().clearGone()
+    expect(useGame.getState().visit.gone).toBeUndefined()
+  })
+})
+
+describe('visitors bring something to do (round 18)', () => {
+  it('never one the home already pleases when another has a wish, even with a new sticker on offer', () => {
+    const d = sampleDoc()
+    const all = applicableVisits(d).map((x) => x.id)
+    const open = all[all.length - 1]
+    // Every new sticker is met; only an old sticker's visitor has a wish.
+    for (let i = 1; i <= 15; i++) expect(todayVisit(d, `2027-04-${String(i).padStart(2, '0')}`, [open], (id) => id !== open).id).toBe(open)
+  })
+  it('prefers a two-step wish once a few stickers are in', () => {
+    const d = sampleDoc()
+    const all = applicableVisits(d).map((x) => x.id)
+    const big = all[0]
+    for (let i = 1; i <= 15; i++) expect(todayVisit(d, `2027-05-${String(i).padStart(2, '0')}`, all.slice(1, 5), () => false, (id) => id === big).id).toBe(big)
+    // Before that, any wish will do.
+    const ids = new Set(Array.from({ length: 30 }, (_, i) => todayVisit(d, `2027-06-${String(i + 1).padStart(2, '0')}`, [], () => false, (id) => id === big).id))
+    expect(ids.size).toBeGreaterThan(1)
+  })
 })

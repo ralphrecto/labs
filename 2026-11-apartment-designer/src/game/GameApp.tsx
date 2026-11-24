@@ -571,10 +571,16 @@ function TopBar() {
   const s = useStore.getState()
   const open = useGame((g) => g.openSheet)
   // Remix just unlocked (round 16): Your designs, where it lives, glows "new" until it's used.
-  const freshRemix = useGame((g) => g.freshUnlocks.includes('remix'))
+  // Round 18: the glow goes once the sheet has been opened (or a day after), not only once Remix is used.
+  const freshRemix = useGame((g) => g.freshUnlocks.includes('designs'))
   return (
     <header className="hud-top">
-      <button className={`hud-home${freshRemix ? ' g-new' : ''}`} onClick={() => open('layouts')} aria-label={freshRemix ? 'Your designs (new: Remix)' : 'Your designs'}>
+      <button
+        className={`hud-home${freshRemix ? ' g-new' : ''}`}
+        onClick={() => {
+          useGame.getState().spendUnlock('designs')
+          open('layouts')
+        }} aria-label={freshRemix ? 'Your designs (new: Remix)' : 'Your designs'}>
         <span className="dz-hud-icon-col">
           <span className="hud-home-icon">
             <I.IconDesigns />

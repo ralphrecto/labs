@@ -5,7 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useAnalysis } from '../analysis'
 import type { Doc } from '../model/types'
 import { activeLayout, useStore } from '../store'
-import { heldScore, lastAwayMs, settleStars, useGame, VISIT_KEY } from './gameStore'
+import { heldScore, lastAwayMs, settleStars, useGame } from './gameStore'
 import { moodDoneTitle, moodRepaint, repaintDoc } from './moods'
 import { uid } from '../model/sample'
 import { bankableLevel, bestLevelKey, levelBlocker, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, packedBoxIds, scoreHome, type Goal, type HomeScore } from './goals'
@@ -42,7 +42,15 @@ export function useHomeScore(): HomeScore & { best: number } {
   const unpacking = raw.goals.some((g) => g.id === 'unpack' && !g.done && g.urgent)
   useEffect(() => {
     if (unpacking) return
-    useGame.getState().rollVisit(doc, undefined, (id) => !!scoreHome(doc, layout, analysis, { id }).goals.find((g) => g.visit === id)?.done)
+    const st = useGame.getState()
+    if (st.visit.date === localDay() && st.visit.visitId) return
+    const seen = new Map<string, Goal | undefined>()
+    const goalOf = (id: string) => {
+      if (!seen.has(id)) seen.set(id, scoreHome(doc, layout, analysis, { id }).goals.find((g) => g.visit === id))
+      return seen.get(id)
+    }
+    // Round 18: never one already happy when another has a wish; a bigger wish once a few stickers are in.
+    st.rollVisit(doc, undefined, (id) => !!goalOf(id)?.done, (id) => (goalOf(id)?.progress ?? 0) < 0.5)
   }, [doc, layout, analysis, unpacking])
   // Today's visitor is happy: the sticker is theirs to keep, even if the room changes later.
   const metId = raw.goals.find((g) => g.visit && g.done)?.visit
@@ -162,18 +170,32 @@ function Stars({ n, filled = true }: { n: number; filled?: boolean }) {
   )
 }
 
+const TOP_BONUS_KEY = 'homebody:top-bonus'
 /**
- * Yesterday's visitor, if they were pleased (their stars went home with them): read before today's
- * visitor is rolled, so the welcome back can say why the stars dropped overnight.
+ * At Dream home (round 18) bonus goals give way to Remix, but once a day the chip may offer one of
+ * them first: the first one offered that day (per design) keeps its place until it's done.
  */
-let goneVisit: Visit | undefined = (() => {
+function bonusToday(designKey: string, g: Goal): boolean {
   try {
-    const v = JSON.parse(localStorage.getItem(VISIT_KEY) ?? 'null')
-    return v && v.date && v.date !== localDay() && v.done ? VISIT_BY_ID[v.visitId] : undefined
+    const v = JSON.parse(localStorage.getItem(TOP_BONUS_KEY) ?? 'null')
+    if (!v || v.day !== localDay()) return true
+    const mine = v.designs?.[designKey]
+    return mine === undefined || mine === g.id
   } catch {
-    return undefined
+    return false
   }
-})()
+}
+function claimBonusToday(designKey: string, g: Goal) {
+  try {
+    const v = JSON.parse(localStorage.getItem(TOP_BONUS_KEY) ?? 'null')
+    const designs = v && v.day === localDay() ? { ...v.designs } : {}
+    if (designs[designKey] !== undefined) return
+    designs[designKey] = g.id
+    localStorage.setItem(TOP_BONUS_KEY, JSON.stringify({ day: localDay(), designs }))
+  } catch {
+    // Private mode: no bonus goal ahead of Remix.
+  }
+}
 
 /** Today's visitor, for the welcome card and the goals sheet. */
 function useVisit(): { visit?: Visit; done: boolean; stickers: string[] } {
@@ -332,7 +354,8 @@ export function VibeMeter() {
     const moodChanged = before.moods !== moodsNow
     if (moodChanged) setSkipped((s) => ([...s].some((id) => id.startsWith('mood:')) ? new Set([...s].filter((id) => !id.startsWith('mood:'))) : s))
     // A visitor who arrives already happy (a new day) is no headline: only one the player pleases is.
-    const fresh = score.goals.filter((g) => g.done && !before.done.has(g.id) && !(g.visit && before.visit !== g.id))
+    // (A room's kept mood star, round 18, is no news: it was earned before.)
+    const fresh = score.goals.filter((g) => g.done && !before.done.has(g.id) && !(g.visit && before.visit !== g.id) && !g.id.startsWith('mood-kept:'))
     // The drawer's hint pill ("Tap Plant → Bathroom") points at a goal's piece: once that goal is
     // done (it just finished, or every goal asking for that piece there is done), the pill goes.
     const hint = useGame.getState().buyHint
@@ -361,8 +384,16 @@ export function VibeMeter() {
       }, LEVEL_UP_QUIET_MS)
     }
     if (fresh.length > 4) return
-    // A new visitor (a new day) changes the stars on offer, not the player's work: no cheer, no loss.
-    if (before.visit !== visitGoal?.id) return
+    // A new visitor (a new day) changes the stars on offer, not the player's work: no loss. One who
+    // arrives already happy (round 18) still gets a cheer: their sticker and stars are in.
+    if (before.visit !== visitGoal?.id) {
+      if (visitGoal?.done) {
+        const who = VISIT_BY_ID[visitGoal.visit!]
+        useStore.getState().notify(`${who?.emoji ?? '✨'} ${who?.who ?? 'Your visitor'} dropped by and loved it already! +${visitGoal.stars}★, sticker collected`)
+        setPop({ key: Date.now(), delta: visitGoal.stars })
+      }
+      return
+    }
     const net = settleStars(before.stars, score.stars)
     // The drag lesson's piece sits a little aside on purpose: no loss pill while it's waiting there.
     if (net.kind === 'loss' && useGame.getState().dragLesson) return
@@ -412,7 +443,7 @@ export function VibeMeter() {
       const best = moodDone && moodTitle ? { ...moodDone, title: moodTitle } : [...fresh].sort((a, b) => b.stars - a.stars)[0]
       // One short line per action ("+1★ Every room has something"): the room shows in 3D and the
       // pill's pop has the total.
-      const line = moodTitle ? `${moodTitle} ★` : ticks ? `✓ ${best.title}` : `+${best.stars}★ ${best.title}`
+      const line = moodTitle ? `${moodTitle} ${best.stars ? '★' : '✨'}` : ticks ? `✓ ${best.title}` : `+${best.stars}★ ${best.title}`
       levelGoalLine = line
       if (placedToast) useStore.getState().notify(line)
       else setBanner({ key: Date.now(), kind: 'goal', goal: best, more: fresh.length - 1 })
@@ -424,39 +455,52 @@ export function VibeMeter() {
     }
   }, [score, designKey])
 
-  // Welcome back, once, after a long break: the goal banner with what to do next.
+  // Welcome back, once, after a long break: the goal banner with what to do next. Round 18: it waits
+  // (briefly) for today's visitor to be rolled, so a visitor one tap away can lead the card.
+  const visitDay = useGame((s) => s.visit.date)
+  const [visitWaited, setVisitWaited] = useState(false)
+  useEffect(() => {
+    if (!welcomeBack || visitWaited) return
+    const t = setTimeout(() => setVisitWaited(true), 900)
+    return () => clearTimeout(t)
+  }, [welcomeBack, visitWaited])
   useEffect(() => {
     if (!welcomeBack) return
+    if (visitDay !== localDay() && !visitWaited) return
     useGame.getState().consumeWelcomeBack()
     const sc = scoreRef.current
     const vs = useGame.getState().visit
     const vd = VISIT_BY_ID[vs.visitId]
-    // A visitor pleased yesterday took their stars home: say so, so the drop isn't a mystery.
-    const gone = goneVisit ?? (vs.date && vs.date !== localDay() && vs.done ? VISIT_BY_ID[vs.visitId] : undefined)
-    goneVisit = undefined
+    // A visitor pleased yesterday took their stars home: say so, so the drop isn't a mystery. Kept
+    // in the store until this card has been seen (round 18: StrictMode runs this effect twice, and a
+    // module-level flag cleared on the first run left the second card without the line).
+    const gone = vs.gone ? VISIT_BY_ID[vs.gone] : undefined
     const today = gone && vd && vd.id !== gone.id ? vd : undefined
     // Next only leads with the visitor from Cozy on (or when it's one pick away): say when.
     const hasVisitGoal = sc.goals.some((g) => g.visit)
     const later = !vs.done && (hasVisitGoal ? !visitLeads(sc) : sc.level.index < VISIT_LEVEL)
+    // Round 18: today's visitor one tap away leads the card (the chip's goal may be stale here).
+    const visitGoal = sc.goals.find((g) => g.visit && !g.done && !g.locked)
+    const lead = visitGoal && visitLeads(sc) && ((visitGoal.item && visitGoal.tab) || visitGoal.near) ? visitGoal : nextRef.current
     setBanner({
       key: Date.now(),
       kind: 'welcome',
-      goal: nextRef.current,
+      goal: lead,
       home: homeName,
       away: lastAwayMs ? ago(lastAwayMs) : undefined,
       line: `${homeCount() > 1 ? `${homeName} · ` : ''}${designName} · ${sc.level.name}`,
       stars: sc.stars,
       // At the top level a remix comes before any bonus goal (only core goals beat it).
-      top: sc.level.index >= LEVELS.length - 1 && (!nextRef.current || (!!nextRef.current.bonus && !nextRef.current.visit && nextRef.current.perk !== 'mood')),
+      top: sc.level.index >= LEVELS.length - 1 && (!lead || (!!lead.bonus && !lead.visit && lead.perk !== 'mood' && !bonusToday(designKey, lead))),
       visit:
         vd && (!gone || today)
           ? { id: vd.id, text: vs.done ? `${vd.emoji} ${vd.who} loved it! Sticker collected` : `${vd.emoji} ${vd.line}${later ? ' (once this design is Cozy)' : ''}` }
           : undefined,
       gone: gone ? `${gone.emoji} ${gone.who} went home${today ? ` · today: ${today.emoji} +${VISIT_STARS}★` : ''}` : undefined,
     })
-    // Only when the flag is raised; the score at that moment is the one to suggest from.
+    // Only when the flag is raised (and today's visitor is in); the score at that moment is the one to suggest from.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [welcomeBack])
+  }, [welcomeBack, visitDay, visitWaited])
 
   // A tap that went nowhere (round 16): the chip comes back when the goals sheet closes, or after
   // CHIP_BACK_MS, rather than staying hidden until the home changes.
@@ -480,6 +524,11 @@ export function VibeMeter() {
     const t = setTimeout(() => setPop(null), 1300)
     return () => clearTimeout(t)
   }, [pop])
+  // Yesterday's visitor's line has been seen once the welcome card with it closes (round 18).
+  const goneShown = banner?.kind === 'welcome' && !!banner.gone
+  useEffect(() => {
+    if (goneShown) return () => useGame.getState().clearGone()
+  }, [goneShown])
   // The welcome back stays until it's tapped or a piece is placed; goal banners pass by.
   useEffect(() => {
     if (!banner || banner.kind === 'welcome') return
@@ -533,13 +582,19 @@ export function VibeMeter() {
   const fill = lagging ? 0 : levelProgress(score)
   // One quiet chip with the next goal. Tapping it steps it aside until the home changes.
   // At the top level bonus goals give way to the photo and Remix, but not a room's mood goal (round 17).
-  const topBonus = !!next && top && !!next.bonus && !next.visit && next.perk !== 'mood'
-  const chip = next && !topBonus && !banner && !levelUp && !sheet && !loss && shown !== next.id ? next : null
-  const bestName = score.best > score.level.index ? LEVELS[score.best] : null
   useAlbum((s) => s.rev)
   const homeId = useStore((s) => s.doc.apartment.id)
   const layoutId = useStore((s) => s.doc.activeLayoutId)
   const photographed = top && albumFor(homeId).some((p) => p.layoutId === layoutId)
+  const anyBonus = !!next && top && !!next.bonus && !next.visit && next.perk !== 'mood'
+  // Round 18: once a day one bonus goal comes before Remix.
+  const topBonus = anyBonus && (!photographed || !bonusToday(designKey, next))
+  const chip = next && !topBonus && !banner && !levelUp && !sheet && !loss && shown !== next.id ? next : null
+  const claimId = chip && anyBonus ? chip.id : null
+  useEffect(() => {
+    if (claimId && nextRef.current?.id === claimId) claimBonusToday(designKey, nextRef.current)
+  }, [claimId, designKey])
+  const bestName = score.best > score.level.index ? LEVELS[score.best] : null
   // A remix (round 15) climbs toward its own Dream home: the pill shows that climb ("Remix: 3 of 5")
   // and the twist, never the original's stars dropping away.
   const remixing = !!remixTwist
@@ -642,7 +697,7 @@ export function VibeMeter() {
           <span className="goal-next-text">
             Next: <b>{chip.title}</b>
           </span>
-          <span className="goal-next-stars">+{chip.stars} ★</span>
+          <span className="goal-next-stars">{chip.stars ? `+${chip.stars} ★` : '✨'}</span>
         </button>
       )}
       {banner?.kind === 'goal' && (
@@ -697,7 +752,7 @@ export function VibeMeter() {
                 'Remix this home'
               ) : banner.goal ? (
                 <>
-                  Next: {banner.goal.title} <span className="goal-nowrap">(+{banner.goal.stars} ★)</span>
+                  Next: {banner.goal.title} {banner.goal.stars > 0 && <span className="goal-nowrap">(+{banner.goal.stars} ★)</span>}
                 </>
               ) : (
                 'Your home missed you.'
@@ -772,6 +827,16 @@ function showGoal(g: Goal) {
     setTimeout(() => {
       const s = useStore.getState()
       if (s.doc !== docAt) return
+      // Less is more, over its 10 (round 18): the chip puts the newest extra piece away (Undo brings it back).
+      if (g.id === 'twist:less-is-more' && g.near) {
+        const p = activeLayout(s.doc).placements.find((x) => x.id === g.near)
+        const name = s.doc.items.find((i) => i.id === p?.itemId)?.name.toLowerCase() ?? 'piece'
+        if (p) {
+          s.deletePlacement(p.id)
+          s.notify(`Put the ${name} away. Less is more!`)
+        }
+        return
+      }
       const m = twistMove(s.doc, activeLayout(s.doc))
       if (!m) {
         if (g.hint) s.notify(g.hint)
