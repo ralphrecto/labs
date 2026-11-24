@@ -8,10 +8,12 @@ import type { Doc, Layout, Room, Vec2 } from '../model/types'
 import { centroid, normalizeAngle } from '../model/geometry'
 import type { Item, Placement, TwistId } from '../model/types'
 import { catalogEntry, itemFromCatalog } from '../model/catalog'
-import { findDrop, findDrops } from '../model/placement'
+import { carryRugs, findDrop, findDrops, RUG_RIDERS } from '../model/placement'
 import { isWallDecor } from '../model/wallDecor'
 import { VISIT_BY_ID, VISIT_STARS } from './visits'
 import { moodGoals } from './moods'
+import { PICKS } from './swatches'
+import { STARTER_CATALOG } from '../model/starterCatalog'
 
 export { VISITS, VISIT_BY_ID, VISIT_STARS, applicableVisits, localDay, todayVisit, type Visit } from './visits'
 
@@ -488,8 +490,16 @@ export interface ScoreOptions {
 /** Recent bedside drop probes, by home and arrangement (round 17: the same home is scored many times a tap). */
 const dropProbes = new Map<string, boolean>()
 function probeKey(doc: Doc, layout: Layout, bedId: string): string {
-  const ps = layout.placements.map((p) => `${p.id}:${p.itemId}:${p.x.toFixed(4)}:${p.y.toFixed(4)}:${p.rotation.toFixed(4)}:${p.on ?? ''}`).join('|')
-  const items = layout.placements.map((p) => {
+  // Round 18: only the bed's own room counts (pieces elsewhere don't change where a nightstand goes
+  // beside it), so placing a lamp in the living room doesn't search the bedroom again.
+  const bed = layout.placements.find((p) => p.id === bedId)
+  const room = bed && doc.rooms.find((r) => pointInPolygon(v(bed.x, bed.y), r.polygon))
+  const xs = room?.polygon.map((q) => q.x) ?? []
+  const ys = room?.polygon.map((q) => q.y) ?? []
+  // (Within 1.5 m of the room's bounds: a piece by its doorway counts.)
+  const near = room ? layout.placements.filter((p) => p.x > Math.min(...xs) - 1.5 && p.x < Math.max(...xs) + 1.5 && p.y > Math.min(...ys) - 1.5 && p.y < Math.max(...ys) + 1.5) : layout.placements
+  const ps = near.map((p) => `${p.id}:${p.itemId}:${p.x.toFixed(4)}:${p.y.toFixed(4)}:${p.rotation.toFixed(4)}:${p.on ?? ''}`).join('|')
+  const items = near.map((p) => {
     const i = doc.items.find((x) => x.id === p.itemId)
     return i ? `${i.category}:${i.width}:${i.depth}:${i.floorLevel ? 1 : 0}` : ''
   })
@@ -1710,6 +1720,7 @@ function bestMove(
   // under them, a TV it faces): never a dining table's chairs, which `group` moves without a turn.
   const carryIds = opts.group?.length ? [] : [...new Set([...carriedWith(doc, layout, p), ...(opts.carry ?? [])])].filter((id) => id !== p.id)
   const moving = new Set([p.id, ...(opts.group ?? []), ...carryIds])
+  const rider = RUG_RIDERS.has(item.category) && !carryIds.length && !opts.group?.length
   const others: Layout = { ...layout, placements: layout.placements.filter((x) => !moving.has(x.id) && !(x.on && moving.has(x.on))) }
   const keepOut = doorKeepOut(doc.rooms)
   const clearOfDoors = (b: Vec2[]) => !keepOut.some((k) => convexOverlap(b, k, 0.005))
@@ -1824,9 +1835,18 @@ function bestMove(
       const host = layout.placements.find((h) => h.id === x.on)!
       return { ...x, x: x.x + q.x - host.x, y: x.y + q.y - host.y }
     }
-    const l2: Layout = {
+    let l2: Layout = {
       ...layout,
       placements: layout.placements.map((x) => (x.id === p.id ? { ...x, ...spot } : (moving.has(x.id) && (!carryIds.includes(x.id) || at.has(x.id))) || (x.on && moving.has(x.on)) ? shift(x) : x)),
+    }
+    // Round 18: a coffee table moved on its own takes the rug under it along (as a drag does).
+    if (rider) {
+      const l3 = carryRugs({ ...doc, layouts: [layout], activeLayoutId: layout.id }, { ...doc, layouts: [l2], activeLayoutId: layout.id }).layouts[0]
+      if (l3 !== l2) {
+        const was = new Map(l2.placements.map((x) => [x.id, x]))
+        for (const x of l3.placements) if (was.get(x.id) !== x) also.push({ id: x.id, x: x.x, y: x.y, rotation: x.rotation })
+        l2 = l3
+      }
     }
     const a2 = analyze(doc, l2)
     if (warnings(a2) > base) return
@@ -2104,8 +2124,41 @@ export function goalMove(doc: Doc, layout: Layout, goalId: string): ChipMove | n
   return bestMove(doc, layout, goal.near, () => true, accept, before, a0)
 }
 
+/** Pieces asked about by their smallest pick (round 18): a writing desk fits a bedroom where the catalog desk doesn't. */
+const SMALL_PROBE = new Set(['desk', 'dresser'])
+
+/** The smallest of a kind the pick cards offer (the writing desk, the 3-drawer dresser), or the catalog piece. */
+function smallProbe(category: string, id: string): Item {
+  const entry = catalogEntry(category)
+  if (!SMALL_PROBE.has(category)) return itemFromCatalog(entry, id)
+  const small = (PICKS[category] ?? [])
+    .flatMap((pk) => STARTER_CATALOG.filter((x) => x.id === pk.id))
+    .sort((a, b) => a.width * a.depth - b.width * b.depth)[0]
+  return small && small.width * small.depth < entry.width * entry.depth ? itemFromCatalog(entry, id, { name: small.name, width: small.width, depth: small.depth, height: small.height }) : itemFromCatalog(entry, id)
+}
+
 /** Rooms a piece the chip makes room for belongs in, best first (round 17: a desk in a study or bedroom). */
-export const DESK_ROOMS: Record<string, RegExp[]> = { desk: [OFFICE, BEDROOM] }
+export const DESK_ROOMS: Record<string, RegExp[]> = { desk: [OFFICE, BEDROOM], dresser: [BEDROOM] }
+
+/** `item`'s spot in room `r` alone, clear of every door (a door in the next room swings in too), or null. */
+function dropInRoom(doc: Doc, layout: Layout, item: Item, r: Room) {
+  const d = findDrop({ ...doc, rooms: [r] }, layout, item)
+  const doors = doorKeepOut(doc.rooms)
+  return d.ok && !doors.some((k) => convexOverlap(orientedRect(v(d.spot.x, d.spot.y), item.width / 2, item.depth / 2, d.spot.rotation), k, 0.005)) ? d : null
+}
+
+/**
+ * Whether the Next chip can suggest a `category` piece (round 18): one fits somewhere, or for a desk
+ * or dresser the smallest one the pick cards offer (a writing desk) fits its own room (a bedroom,
+ * a study), so the chip offers that rather than a "Make room" move. `near`: beside that piece.
+ */
+export function pieceFits(doc: Doc, layout: Layout, category: string, near?: string): boolean {
+  if (findDrop(doc, layout, itemFromCatalog(catalogEntry(category), '__probe'), { nextTo: near }).ok) return true
+  if (near || !SMALL_PROBE.has(category)) return false
+  const small = smallProbe(category, '__probe-small')
+  const homes = doc.rooms.filter((r) => !UTILITY_ROOM.test(r.name) && (DESK_ROOMS[category] ?? []).some((re) => re.test(r.name)))
+  return homes.some((r) => !!dropInRoom(doc, layout, small, r))
+}
 
 /**
  * "Make room for a desk" in one tap (round 17): a core goal whose piece fits nowhere. The pieces
@@ -2161,19 +2214,13 @@ function roomMove(doc: Doc, layout: Layout, goal: Goal, before: HomeScore, a0: A
   for (const x of solid.filter((x) => catOf(x.id) !== 'sofa' && catOf(x.id) !== 'tv-stand').sort((a, b) => cost(a) - cost(b) || area(b) - area(a))) push(x.id)
   // Round 17: a desk belongs in a study or a bedroom; room made there comes before room made in the living room.
   const homeRooms = doc.rooms.filter((r) => !UTILITY_ROOM.test(r.name) && (DESK_ROOMS[probe.category] ?? []).some((re) => re.test(r.name)))
-  const doors = doorKeepOut(doc.rooms)
-  /** The piece's spot in room `r` alone, clear of every door (a door in the next room swings in too). */
-  const dropInRoom = (l: Layout, r: Room) => {
-    const d = findDrop({ ...doc, rooms: [r] }, l, probe)
-    return d.ok && !doors.some((k) => convexOverlap(orientedRect(v(d.spot.x, d.spot.y), probe.width / 2, probe.depth / 2, d.spot.rotation), k, 0.005)) ? d : null
-  }
-  const inHomeRoom = (l: Layout) => homeRooms.find((r) => dropInRoom(l, r))
+  const inHomeRoom = (l: Layout) => homeRooms.find((r) => dropInRoom(doc, l, probe, r))
   const ranked = tries.slice(0, 8).flatMap((t) => {
     // Where the new piece would go with this one out of the way (none: moving it won't help).
     const gone = new Set([t.pid, ...t.group])
     const without: Layout = { ...layout, placements: layout.placements.filter((x) => !gone.has(x.id) && !(x.on && gone.has(x.on))) }
     const room = homeRooms.length ? inHomeRoom(without) : undefined
-    const spot = room ? dropInRoom(without, room) : findDrop(doc, without, probe)
+    const spot = room ? dropInRoom(doc, without, probe, room) : findDrop(doc, without, probe)
     return spot?.ok ? [{ t, spot, home: !!room }] : []
   })
   ranked.sort((a, b) => Number(b.home) - Number(a.home))

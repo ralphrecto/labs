@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { checkLayout, pathIssues, walkingPaths, type Issue, type PathReport } from './model/checks'
+import { checkLayout, homeKey, Memo, pathIssues, walkingPaths, type Issue, type PathReport } from './model/checks'
 import type { Doc, Layout } from './model/types'
 
 export interface Analysis {
@@ -9,7 +9,16 @@ export interface Analysis {
   flagged: Map<string, 'error' | 'warning'>
 }
 
+/** Recent analyses, by home (round 18: a Next chip tap asks about the same arrangement several times). */
+const memo = new Memo<Analysis>(32)
 export function analyze(doc: Doc, layout: Layout): Analysis {
+  const key = homeKey(doc, layout)
+  const a = memo.get(key) ?? memo.set(key, analyzeOnce(doc, layout))
+  // (A fresh shell each time: a caller may swap out a part of its own copy.)
+  return { issues: a.issues.slice(), paths: { ...a.paths, results: a.paths.results.slice() }, flagged: new Map(a.flagged) }
+}
+
+function analyzeOnce(doc: Doc, layout: Layout): Analysis {
   const paths = walkingPaths(doc, layout)
   const issues = [...checkLayout(doc, layout), ...pathIssues(paths, doc.apartment.units)]
   const flagged = new Map<string, 'error' | 'warning'>()

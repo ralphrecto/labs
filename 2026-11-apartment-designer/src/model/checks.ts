@@ -35,6 +35,39 @@ export interface Issue {
   area?: Vec2[]
 }
 
+/**
+ * Round 18: a key for a home as the checks see it (its rooms, units and every placed piece with the
+ * fields that matter), so the same arrangement asked about again in one Next chip tap (each pick
+ * card dry-runs it, then the tap and the render that follows) is answered from a small cache. By
+ * content, not identity: trial layouts are rebuilt for each question.
+ */
+const itemSig = (i: Item) => `${i.id}|${i.category}|${i.name}|${i.width}|${i.depth}|${i.height}|${i.floorLevel ? 1 : 0}|${i.color}|${i.frameColor ?? ''}|${i.owned ? 1 : 0}|${i.unpack?.join(',') ?? ''}|${i.unpacked ? 1 : 0}|${JSON.stringify(i.clearance)}`
+export function homeKey(doc: Doc, layout: Layout): string {
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const ps = layout.placements.map((p) => {
+    const it = items.get(p.itemId)
+    return `${p.id}:${p.x}:${p.y}:${p.rotation}:${p.on ?? ''}:${it ? itemSig(it) : ''}`
+  })
+  return `${doc.apartment.units}#${JSON.stringify(doc.rooms)}#${ps.join('|')}`
+}
+
+/** A small first-in-first-out cache (round 18). */
+export class Memo<T> {
+  private m = new Map<string, T>()
+  private size: number
+  constructor(size = 48) {
+    this.size = size
+  }
+  get(key: string): T | undefined {
+    return this.m.get(key)
+  }
+  set(key: string, value: T): T {
+    if (this.m.size >= this.size) this.m.delete(this.m.keys().next().value!)
+    this.m.set(key, value)
+    return value
+  }
+}
+
 interface Placed {
   p: Placement
   item: Item
@@ -407,7 +440,15 @@ function fillGrid(free: Uint8Array, poly: Vec2[], x0: number, y0: number, W: num
 const DI = [1, -1, 0, 0, 1, 1, -1, -1]
 const DJ = [0, 0, 1, -1, 1, -1, 1, -1]
 
+/** Walking paths, by home (round 18: one tap asks about the same arrangement several times over). */
+const pathMemo = new Memo<PathReport>(32)
 export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport {
+  const key = `${cell}#${homeKey(doc, layout)}`
+  const r = pathMemo.get(key) ?? pathMemo.set(key, walkingPathsOnce(doc, layout, cell))
+  return { ...r, results: r.results.slice() }
+}
+
+function walkingPathsOnce(doc: Doc, layout: Layout, cell: number): PathReport {
   const rooms = doc.rooms
   let entrance: { room: Room; at: Vec2; inward: Vec2 } | null = null
   for (const room of rooms)
