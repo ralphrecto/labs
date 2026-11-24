@@ -3,8 +3,6 @@
 import { announce } from './announce'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { useAnalysis } from '../analysis'
-import { catalogEntry, itemFromCatalog } from '../model/catalog'
-import { findDrop } from '../model/placement'
 import type { Doc } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { heldScore, lastAwayMs, settleStars, useGame, VISIT_KEY } from './gameStore'
@@ -16,7 +14,7 @@ import { albumFor, TWIST_EMOJI, useAlbum } from './album'
 import { IconCheck, IconClose, IconSparkle, IconStar } from './icons'
 import { useModal } from './useModal'
 import { openRemixPicker } from './Designs'
-import { DRAG_PERK, goalMove, localDay, twistMove, TWISTS, VISIT_BY_ID, VISIT_LEVEL, VISIT_STARS, VISITS, visitLeads, type Visit } from './goals'
+import { DRAG_PERK, goalMove, localDay, pieceFits, twistMove, TWISTS, VISIT_BY_ID, VISIT_LEVEL, VISIT_STARS, VISITS, visitLeads, type Visit } from './goals'
 import { reduceMotion } from '../motion'
 import { listHomes } from '../storage'
 import type { Issue } from '../model/checks'
@@ -81,7 +79,7 @@ function useFits(doc: Doc, refused: Set<string>) {
       let ok = cache.get(key)
       if (ok === undefined) {
         try {
-          ok = findDrop(doc, activeLayout(doc), itemFromCatalog(catalogEntry(category), '__probe'), { nextTo: near }).ok
+          ok = pieceFits(doc, activeLayout(doc), category, near)
         } catch {
           ok = true
         }
