@@ -4,8 +4,10 @@ import { emptyDoc } from '../../model/sample'
 import { VISIT_BY_ID, type VisitPiece } from '../../game/visits'
 import { analyzeScan } from '../analyze'
 import { applyEstimate } from '../apply'
-import { sampleRoomPoints, SAMPLE_TRUTH } from '../sampleScan'
-import { scanPalette } from '../palette'
+import { sampleRoomPoints, samplePly, SAMPLE_TRUTH } from '../sampleScan'
+import { scanPalette, toonFloor, type FloorImage } from '../palette'
+import { toScanData } from '../align'
+import { readPlyPoints } from '../readPly'
 import { syntheticScan } from '../synthetic'
 import type { ScanData } from '../types'
 
@@ -79,5 +81,75 @@ describe('scan floor picture', () => {
     const boards = floorAt(true)(4.5, 1.3)
     expect(before[1] - boards[1]).toBeGreaterThan(30)
     expect(Math.abs(after[1] - boards[1])).toBeLessThan(15)
+  })
+
+  it('continues the planks where the rug was, instead of a flat patch', () => {
+    const at = floorAt(true)
+    // Plank-to-plank contrast: the mean change between cells 9 cm apart across the planks (which run along x).
+    const contrast = (x0: number, x1: number, y0: number, y1: number) => {
+      let sum = 0
+      let n = 0
+      for (let x = x0; x < x1; x += 0.05)
+        for (let y = y0; y < y1; y += 0.09) {
+          const a = at(x, y)
+          const b = at(x, y + 0.09)
+          sum += Math.abs(a[0] + a[1] + a[2] - b[0] - b[1] - b[2])
+          n++
+        }
+      return sum / n
+    }
+    const underRug = contrast(1.4, 3.2, 1.3, 2.4)
+    const boards = contrast(3.6, 5.0, 0.4, 2.3)
+    expect(boards).toBeGreaterThan(10)
+    expect(underRug).toBeGreaterThan(0.6 * boards)
+  })
+
+  it('leaves no stray specks in the Cartoon floor, even when the outline sits a little off the walls', () => {
+    // Islands of a different colour band smaller than ~0.04 m2 (a cell or two of the scan).
+    const specks = (f: FloorImage) => {
+      // Its lightness band (Cartoon snaps lightness to bands and keeps the hue smooth).
+      const key = (k: number) => {
+        const c = [f.rgba[k * 4], f.rgba[k * 4 + 1], f.rgba[k * 4 + 2]]
+        return Math.round(((Math.max(...c) + Math.min(...c)) / 510) * 10)
+      }
+      const done = new Uint8Array(f.width * f.height)
+      const out: number[][] = []
+      for (let k0 = 0; k0 < done.length; k0++) {
+        if (done[k0] || !f.rgba[k0 * 4 + 3]) continue
+        const stack = [k0]
+        const cells: number[] = []
+        done[k0] = 1
+        while (stack.length) {
+          const k = stack.pop()!
+          cells.push(k)
+          const i = k % f.width
+          const j = (k - i) / f.width
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const ii = i + dx
+            const jj = j + dy
+            const kk = jj * f.width + ii
+            if (ii < 0 || jj < 0 || ii >= f.width || jj >= f.height || done[kk] || !f.rgba[kk * 4 + 3] || key(kk) !== key(k0)) continue
+            done[kk] = 1
+            stack.push(kk)
+          }
+        }
+        if (cells.length * f.cell * f.cell >= 0.04) continue
+        const cx = cells.reduce((a, k) => a + (k % f.width) + 0.5, 0) / cells.length
+        const cy = cells.reduce((a, k) => a + Math.floor(k / f.width) + 0.5, 0) / cells.length
+        out.push([f.x0 + cx * f.cell, f.y0 + cy * f.cell, cells.length])
+      }
+      return out
+    }
+    // The "Try ours" flow: the sample file, placed the way the app calibrates it (a hair off true).
+    const ref = { id: 's', name: 's', fileName: 's.ply', format: 'splat', upAxis: 'y', floor: 1.30055, ceiling: 3.7476, scale: 1.0416667, yaw: -0.2958333, x: 1.7975076, y: -0.0956184, references: [], visible: true } as never
+    const fromFile = toScanData(ref, readPlyPoints(samplePly())!, 400_000).points
+    for (const [pts, dy] of [[fromFile, 0], [fromFile, 0.01], [sample.points, 0], [sample.points, 0.03]] as const) {
+      const poly = SAMPLE_TRUTH.outline.map((p) => ({ x: p.x, y: p.y > 3 ? p.y + 0.01 + dy : p.y - dy }))
+      const r = { ...(room as object), polygon: poly } as never
+      const f = toonFloor(scanPalette([pts], [r], { eraseRugs: true }).floor!)
+      // Inside the room only (the image's margin outside the walls is hidden under them).
+      const inRoom = specks(f).filter(([x, y]) => x > 0.01 && y > 0.01 && x < 5.19 && y < 4.09 && !(x > 3.39 && y > 2.59))
+      expect(inRoom).toEqual([])
+    }
   })
 })

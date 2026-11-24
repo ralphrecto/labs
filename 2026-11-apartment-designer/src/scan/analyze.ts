@@ -4,7 +4,7 @@ import { backSide, classifyBox, displayName } from './classify'
 import { levelFloor, quantile, rng, rotateXZ, sample, toCloud, type Cloud } from './cloud'
 import type { DetectedObject, DetectedOpening, DetectedRoom, SceneEstimate } from './estimate'
 import { Grid, traceOutline } from './grid'
-import { findRugPatches, floorTop } from './palette'
+import { findRugPatches, floorTop, rugCell } from './palette'
 import type { ScanData } from './types'
 
 // On-device scan analysis: level the scan, square it up with the walls, find the room's
@@ -655,7 +655,9 @@ export function findRugs(cloud: Cloud, px: Float32Array, py: Float32Array, poly:
     fp.push(px[i], py[i], hh, cloud.rgb[i * 3], cloud.rgb[i * 3 + 1], cloud.rgb[i * 3 + 2])
   }
   if (fp.length < 600) return []
-  const top = floorTop(Float32Array.from(fp), CELL)
+  const pts = Float32Array.from(fp)
+  const cell = rugCell(pts)
+  const top = floorTop(pts, cell)
   if (!top) return []
   const out: DetectedObject[] = []
   for (const patch of findRugPatches(top)) {
@@ -667,10 +669,10 @@ export function findRugs(cloud: Cloud, px: Float32Array, py: Float32Array, poly:
     let rotation = (box.angle + (long ? 0 : Math.PI / 2)) % Math.PI
     rotation = Math.round(((rotation + Math.PI) % Math.PI) * 1e4) / 1e4
     const placed = { center: box.center, rotation, width: long ? box.size.x : box.size.y, depth: long ? box.size.y : box.size.x }
-    // The patch reads a little large (its edge cells mix rug and boards); trim a cell, then keep
+    // The patch reads a little large (its edge cells mix rug and boards); trim up to a cell, then keep
     // trimming while a corner pokes through a wall (a rug tucked into a corner).
-    placed.width -= CELL
-    placed.depth -= CELL
+    placed.width -= Math.min(cell, 0.06)
+    placed.depth -= Math.min(cell, 0.06)
     const room = poly ? offsetPolygon(poly, -0.02) : null
     const corners = () => [v(-1, -1), v(1, -1), v(1, 1), v(-1, 1)].map((q) => add(placed.center, rot(v((q.x * placed.width) / 2, (q.y * placed.depth) / 2), rotation)))
     for (let k = 0; room && k < 15 && corners().some((c) => !pointInPolygon(c, room)); k++) {
