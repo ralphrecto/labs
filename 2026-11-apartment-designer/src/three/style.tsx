@@ -5,6 +5,7 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { toonHex, type ScanPalette } from '../scan/palette'
 import { useGame } from '../game/gameStore'
+import { useStore } from '../store'
 
 // Rendering styles for the 3D view, switched like map layers. Every surface in the scene (walls,
 // floors, furniture) draws through <Surface> and <Ink>, which pick materials for the active style.
@@ -408,13 +409,21 @@ export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; ex
     // throw long dark wedges across the rooms.
     if (style === 'toon') return { pos: [target.x + 2.5, 18, target.z + 2] as const, intensity: 2.2, color: '#fff3df' }
     if (style === 'real') return { pos: [target.x - 4, 8, target.z + 6] as const, intensity: 3.0, color: '#fff1dc' }
-    if (style === 'clay') return { pos: [target.x - 3, 9, target.z + 5] as const, intensity: 1.8, color: '#fff3e2' }
+    // Clay: higher, so a tall bookcase throws a short shadow rather than a long wedge.
+    if (style === 'clay') return { pos: [target.x - 2, 13, target.z + 3] as const, intensity: 1.8, color: '#fff3e2' }
     return { pos: [target.x + 4, 9, target.z + 6] as const, intensity: 1.4, color: '#ffffff' }
   }, [style, target])
   // The sun aims at the middle of the home (a directional light aims at its target's position).
   const aim = useMemo(() => new THREE.Object3D(), [])
   aim.position.copy(target)
   const r = Math.max(2, extent)
+  // The sun only reaches a room through its windows. With none anywhere it's daylight bounced in
+  // through doors, so shadows go faint and soft (in the dollhouse view the walls are cut down and
+  // would let the sun straight through). Clay's shadows are soft and light anyway, so the form reads
+  // from shading, not from big dark shapes.
+  const windowless = useStore((s) => s.doc.rooms.length > 0 && !s.doc.rooms.some((rm) => rm.openings.some((o) => o.kind === 'window')))
+  const shadowStrength = (style === 'clay' ? 0.5 : style === 'real' ? 0.8 : 1) * (windowless ? 0.55 : 1)
+  const shadowSoft = style === 'clay' ? 5 : style === 'real' ? 3 : 1
   // Evening: the sun goes down, the sky turns dusk blue and the lamps (ItemModel) carry the room.
   const evening = useGame((s) => s.evening)
   const scene = useThree((s) => s.scene)
@@ -462,6 +471,8 @@ export function StyleLights({ target, extent = 12 }: { target: THREE.Vector3; ex
         color={dusk ? dusk.moonColor : sun.color}
         castShadow={shadows}
         shadow-mapSize={[2048, 2048]}
+        shadow-intensity={shadowStrength}
+        shadow-radius={windowless ? shadowSoft * 1.6 : shadowSoft}
         shadow-camera-left={-r}
         shadow-camera-right={r}
         shadow-camera-top={r}

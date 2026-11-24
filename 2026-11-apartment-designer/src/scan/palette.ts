@@ -5,7 +5,7 @@
 // Input is scan points in the app world frame (meters, Y up, floor at 0, plan (x, y) = world (x, z)),
 // which is what `toScanData` returns.
 
-import { closestPointOnSegment, pointInPolygon, wallInwardNormal, wallSegments } from '../model/geometry'
+import { closestPointOnSegment, offsetPolygon, pointInPolygon, wallInwardNormal, wallSegments } from '../model/geometry'
 import type { Room } from '../model/types'
 import type { ScanPoints } from './types'
 
@@ -51,29 +51,21 @@ function median3(samples: number[]): [number, number, number] | null {
   return out
 }
 
-export function scanPalette(scans: ScanPoints[], rooms: Room[], cell = 0.05): ScanPalette {
+export interface PaletteOptions {
+  /** Plan cell size of the floor image (m). Left out, it follows the scan's density: 5 cm, finer where floor points are dense. */
+  cell?: number
+  /** Paint over rug-shaped patches with the boards around them (the rug is a piece of furniture now). */
+  eraseRugs?: boolean
+}
+
+/** Floor points this close to a room's walls are left out: they're mostly the foot of the wall (m). */
+const EDGE_INSET = 0.15
+
+export function scanPalette(scans: ScanPoints[], rooms: Room[], opts: PaletteOptions | number = {}): ScanPalette {
+  const o: PaletteOptions = typeof opts === 'number' ? { cell: opts } : opts
   const palette: ScanPalette = { floor: null, walls: {}, wallColor: {}, floorColor: {} }
   const colored = scans.filter((s) => s.colors && s.count > 0)
   if (!colored.length) return palette
-
-  // ---- floor image bounds
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  for (const s of colored) {
-    const p = s.positions
-    for (let i = 0; i < s.count; i++) {
-      const h = p[i * 3 + 1]
-      if (h > FLOOR_BAND || h < -FLOOR_BAND) continue
-      const x = p[i * 3]
-      const y = p[i * 3 + 2]
-      if (x < minX) minX = x
-      if (x > maxX) maxX = x
-      if (y < minY) minY = y
-      if (y > maxY) maxY = y
-    }
-  }
 
   // ---- wall and floor sampling
   const segs = rooms.map((r) => wallSegments(r))
@@ -81,28 +73,12 @@ export function scanPalette(scans: ScanPoints[], rooms: Room[], cell = 0.05): Sc
   const wallSamples = segs.map((rs) => rs.map(() => [] as number[]))
   const floorSamples = rooms.map(() => [] as number[])
   const cap = 6000
-
-  let img: { w: number; h: number; count: Uint32Array; start: Uint32Array; hgt: Float32Array; rgb: Float32Array; fill: Uint32Array } | null = null
-  if (Number.isFinite(minX) && maxX > minX && maxY > minY) {
-    const w = Math.min(1024, Math.ceil((maxX - minX) / cell) + 1)
-    const h = Math.min(1024, Math.ceil((maxY - minY) / cell) + 1)
-    // Floor points bucketed by cell (counted first, then filled), so each cell can keep its top layer.
-    const count = new Uint32Array(w * h)
-    for (const s of colored) {
-      const p = s.positions
-      for (let i = 0; i < s.count; i++) {
-        const hh = p[i * 3 + 1]
-        if (hh > FLOOR_BAND || hh < -FLOOR_BAND) continue
-        const px = Math.floor((p[i * 3] - minX) / cell)
-        const py = Math.floor((p[i * 3 + 2] - minY) / cell)
-        if (px >= 0 && py >= 0 && px < w && py < h) count[py * w + px]++
-      }
-    }
-    const start = new Uint32Array(w * h + 1)
-    for (let k = 0; k < w * h; k++) start[k + 1] = start[k] + count[k]
-    const n = start[w * h]
-    img = { w, h, count, start, hgt: new Float32Array(n), rgb: new Float32Array(n * 3), fill: new Uint32Array(w * h) }
-  }
+  // The floor image only takes points well inside a room: along the walls a scan sees the wall's
+  // foot (pale paint, skirting) at floor height, which made a ragged pale band. The edge is filled
+  // from the floor further in instead.
+  const insets = rooms.map((r) => offsetPolygon(r.polygon, -EDGE_INSET))
+  const keep = (x: number, y: number) => !rooms.length || insets.some((q) => pointInPolygon({ x, y }, q))
+  const fp: number[] = []
 
   for (const s of colored) {
     const p = s.positions
@@ -114,17 +90,8 @@ export function scanPalette(scans: ScanPoints[], rooms: Room[], cell = 0.05): Sc
       const r = c[i * 3]
       const g = c[i * 3 + 1]
       const b = c[i * 3 + 2]
-      if (img && hgt <= FLOOR_BAND && hgt >= -FLOOR_BAND) {
-        const px = Math.floor((x - minX) / cell)
-        const py = Math.floor((y - minY) / cell)
-        if (px >= 0 && py >= 0 && px < img.w && py < img.h) {
-          const k = py * img.w + px
-          const j = img.start[k] + img.fill[k]++
-          img.hgt[j] = hgt
-          img.rgb[j * 3] = r
-          img.rgb[j * 3 + 1] = g
-          img.rgb[j * 3 + 2] = b
-        }
+      if (hgt <= FLOOR_BAND && hgt >= -FLOOR_BAND) {
+        if (keep(x, y)) fp.push(x, y, hgt, r, g, b)
         // Every 7th floor point is plenty for the room's typical color.
         if (i % 7 === 0) {
           for (let ri = 0; ri < rooms.length; ri++) {
@@ -168,8 +135,321 @@ export function scanPalette(scans: ScanPoints[], rooms: Room[], cell = 0.05): Sc
     palette.floorColor[room.id] = mf ? hex(...mf) : undefined
   })
 
-  if (img) palette.floor = finishFloor(topLayer(img), minX, minY, cell)
+  const pts = Float32Array.from(fp)
+  const cell = o.cell ?? floorCell(pts)
+  // The image covers the rooms too, so their edges can be filled out to the walls.
+  const extra = rooms.flatMap((r) => r.polygon)
+  const top = floorTop(pts, cell, extra)
+  if (top) {
+    // Cells the fill may reach: inside a room, plus a cell's margin so the texture's edge pixels aren't blank.
+    let inside: Uint8Array | undefined
+    if (rooms.length) {
+      const grown = rooms.map((r) => offsetPolygon(r.polygon, cell * 1.5))
+      inside = new Uint8Array(top.w * top.h)
+      for (let j = 0; j < top.h; j++)
+        for (let i = 0; i < top.w; i++) {
+          const q = { x: top.x0 + (i + 0.5) * cell, y: top.y0 + (j + 0.5) * cell }
+          if (grown.some((g) => pointInPolygon(q, g))) inside[j * top.w + i] = 1
+        }
+    }
+    if (o.eraseRugs) {
+      for (const rug of findRugPatches(top)) for (const k of grow([...rug.cells, ...rug.rim], top.w, top.h, 2)) {
+        top.count[k] = 0
+        top.seen[k] = 0
+      }
+    }
+    palette.floor = finishFloor({ ...top, inside }, top.x0, top.y0, cell)
+  }
   return palette
+}
+
+/** A floor cell size that leaves about 8 points per cell: 5 cm for a typical phone scan, down to 2.5 cm for a dense one. */
+function floorCell(pts: Float32Array) {
+  const n = pts.length / 6
+  if (n < 100) return 0.05
+  const occupied = new Set<number>()
+  for (let i = 0; i < n; i++) occupied.add(Math.floor(pts[i * 6] / 0.1) * 100003 + Math.floor(pts[i * 6 + 1] / 0.1))
+  const density = n / (occupied.size * 0.01)
+  const c = Math.sqrt(8 / density)
+  return Math.round(Math.max(0.025, Math.min(0.05, c)) * 200) / 200
+}
+
+/** Cells within r (8-neighbourhood steps) of the given ones. */
+function grow(cells: number[], w: number, h: number, r: number): Set<number> {
+  const out = new Set(cells)
+  for (const k of cells) {
+    const x = k % w
+    const y = (k - x) / w
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        const xx = x + dx
+        const yy = y + dy
+        if (xx >= 0 && yy >= 0 && xx < w && yy < h) out.add(yy * w + xx)
+      }
+  }
+  return out
+}
+
+/** The floor's top-layer cells. `pts` is (x, y, height, r, g, b) per point; `extra` widens the bounds. */
+export function floorTop(pts: Float32Array, cell: number, extra: { x: number; y: number }[] = []) {
+  const n = pts.length / 6
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (let i = 0; i < n; i++) {
+    const x = pts[i * 6]
+    const y = pts[i * 6 + 1]
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+  }
+  if (!(maxX > minX && maxY > minY)) return null
+  for (const p of extra) {
+    minX = Math.min(minX, p.x - cell)
+    minY = Math.min(minY, p.y - cell)
+    maxX = Math.max(maxX, p.x + cell)
+    maxY = Math.max(maxY, p.y + cell)
+  }
+  const w = Math.min(1024, Math.ceil((maxX - minX) / cell) + 1)
+  const h = Math.min(1024, Math.ceil((maxY - minY) / cell) + 1)
+  // Floor points bucketed by cell (counted first, then filled), so each cell can keep its top layer.
+  const count = new Uint32Array(w * h)
+  const cellOf = new Int32Array(n)
+  for (let i = 0; i < n; i++) {
+    const px = Math.floor((pts[i * 6] - minX) / cell)
+    const py = Math.floor((pts[i * 6 + 1] - minY) / cell)
+    cellOf[i] = px >= 0 && py >= 0 && px < w && py < h ? py * w + px : -1
+    if (cellOf[i] >= 0) count[cellOf[i]]++
+  }
+  const start = new Uint32Array(w * h + 1)
+  for (let k = 0; k < w * h; k++) start[k + 1] = start[k] + count[k]
+  const m = start[w * h]
+  const hgt = new Float32Array(m)
+  const rgb = new Float32Array(m * 3)
+  const fill = new Uint32Array(w * h)
+  for (let i = 0; i < n; i++) {
+    const k = cellOf[i]
+    if (k < 0) continue
+    const j = start[k] + fill[k]++
+    hgt[j] = pts[i * 6 + 2]
+    rgb[j * 3] = pts[i * 6 + 3]
+    rgb[j * 3 + 1] = pts[i * 6 + 4]
+    rgb[j * 3 + 2] = pts[i * 6 + 5]
+  }
+  return { ...topLayer({ w, h, count, start, hgt, rgb }), x0: minX, y0: minY, cell }
+}
+
+/** Add the cells a patch encloses (a table's legs, a pattern's darker middle) to it. */
+function fillHoles(cells: number[], w: number) {
+  let x0 = Infinity
+  let y0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  for (const k of cells) {
+    const x = k % w
+    const y = (k - x) / w
+    x0 = Math.min(x0, x)
+    x1 = Math.max(x1, x)
+    y0 = Math.min(y0, y)
+    y1 = Math.max(y1, y)
+  }
+  // Flood the box around the patch (one cell wider) from its border; what the flood can't reach is a hole.
+  x0--
+  y0--
+  x1++
+  y1++
+  const bw = x1 - x0 + 1
+  const bh = y1 - y0 + 1
+  const mark = new Uint8Array(bw * bh)
+  for (const k of cells) mark[((k - (k % w)) / w - y0) * bw + (k % w) - x0] = 1
+  const stack = [0]
+  mark[0] = 2
+  while (stack.length) {
+    const b = stack.pop()!
+    const bx = b % bw
+    const by = (b - bx) / bw
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const xx = bx + dx
+      const yy = by + dy
+      if (xx < 0 || yy < 0 || xx >= bw || yy >= bh || mark[yy * bw + xx]) continue
+      mark[yy * bw + xx] = 2
+      stack.push(yy * bw + xx)
+    }
+  }
+  for (let b = 0; b < bw * bh; b++) if (!mark[b]) cells.push((Math.floor(b / bw) + y0) * w + (b % bw) + x0)
+}
+
+export interface RugPatch {
+  /** Cell indices (row-major) of the patch. */
+  cells: number[]
+  /** Median colour, 0..1. */
+  color: [number, number, number]
+  /** Cells around the patch that still look like rug (its blurred or broken edge). */
+  rim: number[]
+}
+
+/**
+ * Rugs on a scanned floor: compact, roughly rectangular patches whose colour stands clear of the
+ * floor's own (the boards' plank-to-plank shading doesn't count). Works on floorTop's cells.
+ */
+export function findRugPatches(top: { sum: Float32Array; count: Uint32Array; seen: Uint32Array; w: number; h: number; cell: number }): RugPatch[] {
+  const { count, seen, w, h, cell } = top
+  // Each cell's top-layer colour. A sparse rug leaves cells whose few points are all boards seen
+  // through it; those take the colour of the top-layer cells around them.
+  const col = new Float32Array(w * h * 3)
+  let have = new Uint8Array(w * h)
+  for (let k = 0; k < w * h; k++) {
+    if (!count[k]) continue
+    for (let c = 0; c < 3; c++) col[k * 3 + c] = top.sum[k * 3 + c] / count[k]
+    have[k] = 1
+  }
+  for (let pass = 0; pass < 2; pass++) {
+    const next = have.slice()
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const k = y * w + x
+        if (have[k] || !seen[k]) continue
+        const acc = [0, 0, 0]
+        let n = 0
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx
+            const yy = y + dy
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue
+            const kk = yy * w + xx
+            if (!have[kk]) continue
+            for (let c = 0; c < 3; c++) acc[c] += col[kk * 3 + c]
+            n++
+          }
+        if (!n) continue
+        for (let c = 0; c < 3; c++) col[k * 3 + c] = acc[c] / n
+        next[k] = 1
+      }
+    have = next
+  }
+  const sum = col
+  const seenCells: number[] = []
+  for (let k = 0; k < w * h; k++) if (have[k]) seenCells.push(k)
+  if (seenCells.length < 50) return []
+  const med = [0, 1, 2].map((c) => {
+    const a = seenCells.map((k) => sum[k * 3 + c]).sort((x, y) => x - y)
+    return a[a.length >> 1]
+  })
+  const dist = new Float32Array(w * h)
+  for (const k of seenCells) {
+    let d = 0
+    for (let c = 0; c < 3; c++) d += (sum[k * 3 + c] - med[c]) ** 2
+    dist[k] = Math.sqrt(d)
+  }
+  const ds = seenCells.map((k) => dist[k]).sort((x, y) => x - y)
+  const cut = Math.max(0.12, 3 * ds[Math.floor(ds.length * 0.6)])
+  let mask = new Uint8Array(w * h)
+  for (const k of seenCells) if (dist[k] > cut) mask[k] = 1
+  // Open the mask (erode, then grow back) so thin lines (a sofa's foot, a skirting) drop out.
+  const step = (src: Uint8Array, erode: boolean) => {
+    const out = new Uint8Array(w * h)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        let all = true
+        let any = false
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx
+            const yy = y + dy
+            const v = xx >= 0 && yy >= 0 && xx < w && yy < h ? src[yy * w + xx] : 0
+            if (v) any = true
+            else all = false
+          }
+        out[y * w + x] = erode ? (all ? 1 : 0) : any ? 1 : 0
+      }
+    return out
+  }
+  const opened = step(step(mask, true), false)
+  for (let k = 0; k < w * h; k++) opened[k] &= mask[k]
+  mask = opened
+  const out: RugPatch[] = []
+  const done = new Uint8Array(w * h)
+  for (let k0 = 0; k0 < w * h; k0++) {
+    if (!mask[k0] || done[k0]) continue
+    const cells: number[] = []
+    const stack = [k0]
+    done[k0] = 1
+    while (stack.length) {
+      const k = stack.pop()!
+      cells.push(k)
+      const x = k % w
+      const y = (k - x) / w
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const xx = x + dx
+        const yy = y + dy
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue
+        const kk = yy * w + xx
+        if (mask[kk] && !done[kk]) {
+          done[kk] = 1
+          stack.push(kk)
+        }
+      }
+    }
+    fillHoles(cells, w)
+    const area = cells.length * cell * cell
+    if (area < 0.5 || cells.length > 0.6 * seenCells.length) continue
+    // Shape from second moments: a filled rectangle has sides sqrt(12 λ) along its axes.
+    let mx = 0
+    let my = 0
+    for (const k of cells) {
+      mx += k % w
+      my += Math.floor(k / w)
+    }
+    mx /= cells.length
+    my /= cells.length
+    let sxx = 0
+    let syy = 0
+    let sxy = 0
+    for (const k of cells) {
+      const dx = (k % w) - mx
+      const dy = Math.floor(k / w) - my
+      sxx += dx * dx
+      syy += dy * dy
+      sxy += dx * dy
+    }
+    sxx = sxx / cells.length + 1 / 12
+    syy = syy / cells.length + 1 / 12
+    sxy /= cells.length
+    const tr = sxx + syy
+    const det = sxx * syy - sxy * sxy
+    const disc = Math.sqrt(Math.max(0, (tr * tr) / 4 - det))
+    const l1 = tr / 2 + disc
+    const l2 = Math.max(1e-6, tr / 2 - disc)
+    const sideA = Math.sqrt(12 * l1)
+    const sideB = Math.sqrt(12 * l2)
+    if (sideB * cell < 0.5 || cells.length / (sideA * sideB) < 0.7) continue
+    const color = [0, 1, 2].map((c) => {
+      const a = cells.map((k) => sum[k * 3 + c]).sort((x, y) => x - y)
+      return a[a.length >> 1]
+    }) as [number, number, number]
+    // The patch's ragged rim: nearby cells closer to the rug's colour than to the boards (or with no
+    // top layer of their own), so painting the rug out leaves no pale scraps at its corners.
+    const rim: number[] = []
+    const inPatch = new Set(cells)
+    for (const k of grow(cells, w, h, 6)) {
+      if (inPatch.has(k)) continue
+      if (!have[k]) {
+        if (seen[k]) rim.push(k)
+        continue
+      }
+      let dr = 0
+      let df = 0
+      for (let c = 0; c < 3; c++) {
+        dr += (sum[k * 3 + c] - color[c]) ** 2
+        df += (sum[k * 3 + c] - med[c]) ** 2
+      }
+      if (dr < df) rim.push(k)
+    }
+    out.push({ cells, color, rim })
+  }
+  return out
 }
 
 /** How far below the local top a floor point may sit and still count as the top layer (m). */
@@ -239,8 +519,16 @@ function topLayer(img: { w: number; h: number; count: Uint32Array; start: Uint32
   return { sum, count: cnt, fallback, seen: count, w, h }
 }
 
-/** Average the cells, fill small holes (a seen cell the fill misses takes its fallback colour) from their neighbors, then soften with a blur. */
-function finishFloor(img: { sum: Float32Array; count: Uint32Array; w: number; h: number; fallback?: Float32Array; seen?: Uint32Array }, x0: number, y0: number, cell: number): FloorImage {
+/** Points in a cell at which it keeps its own colour through the softening blur. */
+const DENSE = 6
+
+/**
+ * Average the cells, fill small holes (a seen cell the fill misses takes its fallback colour) from
+ * their neighbors, fill the rest of `inside` (the rooms) out from the floor around it, then soften
+ * with a blur that only sparse cells get in full: where the scan is dense, each cell keeps its own
+ * colour, so the boards stay crisp.
+ */
+function finishFloor(img: { sum: Float32Array; count: Uint32Array; w: number; h: number; fallback?: Float32Array; seen?: Uint32Array; inside?: Uint8Array }, x0: number, y0: number, cell: number): FloorImage {
   const { w, h } = img
   let rgb = new Float32Array(w * h * 3)
   let have = new Uint8Array(w * h)
@@ -292,7 +580,43 @@ function finishFloor(img: { sum: Float32Array; count: Uint32Array; w: number; h:
         for (let c = 0; c < 3; c++) rgb[k * 3 + c] = img.fallback[k * 3 + c]
         have[k] = 1
       }
-  // One 3x3 box blur over the seen cells.
+  // Rooms: keep growing until every cell inside is coloured (the edge along the walls, under a bookcase).
+  const inside = img.inside
+  if (inside) {
+    for (let pass = 0; pass < 400; pass++) {
+      const add: number[] = []
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          const k = y * w + x
+          if (have[k] || !inside[k]) continue
+          let r = 0
+          let g = 0
+          let b = 0
+          let n = 0
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const xx = x + dx
+            const yy = y + dy
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue
+            const kk = yy * w + xx
+            if (!have[kk]) continue
+            r += rgb[kk * 3]
+            g += rgb[kk * 3 + 1]
+            b += rgb[kk * 3 + 2]
+            n++
+          }
+          if (n) add.push(k, r / n, g / n, b / n)
+        }
+      if (!add.length) break
+      for (let i = 0; i < add.length; i += 4) {
+        const k = add[i]
+        rgb[k * 3] = add[i + 1]
+        rgb[k * 3 + 1] = add[i + 2]
+        rgb[k * 3 + 2] = add[i + 3]
+        have[k] = 1
+      }
+    }
+  }
+  // One 3x3 box blur over the seen cells, mixed with the cell's own colour where it had plenty of points.
   const out = new Uint8ClampedArray(w * h * 4)
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
@@ -314,9 +638,10 @@ function finishFloor(img: { sum: Float32Array; count: Uint32Array; w: number; h:
           b += rgb[kk * 3 + 2]
           n++
         }
-      out[k * 4] = (r / n) * 255
-      out[k * 4 + 1] = (g / n) * 255
-      out[k * 4 + 2] = (b / n) * 255
+      const own = img.seen && img.count[k] ? 0.8 * Math.min(1, img.seen[k] / DENSE) : 0
+      out[k * 4] = (own * rgb[k * 3] + (1 - own) * (r / n)) * 255
+      out[k * 4 + 1] = (own * rgb[k * 3 + 1] + (1 - own) * (g / n)) * 255
+      out[k * 4 + 2] = (own * rgb[k * 3 + 2] + (1 - own) * (b / n)) * 255
       out[k * 4 + 3] = 255
     }
   return { x0, y0, cell, width: w, height: h, rgba: out }

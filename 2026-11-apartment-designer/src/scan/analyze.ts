@@ -1,9 +1,10 @@
 import { add, closestPointOnSegment, dot, norm, offsetPolygon, pointInPolygon, polygonArea, rot, scale, signedArea, sub, v } from '../model/geometry'
 import type { Vec2 } from '../model/types'
-import { backSide, classifyBox } from './classify'
+import { backSide, classifyBox, displayName } from './classify'
 import { levelFloor, quantile, rng, rotateXZ, sample, toCloud, type Cloud } from './cloud'
 import type { DetectedObject, DetectedOpening, DetectedRoom, SceneEstimate } from './estimate'
 import { Grid, traceOutline } from './grid'
+import { findRugPatches, floorTop } from './palette'
 import type { ScanData } from './types'
 
 // On-device scan analysis: level the scan, square it up with the walls, find the room's
@@ -43,6 +44,9 @@ export function analyzeScan(scan: ScanData, opts: AnalyzeOptions = {}): AnalyzeR
   const room = findRoom(cloud, px, py, ceiling.height)
   if (!room) notes.push("Couldn't find the room's walls. You can still add the furniture and draw the room by hand.")
   const objects = findObjects(cloud, px, py, room?.polygon ?? null, ceiling.height)
+  // Rugs lie too flat for the furniture boxes; they're found by their colour on the floor.
+  const rugs = findRugs(cloud, px, py, room?.polygon ?? null)
+  objects.push(...rugs.map((r, i) => ({ ...r, id: `det-rug-${i + 1}` })))
 
   return {
     cloud,
@@ -632,6 +636,65 @@ export function findObjects(cloud: Cloud, px: Float32Array, py: Float32Array, po
   }
   // Biggest first: that's roughly the order people check them in.
   return objects.sort((a, b) => b.width * b.depth - a.width * a.depth)
+}
+
+/**
+ * Rugs on the floor: patches of the floor's top layer whose colour stands out from the boards and
+ * that are roughly rectangular (see findRugPatches). Each becomes a rug the size of the patch, so
+ * the rug in the scan is a real piece you can move, not paint on the floor.
+ */
+export function findRugs(cloud: Cloud, px: Float32Array, py: Float32Array, poly: Vec2[] | null): DetectedObject[] {
+  if (!cloud.rgb) return []
+  // Keep clear of the walls: the foot of a wall is seen at floor height too.
+  const inset = poly ? offsetPolygon(poly, -0.12) : null
+  const fp: number[] = []
+  for (let i = 0; i < cloud.n; i++) {
+    const hh = cloud.h[i]
+    if (hh < -0.04 || hh > 0.04) continue
+    if (inset && !pointInPolygon(v(px[i], py[i]), inset)) continue
+    fp.push(px[i], py[i], hh, cloud.rgb[i * 3], cloud.rgb[i * 3 + 1], cloud.rgb[i * 3 + 2])
+  }
+  if (fp.length < 600) return []
+  const top = floorTop(Float32Array.from(fp), CELL)
+  if (!top) return []
+  const out: DetectedObject[] = []
+  for (const patch of findRugPatches(top)) {
+    const pts = patch.cells.map((k) => v(top.x0 + ((k % top.w) + 0.5) * top.cell, top.y0 + (Math.floor(k / top.w) + 0.5) * top.cell))
+    const box = orientedBox(pts)
+    if (!box) continue
+    // A rug has no front: lay it with its long side as its width.
+    const long = box.size.x >= box.size.y
+    let rotation = (box.angle + (long ? 0 : Math.PI / 2)) % Math.PI
+    rotation = Math.round(((rotation + Math.PI) % Math.PI) * 1e4) / 1e4
+    const placed = { center: box.center, rotation, width: long ? box.size.x : box.size.y, depth: long ? box.size.y : box.size.x }
+    // The patch reads a little large (its edge cells mix rug and boards); trim a cell, then keep
+    // trimming while a corner pokes through a wall (a rug tucked into a corner).
+    placed.width -= CELL
+    placed.depth -= CELL
+    const room = poly ? offsetPolygon(poly, -0.02) : null
+    const corners = () => [v(-1, -1), v(1, -1), v(1, 1), v(-1, 1)].map((q) => add(placed.center, rot(v((q.x * placed.width) / 2, (q.y * placed.depth) / 2), rotation)))
+    for (let k = 0; room && k < 15 && corners().some((c) => !pointInPolygon(c, room)); k++) {
+      placed.width -= 0.02
+      placed.depth -= 0.02
+    }
+    out.push({
+      id: 'det-rug',
+      category: 'rug',
+      name: displayName('rug', placed.width, placed.depth),
+      confidence: 0.75,
+      alternatives: [],
+      x: round(placed.center.x),
+      y: round(placed.center.y),
+      rotation: placed.rotation,
+      width: round(placed.width),
+      depth: round(placed.depth),
+      height: 0.01,
+      color: toHex(...patch.color),
+      pointCount: patch.cells.length,
+      againstWall: false,
+    })
+  }
+  return out
 }
 
 const toHex = (r: number, g: number, b: number) =>

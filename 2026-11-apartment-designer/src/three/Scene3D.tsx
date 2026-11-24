@@ -255,6 +255,9 @@ function useScanPalette(style: StyleId): ScanPalette | null {
   const scans = useStore((s) => s.doc.scans)
   const rooms = useStore((s) => s.doc.rooms)
   const entries = useScanRuntime((s) => s.entries)
+  // A rug the scan import turned into a piece: take it out of the floor picture, so moving the
+  // rug doesn't leave a painted copy behind.
+  const rugPieces = useStore((s) => s.doc.items.some((i) => i.category === 'rug' && i.source === 'scan'))
   const wants = style === 'toon' || style === 'real'
   return useMemo(() => {
     if (!wants) return null
@@ -263,8 +266,8 @@ function useScanPalette(style: StyleId): ScanPalette | null {
       return loaded?.points.colors ? [toScanData(r, loaded.points, 400_000).points] : []
     })
     if (!pts.length) return null
-    return scanPalette(pts, rooms)
-  }, [wants, scans, rooms, entries])
+    return scanPalette(pts, rooms, { eraseRugs: rugPieces })
+  }, [wants, scans, rooms, entries, rugPieces])
 }
 
 /** Height of the first visible surface along a pointer ray, other than the object handling it. */
