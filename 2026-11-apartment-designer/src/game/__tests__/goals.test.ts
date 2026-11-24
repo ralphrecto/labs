@@ -3,7 +3,7 @@ import { analyze } from '../../analysis'
 import { catalogEntry, itemFromCatalog } from '../../model/catalog'
 import { emptyDoc, rectRoom, sampleDoc } from '../../model/sample'
 import type { Doc, Item, Placement, TwistId } from '../../model/types'
-import { ANCHORS, applicableTwists, DRAG_PERK, finishedTwists, inOpenMiddle, openFloorCentre, pickTwists, remixedLayout, sameArrangement, talkCornerSpot, twistMove } from '../goals'
+import { ANCHORS, applicableTwists, DRAG_PERK, finishedTwists, goalMove, inOpenMiddle, openFloorCentre, pickTwists, remixedLayout, sameArrangement, talkCornerSpot, twistMove } from '../goals'
 import { pickSpot } from '../BuyDrawer'
 import { defaultDrop } from '../../store'
 import { orientedRect, v } from '../../model/geometry'
@@ -969,6 +969,15 @@ describe('remix twists lead the day (round 10)', () => {
         moves.push({ before: s.stars, after: score(d).stars })
         continue
       }
+      // A goal fixed by a move (round 17: "Make room for a desk" too): the chip's own move, the
+      // pieces moved along with it (a table's chairs) included.
+      if (next && !next.tab && next.near) {
+        const m = goalMove(d, layoutOf(d), next.id)
+        if (!m) return -1
+        for (const q of [m, ...(m.also ?? [])]) Object.assign(layoutOf(d).placements.find((p) => p.id === q.id)!, { x: q.x, y: q.y, rotation: q.rotation })
+        moves.push({ before: s.stars, after: score(d).stars })
+        continue
+      }
       if (!next?.item || !next.tab) return -1
       const item = itemFromCatalog(catalogEntry(next.item), `${tag}n${i}`)
       const at = pickSpot(d, item, { category: next.item, roomId: next.placeIn, near: next.near, goalId: next.id })
@@ -1001,21 +1010,22 @@ describe('remix twists lead the day (round 10)', () => {
     expect(moves.every((m) => m.after >= m.before), JSON.stringify(moves)).toBe(true)
   }, 120000)
 
-  it('a fresh-start remix of the sample finishes its twist by the Next chip alone (round 16)', () => {
+  it('a fresh-start remix of the sample reaches Dream home by the Next chip alone (rounds 16-17)', () => {
     const d = sampleDoc()
     expect(play(d, 'fs', [])).toBeGreaterThan(0)
     const l = remixOf(d, 'fresh-spots')
     const log: string[] = []
     const moves: { before: number; after: number }[] = []
-    chipOnly(d, 'fsr', log, moves, 12)
+    const dream = chipOnly(d, 'fsr', log, moves)
+    // Round 17: not stuck at Designer home (a desk with no room): Dream home, by Next alone.
+    expect(dream, log.join('\n')).toBeGreaterThan(0)
+    expect(score(d).level.index).toBe(LEVELS.length - 1)
     const twist = score(d).goals.find((g) => g.id === 'twist:fresh-spots')!
     expect(twist.done, log.join('\n')).toBe(true)
     // One tap per big piece, each to a clean spot 80 cm+ from where it stood, none costing a star.
-    expect(moves.length).toBe(l.remix!.anchors)
+    expect(moves.length).toBeGreaterThanOrEqual(l.remix!.anchors)
     expect(moves.every((m) => m.after >= m.before), JSON.stringify(moves)).toBe(true)
     expect(score(d).errors).toBe(0)
-    // And the remix keeps climbing past where it started.
-    expect(score(d).level.index, log.join('\n')).toBeGreaterThanOrEqual(LEVELS.indexOf('Cozy'))
   }, 120000)
 
   it('an open-floor remix short of pieces asks for one at the room’s edges, never its middle (round 16)', () => {
