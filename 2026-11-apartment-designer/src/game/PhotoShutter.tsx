@@ -4,7 +4,7 @@ import { renderForCapture } from '../three/capture'
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { activeLayout, useStore } from '../store'
-import { UNLOCK_BUTTONS, useGame } from './gameStore'
+import { useGame } from './gameStore'
 import { useHomeScore } from './Goals'
 import { LEVELS } from './goals'
 import { reduceMotion } from '../motion'
@@ -80,11 +80,6 @@ export function composePolaroid(shot: HTMLCanvasElement, name: string, level: st
   g.fillText(starTxt, W - pad - tw - 22, y0 + 114)
   return out
 }
-
-// Reaching Cozy unlocks the Evening toggle: it glows "New" (round 16's fresh unlocks) until first used.
-// Registered here, where the toggle lives; idempotent. (A `Cozy: ['evening']` entry in UNLOCK_BUTTONS
-// itself would make this line unnecessary.)
-UNLOCK_BUTTONS.Cozy ??= ['evening']
 
 const fileName = (name: string) => `${name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'home'}.png`
 

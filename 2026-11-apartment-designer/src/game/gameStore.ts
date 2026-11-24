@@ -133,7 +133,7 @@ const MOOD_SKIPS_KEY = 'homebody:mood-skips'
 const UNLOCKS_SEEN_KEY = 'homebody:unlocks-seen'
 const FRESH_UNLOCKS_KEY = 'homebody:fresh-unlocks'
 /** The buttons each level unlocks, which glow "new" the first time. */
-export const UNLOCK_BUTTONS: Record<string, string[]> = { 'Moving in': ['style'], 'Designer home': ['remix'] }
+export const UNLOCK_BUTTONS: Record<string, string[]> = { 'Moving in': ['style'], Cozy: ['evening'], 'Designer home': ['remix'] }
 function readList(key: string): string[] {
   try {
     const v = JSON.parse(localStorage.getItem(key) ?? '[]')
