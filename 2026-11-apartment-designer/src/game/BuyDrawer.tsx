@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEven
 import { CATALOG, itemFromCatalog, type CatalogEntry } from '../model/catalog'
 import { checkLayout } from '../model/checks'
 import { add, centroid, lerp, orientedRect, pointInPolygon, polygonInsideRoom, rot, sub, v, wallSegments } from '../model/geometry'
-import { BEDROOM, DINING, findDrop, HOSTED, nookTarget, OFFICE, type DropResult } from '../model/placement'
+import { BEDROOM, DINING, findDrop, findDrops, HOSTED, nookTarget, OFFICE, UTILITY_ROOM, type DropResult } from '../model/placement'
 import { isWallDecor } from '../model/wallDecor'
 import { STARTER_CATALOG } from '../model/starterCatalog'
 import { uid } from '../model/sample'
@@ -11,7 +11,7 @@ import type { Doc, Item, Room, Units, Vec2 } from '../model/types'
 import { formatLength } from '../model/units'
 import { activeLayout, defaultDrop as storeDrop, useStore } from '../store'
 import { analyze } from '../analysis'
-import { inOpenMiddle, openFloorCentre, scoreHome, starMove, talkCornerSpot, twistMove } from './goals'
+import { DESK_ROOMS, inOpenMiddle, openFloorCentre, scoreHome, starMove, talkCornerSpot, twistMove } from './goals'
 import { ImportDialog, Photo } from '../components/AddDialogs'
 import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
@@ -239,7 +239,43 @@ function pickSpotOnce(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; f
   const bedside = bedsidePick(doc, item, hint)
   if (bedside) return bedside
   const r = pickSpotIn(doc, item, hint)
-  return r.fail ? r : keepStars(doc, item, hint, clearOfOpenMiddle(doc, item, hint, r))
+  return r.fail ? r : withChairRoom(doc, item, hint, keepStars(doc, item, hint, clearOfOpenMiddle(doc, item, hint, r)))
+}
+
+/**
+ * A desk the chip places leaves room for its chair (round 17): when the first spot boxes the chair
+ * in, the drop search's spots round each room (a study or bedroom first) are tried for one that doesn't.
+ */
+function withChairRoom(doc: Doc, item: Item, hint: Hint | null, r: { spot?: Spot }): { spot?: Spot } {
+  if (item.category !== 'desk' || !hint?.goalId || hint.category !== item.category) return r
+  const layout = activeLayout(doc)
+  let chair: Item
+  try {
+    chair = itemFromCatalog(CATALOG.find((c) => c.category === 'office-chair')!, '__chair-room')
+  } catch {
+    return r
+  }
+  const chairFits = (q: Spot) => {
+    const l2 = { ...layout, placements: [...layout.placements, { id: '__desk', itemId: item.id, x: q.x, y: q.y, rotation: q.rotation }] }
+    return findDrop({ ...doc, items: [...doc.items, item] }, l2, chair, { nextTo: '__desk' }).ok
+  }
+  const first = r.spot ?? (() => {
+    const d = defaultDrop(doc, item)
+    return d.ok ? d.spot : undefined
+  })()
+  if (!first || chairFits(first)) return r
+  const homes = (DESK_ROOMS[item.category] ?? []).flatMap((re) => doc.rooms.filter((x) => re.test(x.name) && !UTILITY_ROOM.test(x.name)))
+  const rooms = [...homes, ...doc.rooms.filter((x) => !homes.includes(x) && !UTILITY_ROOM.test(x.name))]
+  for (const room of rooms) {
+    const c = centroid(room.polygon)
+    const targets = [...room.polygon.map((q) => lerp(q, c, 0.25)), ...wallSegments(room).map(([a, b]) => lerp(lerp(a, b, 0.5), c, 0.2))]
+    for (const d of findDrops({ ...doc, rooms: [room] }, layout, item, targets)) {
+      if (!d.ok) continue
+      const q = { x: d.spot.x, y: d.spot.y, rotation: d.spot.rotation, roomName: room.name }
+      if (!trialIssues(doc, item, q) && chairFits(q)) return { spot: q }
+    }
+  }
+  return r
 }
 
 /** The home's stars with `item` placed at `spot` (and how many stars it has now). */
@@ -362,9 +398,12 @@ function pickSpotIn(doc: Doc, item: Item, hint: Hint | null): { spot?: Spot; fai
   const room = hint?.category === item.category && hint.roomId ? doc.rooms.find((r) => r.id === hint.roomId) : undefined
   const there = room ? dropIn(doc, item, room) : null
   if (there?.ok) return { spot: { ...there.spot, roomName: room!.name } }
-  // No room named and no piece to stand by: a piece with a room of its own goes there when it fits cleanly.
-  const own = !room && !hint?.near && HOME_ROOM[item.category] ? doc.rooms.find((r) => HOME_ROOM[item.category].test(r.name)) : undefined
-  if (own) {
+  // No room named and no piece to stand by: a piece with a room of its own goes there when it fits cleanly
+  // (round 17: a desk in a study, else a bedroom, before the living room).
+  const homes = !room && !hint?.near ? [HOME_ROOM[item.category], ...(DESK_ROOMS[item.category] ?? [])].filter(Boolean) : []
+  for (const re of homes) {
+    const own = doc.rooms.find((r) => re.test(r.name) && !UTILITY_ROOM.test(r.name))
+    if (!own) continue
     const d = dropIn(doc, item, own)
     if (d?.ok && d.spot.roomId === own.id) return { spot: { ...d.spot, roomName: own.name } }
   }

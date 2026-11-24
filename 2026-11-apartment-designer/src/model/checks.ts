@@ -62,6 +62,33 @@ export function doorSwings(rooms: Room[]) {
   return out
 }
 
+/** How far the landing in front of a door reaches into its room, and past the wall into the next (m). */
+export const DOOR_LANDING = 0.5
+
+/**
+ * The floor a doorway needs to walk through, a box each side of the opening (round 17: the drop
+ * search kept it clear, now the checks and the chip's moves do too). Inward: DOOR_LANDING into the
+ * door's room; outward: the wall plus DOOR_LANDING into the room beyond.
+ */
+export function doorLandings(rooms: Room[]) {
+  const out: { room: Room; openingId: string; poly: Vec2[] }[] = []
+  for (const room of rooms)
+    for (const o of room.openings) {
+      if (o.kind !== 'door') continue
+      const [a, b] = openingEndpoints(room, o)
+      const n = wallInwardNormal(room, o.wall)
+      const inD = DOOR_LANDING
+      const outD = room.wallThickness + DOOR_LANDING
+      out.push({ room, openingId: o.id, poly: [add(a, scale(n, inD)), add(b, scale(n, inD)), add(b, scale(n, -outD)), add(a, scale(n, -outD))] })
+    }
+  return out
+}
+
+/** Every door's keep-out floor: its swing and the landing either side (the drop search's hard rule). */
+export function doorKeepOut(rooms: Room[]): Vec2[][] {
+  return [...doorSwings(rooms).map((s) => s.poly), ...doorLandings(rooms).map((l) => l.poly)]
+}
+
 /** Pull-out space (m) kept free along the long sides of a dining table that seats four or more, measured from the table edge. */
 export const TABLE_PULL_OUT = 0.75
 /** A dining chair counts as at its table when this close (edge to edge, m). */
@@ -201,6 +228,20 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
           message: `${x.item.name} blocks the ${s.room.name} door swing`,
           placementIds: [x.p.id],
           area: s.poly,
+        })
+    }
+  }
+  // ...and the doorway itself: nothing solid stands on the landing either side of a door.
+  for (const l of doorLandings(doc.rooms)) {
+    for (const x of solid) {
+      if (convexOverlap(l.poly, x.body, 0.005) && !issues.some((i) => i.id === `door:${l.openingId}:${x.p.id}`))
+        issues.push({
+          id: `door:${l.openingId}:${x.p.id}`,
+          severity: 'warning',
+          kind: 'door',
+          message: `${x.item.name} stands in the ${l.room.name} doorway`,
+          placementIds: [x.p.id],
+          area: l.poly,
         })
     }
   }

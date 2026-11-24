@@ -765,7 +765,11 @@ function showGoal(g: Goal) {
       }
       const p = activeLayout(s.doc).placements.find((x) => x.id === m.id)
       const name = s.doc.items.find((i) => i.id === p?.itemId)?.name.toLowerCase() ?? 'piece'
+      // Pieces carried along (round 17: the TV a sofa faces, its coffee table and rug): one step to undo.
+      if (m.also?.length) s.beginGesture()
       s.updatePlacement(m.id, { x: m.x, y: m.y, rotation: m.rotation })
+      for (const q of m.also ?? []) s.updatePlacement(q.id, { x: q.x, y: q.y, rotation: q.rotation })
+      if (m.also?.length) s.endGesture()
       s.select({ kind: 'placement', id: m.id })
       const twist = g.id.slice(6) as keyof typeof TWISTS
       s.notify(m.done ? `${TWIST_EMOJI[twist] ?? '↻'} Twist done! Moved the ${name}.` : `Moved the ${name}. ${TWISTS[twist]?.name ?? 'Twist'}: a step closer.`)

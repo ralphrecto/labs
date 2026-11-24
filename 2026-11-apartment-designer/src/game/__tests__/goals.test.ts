@@ -951,7 +951,7 @@ describe('remix twists lead the day (round 10)', () => {
    * move (twistMove), a piece goes where the drawer puts it (pickSpot). Logs each step; returns the
    * step Dream home was reached at, or -1. `moves` collects the stars before and after each twist move.
    */
-  function chipOnly(d: Doc, tag: string, log: string[], moves: { before: number; after: number }[] = [], max = 40) {
+  function chipOnly(d: Doc, tag: string, log: string[], moves: { before: number; after: number; pieces?: number }[] = [], max = 40) {
     const fits = (c: string, near?: string) => findDrop(d, layoutOf(d), itemFromCatalog(catalogEntry(c), 'probe'), { nextTo: near }).ok
     for (let i = 0; i < max; i++) {
       const s = score(d)
@@ -965,8 +965,9 @@ describe('remix twists lead the day (round 10)', () => {
       if (next?.id.startsWith('twist:') && !next.tab) {
         const m = twistMove(d, layoutOf(d))
         if (!m) return -1
-        Object.assign(layoutOf(d).placements.find((p) => p.id === m.id)!, { x: m.x, y: m.y, rotation: m.rotation })
-        moves.push({ before: s.stars, after: score(d).stars })
+        // (Round 17: a sofa carries its TV, coffee table and rug along.)
+        for (const q of [m, ...(m.also ?? [])]) Object.assign(layoutOf(d).placements.find((p) => p.id === q.id)!, { x: q.x, y: q.y, rotation: q.rotation })
+        moves.push({ before: s.stars, after: score(d).stars, pieces: 1 + (m.also?.length ?? 0) })
         continue
       }
       // A goal fixed by a move (round 17: "Make room for a desk" too): the chip's own move, the
@@ -1001,7 +1002,7 @@ describe('remix twists lead the day (round 10)', () => {
     expect(play(d, 'of2', [])).toBeGreaterThan(0)
     remixOf(d, 'open-floor')
     const log: string[] = []
-    const moves: { before: number; after: number }[] = []
+    const moves: { before: number; after: number; pieces?: number }[] = []
     const dream = chipOnly(d, 'ofr', log, moves)
     expect(dream, log.join('\n')).toBeGreaterThan(0)
     expect(score(d).goals.find((g) => g.id === 'twist:open-floor')!.done).toBe(true)
@@ -1015,15 +1016,16 @@ describe('remix twists lead the day (round 10)', () => {
     expect(play(d, 'fs', [])).toBeGreaterThan(0)
     const l = remixOf(d, 'fresh-spots')
     const log: string[] = []
-    const moves: { before: number; after: number }[] = []
+    const moves: { before: number; after: number; pieces?: number }[] = []
     const dream = chipOnly(d, 'fsr', log, moves)
     // Round 17: not stuck at Designer home (a desk with no room): Dream home, by Next alone.
     expect(dream, log.join('\n')).toBeGreaterThan(0)
     expect(score(d).level.index).toBe(LEVELS.length - 1)
     const twist = score(d).goals.find((g) => g.id === 'twist:fresh-spots')!
     expect(twist.done, log.join('\n')).toBe(true)
-    // One tap per big piece, each to a clean spot 80 cm+ from where it stood, none costing a star.
-    expect(moves.length).toBeGreaterThanOrEqual(l.remix!.anchors)
+    // Every big piece moved by the chip (round 17: the sofa carries its TV along), each to a clean
+    // spot 80 cm+ from where it stood, none costing a star.
+    expect(moves.reduce((n, m) => n + (m.pieces ?? 1), 0)).toBeGreaterThanOrEqual(l.remix!.anchors)
     expect(moves.every((m) => m.after >= m.before), JSON.stringify(moves)).toBe(true)
     expect(score(d).errors).toBe(0)
   }, 120000)

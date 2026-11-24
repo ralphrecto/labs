@@ -13,7 +13,6 @@ import {
   clearanceZones,
   convexOverlap,
   dist,
-  doorSwing,
   dot,
   norm,
   openingEndpoints,
@@ -32,7 +31,7 @@ import {
 import type { Doc, Item, Layout, Placement, Room, Vec2 } from './types'
 import { findWallDrop, isWallDecor } from './wallDecor'
 import { catalogEntry, itemFromCatalog } from './catalog'
-import { chairBackNeed, CHAIR_REACH, DRAWER_PIECES, MIN_DRAWER_FRONT, polygonGap, sideCompanion, TABLE_PULL_OUT, walkingPaths } from './checks'
+import { chairBackNeed, CHAIR_REACH, doorKeepOut, DRAWER_PIECES, MIN_DRAWER_FRONT, polygonGap, sideCompanion, TABLE_PULL_OUT, walkingPaths } from './checks'
 
 export { chairBackNeed, MIN_DRAWER_FRONT, polygonGap, TABLE_PULL_OUT }
 
@@ -220,18 +219,7 @@ function floorDrops(doc: Doc, layout: Layout, item: DropItem, opts: { walkCheck?
     .flatMap((o) => tablePullOuts(o.item, o.p).map((poly) => ({ poly, room: o.room?.id })))
 
   // Door swings and a landing either side of every door stay clear.
-  const keepOut: Vec2[][] = []
-  for (const room of rooms)
-    for (const o of room.openings) {
-      if (o.kind !== 'door') continue
-      const swing = doorSwing(room, o)
-      if (swing) keepOut.push(swing)
-      const [a, b] = openingEndpoints(room, o)
-      const n = wallInwardNormal(room, o.wall)
-      const inD = 0.5
-      const outD = room.wallThickness + 0.5
-      keepOut.push([add(a, scale(n, inD)), add(b, scale(n, inD)), add(b, scale(n, -outD)), add(a, scale(n, -outD))])
-    }
+  const keepOut: Vec2[][] = doorKeepOut(rooms)
   const doorMids = rooms.flatMap((r) => r.openings.filter((o) => o.kind === 'door').map((o) => scale(add(...openingEndpoints(r, o)), 0.5)))
   const windows = rooms.flatMap((r) =>
     r.openings.filter((o) => o.kind === 'window').map((o) => ({ room: r, wall: o.wall, ends: openingEndpoints(r, o) })),
@@ -385,6 +373,8 @@ function floorDrops(doc: Doc, layout: Layout, item: DropItem, opts: { walkCheck?
         const g = polygonGap(body, o.body)
         if (g < OFFICE_CHAIR_ROLL) s -= (OFFICE_CHAIR_ROLL - g) * 20
       }
+    // ...and rolls on bare floor, off the living room's rug (round 17).
+    if (cat === 'office-chair') for (const o of rugs) if (convexOverlap(body, o.body, 0.01)) s -= 20
     // Small decor stays out of the way: off any table's chair pull-out floor and other pieces'
     // clearances, against a wall or in a corner rather than out in the middle of the floor.
     if (DECOR.has(cat)) {
@@ -529,7 +519,29 @@ function floorDrops(doc: Doc, layout: Layout, item: DropItem, opts: { walkCheck?
       consider(sub(v(t.p.x, t.p.y), scale(fwd, ext + SOFA_TABLE_GAP + hd)), rotation, (k % 2 ? 16 : 20))
     }
   if (cat === 'rug')
-    for (const s of ofCat('sofa')) consider(local(s, v(0, s.item.depth / 2 - 0.25 + hd)), s.p.rotation, 20)
+    // Under the front of the sofa and its coffee table (round 17: slid along the sofa, or turned,
+    // when the room's wall is close at one end, so the seating stays grouped on it).
+    for (const s of ofCat('sofa')) {
+      const table = ofCat('coffee-table', 'ottoman').find((t) => {
+        const l = rot(sub(v(t.p.x, t.p.y), v(s.p.x, s.p.y)), -s.p.rotation)
+        return l.y > s.item.depth / 2 && Math.abs(l.x) < s.item.width / 2 && polygonGap(s.body, t.body) < 1
+      })
+      const tl = table ? rot(sub(v(table.p.x, table.p.y), v(s.p.x, s.p.y)), -s.p.rotation) : undefined
+      for (const [ext, turn, bonus] of [
+        [hd, 0, 20],
+        [hw, Math.PI / 2, 14],
+      ] as const) {
+        const ys = [s.item.depth / 2 - 0.25 + ext]
+        // Centred between the sofa's front and the table's far edge, when that still reaches under the sofa.
+        if (tl && table) {
+          const mid = (s.item.depth / 2 + tl.y + table.item.depth / 2) / 2
+          if (mid - ext < s.item.depth / 2 - 0.1) ys.push(mid)
+        }
+        for (const y of ys)
+          for (const u of [0, 0.2, -0.2, 0.4, -0.4, 0.6, -0.6, 0.8, -0.8, 1.0, -1.0, 1.2, -1.2])
+            consider(local(s, v(u, y)), s.p.rotation + turn, bonus - Math.abs(u) * 3 + (y === ys[0] ? 0 : 1))
+      }
+    }
   if (cat === 'floor-lamp' || cat === 'side-table') {
     // Seats without a lamp or side table yet come first (the armchair's reading corner before a second lamp by the sofa).
     const lit = (s: Other) => others.some((o) => o.id !== s.id && (LAMPS.has(o.item.category) || ['side-table', 'bookshelf'].includes(o.item.category)) && polygonGap(s.body, o.body) <= 0.5)

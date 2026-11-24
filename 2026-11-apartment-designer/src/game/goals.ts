@@ -1,7 +1,7 @@
 // Home score: interior-design rules of thumb, checked against the real plan geometry,
 // turned into goals, stars, a level and a "vibe" number for the game HUD. Pure logic, no React.
 import { analyze, type Analysis } from '../analysis'
-import { COMFORTABLE_WALKWAY, MIN_WALKWAY, placedItems, walkingPaths, type PathReport } from '../model/checks'
+import { COMFORTABLE_WALKWAY, doorKeepOut, MIN_WALKWAY, placedItems, walkingPaths, type PathReport } from '../model/checks'
 import { BEDROOM, BEDROOM_ONLY, DINING, LIVING, NEXT_TO_REACH, nookTarget, OFFICE, polygonGap, UTILITY_ROOM, VIEW_OK } from '../model/placement'
 import { add as add2, closestPointOnSegment, convexOverlap, orientedRect, dist, dot, lerp, norm, openingEndpoints, pointInPolygon, polygonArea, polygonInsideRoom, rot, scale, sub, v, wallInwardNormal, wallSegments } from '../model/geometry'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
@@ -1625,6 +1625,47 @@ export interface ChipMove {
   also?: { id: string; x: number; y: number; rotation: number }[]
 }
 type Spot = { x: number; y: number; rotation: number }
+type BestMoveOpts = {
+  group?: string[]
+  verify?: (after: Layout) => boolean
+  noGrid?: boolean
+  /** More pieces carried with it, turned and moved as one (a TV with the sofa that faces it). */
+  carry?: string[]
+  /** A soft liking for some spots, ranked just after "no star lost" (Fresh start: a new wall). */
+  prefer?: (q: Spot) => number
+  /** Seeds the draw between equally good spots (the remix's id). */
+  seed?: number
+  /** Spots to try first in its own room. */
+  extra?: Spot[]
+  /** A last say on each spot (Fresh start: a sofa or TV moved alone still squarely faces the other). */
+  spotOk?: (q: Spot) => boolean
+  /** Only spots in its own room (round 17: a dresser never crosses into the living room to make room). */
+  stayHome?: boolean
+}
+
+/**
+ * Pieces that go where a sofa goes (round 17): the coffee table or ottoman in front of it, and a
+ * rug under the sofa or that table, so the seating keeps hanging together when the chip moves it.
+ */
+function carriedWith(doc: Doc, layout: Layout, p: Placement): string[] {
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const it = items.get(p.itemId)
+  if (it?.category !== 'sofa') return []
+  const body = (x: Placement) => {
+    const i = items.get(x.itemId)!
+    return orientedRect(v(x.x, x.y), i.width / 2, i.depth / 2, x.rotation)
+  }
+  const sb = body(p)
+  const tables = layout.placements.filter((x) => {
+    const c = items.get(x.itemId)?.category
+    if ((c !== 'coffee-table' && c !== 'ottoman') || x.on) return false
+    const l = rot(sub(v(x.x, x.y), v(p.x, p.y)), -p.rotation)
+    return l.y > it.depth / 2 && Math.abs(l.x) < it.width / 2 + 0.3 && polygonGap(sb, body(x)) < 1
+  })
+  const seating = [sb, ...tables.map(body)]
+  const rugs = layout.placements.filter((x) => items.get(x.itemId)?.category === 'rug' && seating.some((b) => convexOverlap(b, body(x), 0.01)))
+  return [...tables, ...rugs].map((x) => x.id)
+}
 
 /**
  * The best clean spot to move placement `pid` to, for the Next chip (round 16). Candidates are a
@@ -1647,7 +1688,7 @@ function bestMove(
   accept: (after: HomeScore) => { ok: boolean; done: boolean },
   before: HomeScore,
   a0: Analysis,
-  opts: { group?: string[]; verify?: (after: Layout) => boolean; noGrid?: boolean } = {},
+  opts: BestMoveOpts = {},
 ): ChipMove | null {
   const p = layout.placements.find((x) => x.id === pid)
   const item = p && doc.items.find((i) => i.id === p.itemId)
@@ -1655,9 +1696,15 @@ function bestMove(
   const warnings = (a: Analysis) => a.issues.filter((i) => i.severity !== 'info').length
   const base = warnings(a0)
   const snagged = new Set(before.goals.filter((g) => g.snag).map((g) => g.id))
-  const moving = new Set([p.id, ...(opts.group ?? [])])
-  const others: Layout = { ...layout, placements: layout.placements.filter((x) => !moving.has(x.id) && !(x.on && moving.has(x.on))) }
+  const doneBefore = new Set(before.goals.filter((g) => g.done).map((g) => g.id))
   const items = new Map(doc.items.map((i) => [i.id, i]))
+  // Round 17: pieces carried with it, turned and moved as one (a sofa's coffee table and the rug
+  // under them, a TV it faces): never a dining table's chairs, which `group` moves without a turn.
+  const carryIds = opts.group?.length ? [] : [...new Set([...carriedWith(doc, layout, p), ...(opts.carry ?? [])])].filter((id) => id !== p.id)
+  const moving = new Set([p.id, ...(opts.group ?? []), ...carryIds])
+  const others: Layout = { ...layout, placements: layout.placements.filter((x) => !moving.has(x.id) && !(x.on && moving.has(x.on))) }
+  const keepOut = doorKeepOut(doc.rooms)
+  const clearOfDoors = (b: Vec2[]) => !keepOut.some((k) => convexOverlap(b, k, 0.005))
   const groupBodies = (opts.group ?? []).flatMap((id) => {
     const x = layout.placements.find((q) => q.id === id)
     const it = x && items.get(x.itemId)
@@ -1668,6 +1715,61 @@ function bestMove(
     return it && !it.floorLevel && !x.on && !isWallDecor(it.category) ? [orientedRect(v(x.x, x.y), it.width / 2, it.depth / 2, x.rotation)] : []
   })
   const bodyAt = (q: Spot) => orientedRect(v(q.x, q.y), item.width / 2, item.depth / 2, q.rotation)
+  const carried = carryIds.flatMap((id) => {
+    const x = layout.placements.find((q) => q.id === id)
+    const it = x && items.get(x.itemId)
+    return x && it ? [{ x, it }] : []
+  })
+  /** Where the carried pieces go with the piece at `q`: turned and moved with it (a rug that would cross a wall slides along the sofa, or stays). */
+  const carryAt = (q: Spot) => {
+    const turn = q.rotation - p.rotation
+    const out: { id: string; x: number; y: number; rotation: number }[] = []
+    for (const { x, it } of carried) {
+      const c = add2(v(q.x, q.y), rot(sub(v(x.x, x.y), v(p.x, p.y)), turn))
+      const rotation = normalizeAngle(x.rotation + turn)
+      if (!it.floorLevel) {
+        // A TV stand goes back to the wall behind it (the seating turned a quarter, it would stand out on the floor).
+        const room = it.category === 'tv-stand' ? doc.rooms.find((r) => pointInPolygon(c, r.polygon)) : undefined
+        let o = c
+        if (room) {
+          const back = rot(v(0, -1), rotation)
+          for (let t = 0; t <= 3; t += 0.05) {
+            const q = add2(c, scale(back, t))
+            if (!polygonInsideRoom(orientedRect(q, it.width / 2, it.depth / 2, rotation), room.polygon)) break
+            o = q
+          }
+        }
+        out.push({ id: x.id, x: o.x, y: o.y, rotation })
+        continue
+      }
+      const along = rot(v(1, 0), q.rotation)
+      const ok = (o: Vec2) => doc.rooms.some((r) => polygonInsideRoom(orientedRect(o, it.width / 2, it.depth / 2, rotation), r.polygon))
+      for (const u of [0, 0.2, -0.2, 0.4, -0.4, 0.6, -0.6, 0.8, -0.8, 1.0, -1.0]) {
+        const o = add2(c, scale(along, u))
+        if (ok(o)) {
+          out.push({ id: x.id, x: o.x, y: o.y, rotation })
+          break
+        }
+      }
+    }
+    return out
+  }
+  /** A bed keeps a nightstand's room at the head on at least one side, clear of doors (round 17). */
+  const bedsideRoom = (q: Spot, room: Room) => {
+    if (item.category !== 'bed') return true
+    // Room to get in, as "Room to get into bed" checks it: a free strip along both sides of a double, one of a single.
+    const along = Math.max(0.3, item.depth - 0.45)
+    const sideFree = (sd: number) => {
+      const strip = orientedRect(v(q.x, q.y), RULES.bedSide / 2, along / 2, q.rotation, v(sd * (item.width / 2 + RULES.bedSide / 2), item.depth / 2 - along / 2))
+      return polygonInsideRoom(strip, room.polygon, 0.01) && !solids.some((o) => convexOverlap(strip, o, 0.005))
+    }
+    if ([-1, 1].filter(sideFree).length < (item.width < 1.2 ? 1 : 2)) return false
+    return [1, -1].some((sd) => {
+      const c = add2(v(q.x, q.y), rot(v(sd * (item.width / 2 + 0.05 + 0.25), -item.depth / 2 + 0.22), q.rotation))
+      const b = orientedRect(c, 0.25, 0.22, q.rotation)
+      return polygonInsideRoom(b, room.polygon) && clearOfDoors(b) && !solids.some((o) => convexOverlap(b, o, 0.005))
+    })
+  }
   /** Spots on a 30 cm grid of the room where a desk and its chair (1.4 × 1.3 m) would still stand clear. */
   const roomy = (room: Room, body: Vec2[]) => {
     const xs = room.polygon.map((q) => q.x)
@@ -1680,28 +1782,49 @@ function bestMove(
       }
     return n
   }
-  type Cand = { spot: Spot; stars: number; done: boolean; roomy: number; d: number; l2: Layout; a2: Analysis }
+  type Cand = { spot: Spot; stars: number; done: boolean; broken: number; roomy: number; d: number; l2: Layout; a2: Analysis; also: { id: string; x: number; y: number; rotation: number }[] }
   const cands: Cand[] = []
-  const better = (a: Cand, b: Cand) => (a.stars !== b.stars ? a.stars > b.stars : a.done !== b.done ? a.done : a.roomy !== b.roomy ? a.roomy > b.roomy : a.d < b.d)
+  const plain = (a: Cand, b: Cand) => (a.stars !== b.stars ? a.stars > b.stars : a.done !== b.done ? a.done : a.roomy !== b.roomy ? a.roomy > b.roomy : a.d < b.d)
+  // Round 17 (Fresh start): never a star or a finished goal lost (a TV turned too far off), then what `prefer` likes (a new wall or turn), then
+  // done, the floor left for a desk (roughly), and a draw seeded by the remix, so remixes differ.
+  const hash = (q: Spot) => [...`${opts.seed ?? 0}:${q.x.toFixed(2)}:${q.y.toFixed(2)}:${normalizeAngle(q.rotation).toFixed(2)}`].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0, 2166136261)
+  const better = !opts.prefer
+    ? plain
+    : (a: Cand, b: Cand) => {
+        const ka = [a.stars >= before.stars && !a.broken ? 1 : 0, opts.prefer!(a.spot), a.done ? 1 : 0, Math.floor(a.roomy / 25)]
+        const kb = [b.stars >= before.stars && !b.broken ? 1 : 0, opts.prefer!(b.spot), b.done ? 1 : 0, Math.floor(b.roomy / 25)]
+        for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return ka[i] > kb[i]
+        return hash(a.spot) < hash(b.spot)
+      }
   /** Scores the home with the piece at `spot`; `quick` ranks it (round 17), the winner is checked in full. */
   const judge = (l2: Layout, a2: Analysis, quick: boolean) => {
     const s2 = scoreHome(doc, l2, a2, null, null, { quick })
     if (s2.goals.some((g) => g.snag && !snagged.has(g.id))) return null
     const verdict = accept(s2)
-    return verdict.ok ? { stars: s2.stars, done: verdict.done } : null
+    const broken = s2.goals.filter((g) => !g.done && doneBefore.has(g.id)).length
+    return verdict.ok ? { stars: s2.stars, done: verdict.done, broken } : null
   }
   const consider = (spot: Spot, room?: Room) => {
     const dx = spot.x - p.x
     const dy = spot.y - p.y
+    const also = carryAt(spot)
+    const at = new Map(also.map((q) => [q.id, q]))
+    const shift = (x: Placement) => {
+      const q = at.get(x.id) ?? (x.on ? at.get(x.on) : undefined)
+      if (!q) return { ...x, x: x.x + dx, y: x.y + dy }
+      if (x.id === q.id) return { ...x, x: q.x, y: q.y, rotation: q.rotation }
+      const host = layout.placements.find((h) => h.id === x.on)!
+      return { ...x, x: x.x + q.x - host.x, y: x.y + q.y - host.y }
+    }
     const l2: Layout = {
       ...layout,
-      placements: layout.placements.map((x) => (x.id === p.id ? { ...x, ...spot } : moving.has(x.id) || (x.on && moving.has(x.on)) ? { ...x, x: x.x + dx, y: x.y + dy } : x)),
+      placements: layout.placements.map((x) => (x.id === p.id ? { ...x, ...spot } : (moving.has(x.id) && (!carryIds.includes(x.id) || at.has(x.id))) || (x.on && moving.has(x.on)) ? shift(x) : x)),
     }
     const a2 = analyze(doc, l2)
     if (warnings(a2) > base) return
     const j = judge(l2, a2, true)
     if (!j) return
-    cands.push({ spot, ...j, roomy: room ? roomy(room, bodyAt(spot)) : 0, d: Math.hypot(dx, dy), l2, a2 })
+    cands.push({ spot, ...j, roomy: room ? roomy(room, bodyAt(spot)) : 0, d: Math.hypot(dx, dy), l2, a2, also })
   }
   /** The best candidate that still holds when scored in full. */
   const pick = (): Cand | null => {
@@ -1725,7 +1848,14 @@ function bestMove(
   const tryRoom = (room: Room) => {
     const fits = (q: Spot) => {
       const body = bodyAt(q)
-      if (!polygonInsideRoom(body, room.polygon) || solids.some((b) => convexOverlap(body, b)) || !meets(body, v(q.x, q.y))) return false
+      if (!polygonInsideRoom(body, room.polygon) || solids.some((b) => convexOverlap(body, b)) || !clearOfDoors(body) || !meets(body, v(q.x, q.y)) || !bedsideRoom(q, room) || (opts.spotOk && !opts.spotOk(q))) return false
+      // Carried solids (a coffee table, a TV) land inside a room, clear of the rest and the doors.
+      for (const c of carryAt(q)) {
+        const it = items.get(layout.placements.find((x) => x.id === c.id)!.itemId)!
+        if (it.floorLevel) continue
+        const b = orientedRect(v(c.x, c.y), it.width / 2, it.depth / 2, c.rotation)
+        if (!doc.rooms.some((r) => polygonInsideRoom(b, r.polygon)) || solids.some((o) => convexOverlap(b, o)) || !clearOfDoors(b)) return false
+      }
       if (!groupBodies.length) return true
       // A group moves as it stands: same turn, every piece inside the room and clear.
       if (Math.abs(normalizeAngle(q.rotation - p.rotation)) > 1e-6) return false
@@ -1756,7 +1886,8 @@ function bestMove(
           for (const rotation of [p.rotation, normalizeAngle(p.rotation + Math.PI / 2)]) if (fits({ x, y, rotation })) grid.push({ x, y, rotation })
     }
     let tries = 0
-    for (const q of [...slides, ...drops.sort(near), ...grid.sort(near).slice(0, 4)]) {
+    const extra = room === home ? (opts.extra ?? []).filter(fits).slice(0, 6) : []
+    for (const q of [...extra, ...slides, ...drops.sort(near), ...grid.sort(near).slice(0, 4)]) {
       const key = `${q.x.toFixed(2)}:${q.y.toFixed(2)}:${normalizeAngle(q.rotation).toFixed(2)}`
       if (seen.has(key) || tries >= 12 || scored >= MAX_SCORED) continue
       seen.add(key)
@@ -1769,7 +1900,7 @@ function bestMove(
     tryRoom(home)
     best = pick()
   }
-  for (const room of doc.rooms) {
+  for (const room of opts.stayHome ? [] : doc.rooms) {
     if (best || scored >= MAX_SCORED) break
     if (room !== home && !UTILITY_ROOM.test(room.name)) {
       tryRoom(room)
@@ -1780,7 +1911,7 @@ function bestMove(
   if (!b) return null
   const dx = b.spot.x - p.x
   const dy = b.spot.y - p.y
-  const also = groupBodies.map(({ x }) => ({ id: x.id, x: x.x + dx, y: x.y + dy, rotation: x.rotation }))
+  const also = [...groupBodies.map(({ x }) => ({ id: x.id, x: x.x + dx, y: x.y + dy, rotation: x.rotation })), ...b.also]
   return { id: p.id, x: b.spot.x, y: b.spot.y, rotation: b.spot.rotation, done: b.done, ...(also.length ? { also } : {}) }
 }
 
@@ -1822,7 +1953,127 @@ export function twistMove(doc: Doc, layout: Layout): ChipMove | null {
     if (t === 'fresh-spots') return !src || dist(c, v(src.x, src.y)) >= 0.85
     return !open || !pointInPolygon(c, open.room.polygon) || !inOpenMiddle(open.c, body, OPEN_MIDDLE + 0.05)
   }
+  if (t === 'fresh-spots') {
+    // The sofa with its TV first; when they can't go anywhere together, the sofa on its own.
+    const srcL = doc.layouts.find((l) => l.id === layout.remix!.from)
+    const freshMove = (q: Placement, last: boolean) => {
+      const from = srcL?.placements.find((x) => x.itemId === q.itemId)
+      const far = (_b: Vec2[], c: Vec2) => !from || dist(c, v(from.x, from.y)) >= 0.85
+      const ok = (after: HomeScore) => {
+        const g2 = after.goals.find((g) => g.id === goal.id)
+        if (!g2) return { ok: false, done: false }
+        return { ok: g2.done || (g2.near !== q.id && (g2.progress ?? 0) > (goal.progress ?? 0) + 1e-6), done: g2.done }
+      }
+      const { main, alone } = freshOpts(doc, layout, q, from)
+      // (Last, when no piece has a spot that way: any clean spot that moves the twist on, as before
+      // round 17, so the twist can always be finished.)
+      const tries: BestMoveOpts[] = (last ? (main.spotOk || alone ? [{}] : []) : [main, ...(alone ? [alone] : [])])
+      for (const opts of tries) {
+        const m = bestMove(doc, layout, q.id, far, ok, before, a0, opts)
+        if (m) return m
+      }
+      return null
+    }
+    // Round 17: any big piece still in its old spot may go (the goal names one; when that one is
+    // boxed in, as a sofa by the old dining table, moving another often frees it).
+    const items = new Map(doc.items.map((i) => [i.id, i]))
+    const waiting = layout.placements.filter((x) => {
+      if (x.id === p.id || !ANCHORS.has(items.get(x.itemId)?.category ?? '')) return false
+      const from = srcL?.placements.find((y) => y.itemId === x.itemId)
+      return !!from && dist(v(x.x, x.y), v(from.x, from.y)) < 0.8
+    })
+    // Which big piece goes first is drawn by the remix too (round 17): the order changes what fits
+    // where, so two Fresh starts of one design come out different.
+    const seed = [...layout.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)
+    const draw = (x: Placement) => Math.imul(seed ^ [...items.get(x.itemId)!.category].reduce((h, c) => (h * 33 + c.charCodeAt(0)) >>> 0, 5), 2654435761) >>> 0
+    const tvLast = (x: Placement) => (items.get(x.itemId)?.category === 'tv-stand' ? 1 : 0)
+    const order = [p, ...waiting].sort((a, b) => tvLast(a) - tvLast(b) || draw(a) - draw(b))
+    // A TV waits for its sofa, which takes it along: moved first on its own, it can box the sofa in.
+    const sofaWaits = order.some((x) => items.get(x.itemId)?.category === 'sofa')
+    for (const last of [false, true])
+      for (const q of order) {
+        if (!last && sofaWaits && items.get(q.itemId)?.category === 'tv-stand') continue
+        const m = freshMove(q, last)
+        if (m) return m
+      }
+    return null
+  }
   return bestMove(doc, layout, p.id, meets, accept, before, a0)
+}
+
+/**
+ * Fresh start's move options (round 17): a spot on another wall, or turned, beats a slide along
+ * the same wall; equally good spots are drawn by the remix's id, so two remixes differ. A sofa
+ * takes the TV it faces along (and its coffee table and rug), and also tries the whole seating
+ * turned round the room's middle: a half turn swaps the ends, a quarter turn uses the other walls.
+ * `alone` is the fallback when they fit nowhere together: the sofa (or a TV) moved on its own,
+ * still squarely facing the other.
+ */
+function freshOpts(doc: Doc, layout: Layout, p: Placement, src: Placement | undefined): { main: BestMoveOpts; alone?: BestMoveOpts } {
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const it = items.get(p.itemId)!
+  const seed = [...layout.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)
+  const turnOf = (a: number) => {
+    const d = normalizeAngle(a)
+    return Math.min(d, 2 * Math.PI - d)
+  }
+  const prefer = (q: Spot) => {
+    if (!src) return 0
+    return turnOf(q.rotation - src.rotation) > Math.PI / 4 + 1e-3 || nearestWall(doc, v(q.x, q.y)) !== nearestWall(doc, v(src.x, src.y)) ? 1 : 0
+  }
+  const room = doc.rooms.find((r) => pointInPolygon(v(p.x, p.y), r.polygon))
+  const partner = (cat: string) => layout.placements.find((x) => items.get(x.itemId)?.category === cat && x.id !== p.id && !!room && pointInPolygon(v(x.x, x.y), room.polygon))
+  /** Squarely facing `o` (within ~10°), as a sofa and its TV stand: moved alone, neither turns aside. */
+  const backed = (q: Spot) => !room || !pointInPolygon(add2(v(q.x, q.y), rot(v(0, -(it.depth / 2 + 0.12)), q.rotation)), room.polygon)
+  const faces = (o: Placement | undefined) => (q: Spot) => {
+    // (Back to a wall, as a sofa and TV stand go: never out on the floor.)
+    if (!backed(q)) return false
+    if (!o) return true
+    return dot(rot(v(0, 1), q.rotation), norm(sub(v(o.x, o.y), v(q.x, q.y)))) > 0.98 && turnOf(q.rotation - o.rotation - Math.PI) < 0.2
+  }
+  if (it.category === 'tv-stand') return { main: { spotOk: faces(partner('sofa')) } }
+  if (it.category !== 'sofa') return { main: { prefer, seed } }
+  const fwd = rot(v(0, 1), p.rotation)
+  const tv = layout.placements.find((x) => {
+    if (items.get(x.itemId)?.category !== 'tv-stand' || !room || !pointInPolygon(v(x.x, x.y), room.polygon)) return false
+    return dot(fwd, norm(sub(v(x.x, x.y), v(p.x, p.y)))) > 0.7
+  })
+  if (!tv || !room) return { main: { prefer, seed } }
+  const c = centroid(room.polygon)
+  const extra: Spot[] = []
+  for (const k of [2, 1, 3]) {
+    const turn = (k * Math.PI) / 2
+    const at = add2(c, rot(sub(v(p.x, p.y), c), turn))
+    const rotation = normalizeAngle(p.rotation + turn)
+    const f = rot(v(0, 1), rotation)
+    const side = rot(v(1, 0), rotation)
+    for (const u of [0, 0.5, -0.5, 1.0, -1.0]) {
+      // Back to the wall: the furthest back the sofa stands inside the room.
+      for (let t = -2; t <= 2; t += 0.05) {
+        const q = add2(add2(at, scale(side, u)), scale(f, t))
+        if (polygonInsideRoom(orientedRect(q, it.width / 2, it.depth / 2, rotation), room.polygon)) {
+          // The TV goes with it, back to its wall (as bestMove carries it): only when it stays about as far off.
+          const tvIt = items.get(tv.itemId)!
+          let tq = add2(q, rot(sub(v(tv.x, tv.y), v(p.x, p.y)), turn))
+          const tvRot = normalizeAngle(tv.rotation + turn)
+          for (let k = 0; k <= 3; k += 0.05) {
+            const o = add2(tq, scale(rot(v(0, -1), tvRot), 0.05))
+            if (!polygonInsideRoom(orientedRect(o, tvIt.width / 2, tvIt.depth / 2, tvRot), room.polygon)) break
+            tq = o
+          }
+          if (Math.abs(dist(q, tq) - dist(v(p.x, p.y), v(tv.x, tv.y))) <= 0.6) extra.push({ x: q.x, y: q.y, rotation })
+          break
+        }
+      }
+    }
+  }
+  // (In an order drawn by the seed: bestMove scores the first few that fit.) Carried, the TV turns
+  // with the sofa, so they face each other wherever they go.
+  const drawn = extra
+    .map((q, i) => ({ q, h: Math.imul(seed ^ (i + 1), 2654435761) >>> 0 }))
+    .sort((a, b) => a.h - b.h)
+    .map((x) => x.q)
+  return { main: { prefer, seed, carry: [tv.id], extra: drawn }, alone: { spotOk: faces(tv) } }
 }
 
 /**
@@ -1844,6 +2095,9 @@ export function goalMove(doc: Doc, layout: Layout, goalId: string): ChipMove | n
   }
   return bestMove(doc, layout, goal.near, () => true, accept, before, a0)
 }
+
+/** Rooms a piece the chip makes room for belongs in, best first (round 17: a desk in a study or bedroom). */
+export const DESK_ROOMS: Record<string, RegExp[]> = { desk: [OFFICE, BEDROOM] }
 
 /**
  * "Make room for a desk" in one tap (round 17): a core goal whose piece fits nowhere. The pieces
@@ -1897,22 +2151,45 @@ function roomMove(doc: Doc, layout: Layout, goal: Goal, before: HomeScore, a0: A
   const cost = (x: Placement) => (catOf(x.id) === 'bed' ? 2 : ANCHORS.has(catOf(x.id)) ? 1 : 0)
   const area = (x: Placement) => polygonArea(body(x))
   for (const x of solid.filter((x) => catOf(x.id) !== 'sofa' && catOf(x.id) !== 'tv-stand').sort((a, b) => cost(a) - cost(b) || area(b) - area(a))) push(x.id)
-  const verify = (l2: Layout) => findDrop(doc, l2, probe).ok
-  let searched = 0
-  for (const t of tries.slice(0, 8)) {
+  // Round 17: a desk belongs in a study or a bedroom; room made there comes before room made in the living room.
+  const homeRooms = doc.rooms.filter((r) => !UTILITY_ROOM.test(r.name) && (DESK_ROOMS[probe.category] ?? []).some((re) => re.test(r.name)))
+  const doors = doorKeepOut(doc.rooms)
+  /** The piece's spot in room `r` alone, clear of every door (a door in the next room swings in too). */
+  const dropInRoom = (l: Layout, r: Room) => {
+    const d = findDrop({ ...doc, rooms: [r] }, l, probe)
+    return d.ok && !doors.some((k) => convexOverlap(orientedRect(v(d.spot.x, d.spot.y), probe.width / 2, probe.depth / 2, d.spot.rotation), k, 0.005)) ? d : null
+  }
+  const inHomeRoom = (l: Layout) => homeRooms.find((r) => dropInRoom(l, r))
+  const ranked = tries.slice(0, 8).flatMap((t) => {
     // Where the new piece would go with this one out of the way (none: moving it won't help).
     const gone = new Set([t.pid, ...t.group])
     const without: Layout = { ...layout, placements: layout.placements.filter((x) => !gone.has(x.id) && !(x.on && gone.has(x.on))) }
-    const spot = findDrop(doc, without, probe)
-    if (!spot.ok) continue
+    const room = homeRooms.length ? inHomeRoom(without) : undefined
+    const spot = room ? dropInRoom(without, room) : findDrop(doc, without, probe)
+    return spot?.ok ? [{ t, spot, home: !!room }] : []
+  })
+  ranked.sort((a, b) => Number(b.home) - Number(a.home))
+  // No room for a desk's chair: the desk itself may move, chair room and all (round 17: to a study or
+  // bedroom when its own room has no spot), before the rest are shuffled round it.
+  const deskId = probe.category === 'office-chair' ? solid.find((x) => catOf(x.id) === 'desk')?.id : undefined
+  if (deskId) {
+    const m = bestMove(doc, layout, deskId, () => true, (after) => ({ ok: after.stars >= before.stars, done: true }), before, a0, { verify: (l2) => findDrop(doc, l2, probe).ok })
+    if (m) return m
+  }
+  // A dresser or wardrobe stays in the bedroom if it can; only failing that may it cross to another room.
+  const attempts = [...ranked.map((r) => ({ ...r, stay: BEDROOM_ONLY.has(catOf(r.t.pid)) })), ...ranked.filter((r) => BEDROOM_ONLY.has(catOf(r.t.pid))).map((r) => ({ ...r, stay: false }))]
+  let searched = 0
+  for (const { t, spot, home, stay } of attempts) {
+    const verify = (l2: Layout) => (home ? !!inHomeRoom(l2) : findDrop(doc, l2, probe).ok)
     // The move keeps clear of that spot and the floor in front of it (a desk's chair).
     const keep = orientedRect(v(spot.spot.x, spot.spot.y), probe.width / 2 + 0.05, probe.depth / 2 + 0.45, spot.spot.rotation, v(0, 0.4))
-    const meets = (b: Vec2[]) => !convexOverlap(b, keep)
+    // (In the study or bedroom any spot that leaves the desk room will do: a bed slid 10 cm can be enough.)
+    const meets = (b: Vec2[]) => home || !convexOverlap(b, keep)
     const accept = (after: HomeScore) => ({ ok: after.stars >= before.stars, done: true })
     // (A big piece goes only where the drop search would stand it: against a wall, not out on the floor.)
-    const m = bestMove(doc, layout, t.pid, meets, accept, before, a0, { group: t.group, verify, noGrid: ANCHORS.has(catOf(t.pid)) && !t.group.length })
+    const m = bestMove(doc, layout, t.pid, meets, accept, before, a0, { group: t.group, verify, noGrid: ANCHORS.has(catOf(t.pid)) && !t.group.length, stayHome: stay })
     if (m) return m
-    if (++searched >= 4) break
+    if (++searched >= 8) break
   }
   return null
 }
