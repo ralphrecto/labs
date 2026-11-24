@@ -20,16 +20,23 @@ export interface Mood {
   emoji: string
   /** One line under the name on the card. */
   blurb: string
+  /** What its goal asks for, in a few words, for the card on phones: "mirror + plant". */
+  adds: string
   /**
    * The mood's bonus goal: the pieces it asks for in the room (one of each need's categories, in
    * the mood's colours when `tone`), and its copy. The first category is the one the chip suggests:
-   * rugs, wall decor, lamps and plants, which find a spot in almost any room.
+   * rugs, wall decor, lamps and plants, which find a spot in almost any room. A `tone` need the
+   * room already has a piece for, in another colour (an oak rug), is met by painting that piece
+   * `paint` rather than buying another.
    */
-  goal: { title: string; hint: string; needs: { cats: string[]; tone?: boolean }[] }
+  goal: { title: string; hint: string; needs: { cats: string[]; tone?: boolean; paint?: string; paintName?: string }[] }
   /** The tiny preview: wall, floor, sofa and lamp glow colours. */
   preview: { wall: string; floor: string; sofa: string; glow: string; accent: string }
-  /** The room's mood light in the 3D view (a soft point light). */
-  light: { color: string; intensity: number }
+  /**
+   * The room's mood light in the 3D view (a soft point light, `intensity` in the evening and a
+   * stronger `day` one so it still reads against daylight), and the soft glow on its floor.
+   */
+  light: { color: string; intensity: number; day: number; floor: string }
 }
 
 export const MOODS: Record<MoodId, Mood> = {
@@ -39,9 +46,10 @@ export const MOODS: Record<MoodId, Mood> = {
     short: 'Airy',
     emoji: '☀️',
     blurb: 'Pale woods, linen, green',
+    adds: 'mirror + plant',
     goal: { title: 'Airy: a mirror and a plant', hint: 'A mirror bounces the daylight round; a plant brings the outside in.', needs: [{ cats: ['mirror'] }, { cats: ['plant'] }] },
     preview: { wall: '#f4f1ea', floor: '#d9c4a5', sofa: '#e2d6b8', glow: '#e8f2ff', accent: '#5f8f5a' },
-    light: { color: '#dcecff', intensity: 5 },
+    light: { color: '#f6f9ff', intensity: 9, day: 13, floor: '#e9f3ff' },
   },
   snug: {
     id: 'snug',
@@ -49,9 +57,10 @@ export const MOODS: Record<MoodId, Mood> = {
     short: 'Snug',
     emoji: '🕯️',
     blurb: 'Walnut, honey, soft light',
+    adds: 'rug + lamp',
     goal: { title: 'Snug: a soft rug and warm light', hint: 'A soft rug underfoot and a lamp for a warm pool of light.', needs: [{ cats: ['rug'] }, { cats: ['floor-lamp', 'table-lamp'] }] },
     preview: { wall: '#ead9c3', floor: '#8a6b4f', sofa: '#b5534a', glow: '#ffc27a', accent: '#e0b04f' },
-    light: { color: '#ffb36b', intensity: 8 },
+    light: { color: '#ffb066', intensity: 7, day: 11, floor: '#ff9f4a' },
   },
   bold: {
     id: 'bold',
@@ -59,9 +68,10 @@ export const MOODS: Record<MoodId, Mood> = {
     short: 'Bold',
     emoji: '🎨',
     blurb: 'Blue, terracotta, big art',
-    goal: { title: 'Bold: big art and a bold rug', hint: 'Art on the wall and a rug in a bold colour (blue, terracotta, honey) make the room sing. Or paint yours.', needs: [{ cats: ['wall-art'] }, { cats: ['rug'], tone: true }] },
-    preview: { wall: '#f1e6d8', floor: '#c7a98a', sofa: '#5b7bb5', glow: '#ffd1e0', accent: '#e0b04f' },
-    light: { color: '#ff9ec0', intensity: 5 },
+    adds: 'art + bold rug',
+    goal: { title: 'Bold: big art and a bold rug', hint: 'Art on the wall and a rug in a bold colour (blue, terracotta, honey) make the room sing. Or paint yours.', needs: [{ cats: ['wall-art'] }, { cats: ['rug'], tone: true, paint: '#5b7bb5', paintName: 'cornflower blue' }] },
+    preview: { wall: '#f1e6d8', floor: '#c7a98a', sofa: '#5b7bb5', glow: '#ffe0bd', accent: '#e0b04f' },
+    light: { color: '#ffe0bd', intensity: 7, day: 10, floor: '#8aa6e0' },
   },
 }
 
@@ -125,18 +135,18 @@ export function moodGoals(doc: Doc, layout: Layout, pieces: MoodPiece[]): Goal[]
     const room = doc.rooms.find((r) => r.id === roomId)
     if (!mood || !room) continue
     const here = pieces.filter((p) => p.room?.id === roomId)
-    const toned = (p: MoodPiece) => {
-      const c = colorOf.get(p.id ?? '')
-      return !!c && MOOD_TONES[id].palette.some((t) => near(t, c))
-    }
+    const toned = (p: MoodPiece) => inTone(id, colorOf.get(p.id ?? ''))
     const have = mood.goal.needs.map((n) => here.some((p) => n.cats.includes(p.category) && (!n.tone || toned(p))))
     const missing = mood.goal.needs.find((_, i) => !have[i])
     const done = !missing
     const where = room.name.toLowerCase()
+    // A rug already down in another colour (round 17 review): the goal asks to paint it, not to
+    // squeeze a second rug in; the chip paints it (Goals.showGoal).
+    const repaint = missing?.tone && missing.paint ? here.find((p) => p.id && missing.cats.includes(p.category)) : undefined
     out.push({
       id: moodGoalId(roomId),
       title: mood.goal.title,
-      hint: done ? `Your ${where} feels ${mood.short.toLowerCase()}. Select the room to change its mood.` : `${mood.goal.hint} In the ${where}.`,
+      hint: done ? `Your ${where} feels ${mood.short.toLowerCase()}. Select the room to change its mood.` : repaint ? `Paint the ${where}'s ${repaint.category.replace(/-/g, ' ')} ${missing.paintName ?? 'a bold colour'} (tap Next, or Color on its bar).` : `${mood.goal.hint} In the ${where}.`,
       done,
       progress: have.filter(Boolean).length / have.length,
       stars: 1,
@@ -144,10 +154,66 @@ export function moodGoals(doc: Doc, layout: Layout, pieces: MoodPiece[]): Goal[]
       category: 'style',
       bonus: true,
       perk: 'mood',
-      ...(missing ? { item: missing.cats[0], tab: MOOD_TAB[missing.cats[0]] ?? 'decor', placeIn: roomId } : {}),
+      ...(repaint ? { near: repaint.id } : missing ? { item: missing.cats[0], tab: MOOD_TAB[missing.cats[0]] ?? 'decor', placeIn: roomId } : {}),
     })
   }
   return out
+}
+
+/** A colour that reads as the mood (one of its tones, or close to one). */
+export const inTone = (id: MoodId, color: string | undefined): boolean => !!color && MOOD_TONES[id].palette.some((t) => near(t, color))
+
+/**
+ * The mood whose colours a pick must wear to count (round 17): when the hinted goal is a room's
+ * mood goal whose missing piece is a `tone` need of this category (Bold's rug), a piece of yours
+ * in another colour (an oak rug waiting in a box, the remix source's rug) isn't offered first.
+ */
+export function toneNeeded(doc: Doc, layout: Layout, goalId: string | undefined, category: string): MoodId | undefined {
+  if (!goalId?.startsWith('mood:')) return undefined
+  const roomId = goalId.slice(5)
+  const id = moodOf(layout, roomId)
+  if (!id) return undefined
+  const g = moodGoals(doc, layout, piecesOf(doc, layout)).find((x) => x.id === goalId)
+  if (!g || g.done || g.item !== category) return undefined
+  return MOODS[id].goal.needs.some((n) => n.tone && n.cats.includes(category)) ? id : undefined
+}
+
+/**
+ * The paint a mood goal asks for (a Bold room's oak rug, painted blue): the placement and colour,
+ * or null when the goal isn't a repaint.
+ */
+export function moodRepaint(doc: Doc, layout: Layout, goalId: string): { placementId: string; color: string; name: string } | null {
+  const id = moodOf(layout, goalId.startsWith('mood:') ? goalId.slice(5) : undefined)
+  const g = id && moodGoals(doc, layout, piecesOf(doc, layout)).find((x) => x.id === goalId)
+  const need = id ? MOODS[id].goal.needs.find((n) => n.tone && n.paint) : undefined
+  return g && !g.done && g.near && !g.tab && need?.paint ? { placementId: g.near, color: need.paint, name: need.paintName ?? 'a new colour' } : null
+}
+
+/**
+ * The design with one placement repainted: its item takes the colour, or, when another placement
+ * (here or in another design) shares that item, the placement gets a repainted copy of it.
+ */
+export function repaintDoc(doc: Doc, placementId: string, color: string, newId: string): Doc {
+  const layout = doc.layouts.find((l) => l.id === doc.activeLayoutId)
+  const p = layout?.placements.find((x) => x.id === placementId)
+  const item = p && doc.items.find((i) => i.id === p.itemId)
+  if (!layout || !p || !item) return doc
+  const shared = doc.layouts.some((l) => l.placements.some((x) => x.itemId === item.id && (x.id !== placementId || l.id !== layout.id)))
+  if (!shared) return { ...doc, items: doc.items.map((i) => (i.id === item.id ? { ...i, color } : i)) }
+  const copy = { ...item, id: newId, color, clearance: { ...item.clearance } }
+  return {
+    ...doc,
+    items: [...doc.items, copy],
+    layouts: doc.layouts.map((l) => (l.id === layout.id ? { ...l, placements: l.placements.map((x) => (x.id === placementId ? { ...x, itemId: newId } : x)) } : l)),
+  }
+}
+
+/** A mood goal just finished, as its own headline: "🕯️ Your living room feels snug". */
+export function moodDoneTitle(doc: Doc, layout: Layout, goal: Goal): string | undefined {
+  if (goal.perk !== 'mood' || !goal.roomId) return undefined
+  const id = moodOf(layout, goal.roomId)
+  const room = doc.rooms.find((r) => r.id === goal.roomId)
+  return id && room ? `${MOODS[id].emoji} Your ${room.name.toLowerCase()} feels ${MOODS[id].short.toLowerCase()}` : undefined
 }
 
 /** Rooms a mood suits, best first: living rooms, then bedrooms, then dining rooms and offices, then the rest. */
@@ -165,7 +231,7 @@ export const momentKey = (doc: Doc, layout: Layout, roomId: string) => `${doc.ap
 /**
  * The mood moment due now, if any: one per level in MOMENT_LEVELS reached (with MOMENT_PIECES placed), each for the next
  * room without a mood (or a skipped card). A skipped room isn't asked again on this design; a
- * remix starts without moods, so it asks afresh.
+ * remix keeps its source's moods, so it only asks about rooms still without one.
  */
 export function dueMoment(doc: Doc, layout: Layout, level: number, pieces: MoodPiece[], skipped: ReadonlySet<string>): Room | null {
   const n = pieces.filter((p) => p.category !== 'box').length
@@ -180,7 +246,8 @@ export function dueMoment(doc: Doc, layout: Layout, level: number, pieces: MoodP
 /** Where a room's mood light hangs (plan x/y, a little below the ceiling) and how far it reaches. */
 export function moodLightSpot(room: Room): { at: Vec2; height: number; reach: number } {
   const at = centroid(room.polygon)
-  const reach = Math.max(2.5, Math.sqrt(polygonArea(room.polygon)) * 1.1)
+  // A pool of light in its own room, not a wash over the whole home.
+  const reach = Math.max(1.8, Math.sqrt(polygonArea(room.polygon)) * 0.7)
   return { at, height: Math.max(1.8, room.ceilingHeight - 0.45), reach }
 }
 

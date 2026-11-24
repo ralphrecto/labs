@@ -502,13 +502,18 @@ export const useStore = create<State>((set, get) => ({
       // (and table lamps pointed at the copies of their hosts).
       const ids = new Map(src.placements.map((p) => [p.id, uid()]))
       const placements = src.placements.map((p) => ({ ...p, id: ids.get(p.id)!, ...(p.on ? { on: ids.get(p.on) ?? p.on } : {}) }))
-      const copy: Layout = { id: nid, name: copyName(src.name, d.layouts.map((l) => l.name)), placements }
+      // Room moods (round 17) are part of the design: the copy keeps them.
+      const copy: Layout = { id: nid, name: copyName(src.name, d.layouts.map((l) => l.name)), placements, ...(src.moods ? { moods: { ...src.moods } } : {}) }
       inheritBest(d, src.id, nid)
       return { ...d, layouts: [...d.layouts, copy], activeLayoutId: nid }
     }),
   remixLayout: (sourceId, twist) => {
-    const copy = remixedLayout(get().doc, sourceId, twist, uid)
-    if (!copy) return
+    const made = remixedLayout(get().doc, sourceId, twist, uid)
+    if (!made) return
+    // The source's room moods carry over (round 17 review): a remix doesn't ask them all again;
+    // the room's bar can still change one.
+    const srcMoods = get().doc.layouts.find((l) => l.id === sourceId)?.moods
+    const copy = srcMoods ? { ...made, moods: { ...srcMoods } } : made
     switchDesign((d) => ({ ...d, layouts: [...d.layouts, copy], activeLayoutId: copy.id }))
     const n = copy.placements.length
     get().notify(`${TWISTS[twist].name}! Kept ${n === 1 ? '1 big piece' : `${n} big pieces`}; the rest wait in Mine.`)

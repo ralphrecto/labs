@@ -17,6 +17,7 @@ import { useGame } from './gameStore'
 import { IconCamera, IconLink, IconStar } from './icons'
 import { ItemThumb } from './ItemThumb'
 import { familyOf, picksFor, type Pick, type ThumbLook } from './swatches'
+import { inTone, toneNeeded } from './moods'
 import './buy.css'
 import './feel.css'
 
@@ -685,12 +686,16 @@ export function BuyDrawer({ top }: { top?: ReactNode } = {}) {
     const src = from ? new Set(from.placements.map((p) => p.itemId)) : null
     const usedElsewhere = l.remix ? new Set(doc.layouts.filter((x) => x.id !== l.id).flatMap((x) => x.placements.map((p) => p.itemId))) : null
     const spare = (i: Item) => i.category === hintEntry.category && !counts.get(i.id) && !i.unpack?.length && !i.unpacked
+    // A mood goal that wants this piece in its colours (Bold's rug): a piece of yours in another
+    // colour wouldn't count, so it isn't offered first (round 17).
+    const tone = toneNeeded(doc, l, hint?.goalId, hintEntry.category)
+    const toned = (i: Item | undefined) => (i && (!tone || inTone(tone, i.color)) ? i : undefined)
     const boxed =
-      boxedFor(hintEntry.category, items, (id) => !!counts.get(id)) ??
-      (src ? items.find((i) => spare(i) && src.has(i.id)) : undefined) ??
-      (usedElsewhere ? items.find((i) => spare(i) && (usedElsewhere.has(i.id) || isMine(i))) : undefined)
+      toned(boxedFor(hintEntry.category, items, (id) => !!counts.get(id))) ??
+      (src ? items.find((i) => spare(i) && src.has(i.id) && !!toned(i)) : undefined) ??
+      (usedElsewhere ? items.find((i) => spare(i) && (usedElsewhere.has(i.id) || isMine(i)) && !!toned(i)) : undefined)
     if (boxed) pickCards.push({ key: boxed.id, label: pickLabel(boxed, items), name: boxed.name, category: boxed.category, color: boxed.color, mine: true, onClick: () => placeMine(boxed) })
-    const chips = vetted.chips
+    const chips = tone && vetted.chips.some((c) => inTone(tone, c.chip.color)) ? vetted.chips.filter((c) => inTone(tone, c.chip.color)) : vetted.chips
     pickCount = vetted.all
     for (const { chip, taste: liked } of chips.slice(0, 3 - pickCards.length))
       pickCards.push({ key: `${hintEntry.category}:${chip.label}`, label: chip.label, name: chip.name, category: hintEntry.category, color: chip.color, look: chip.look, taste: liked, onClick: () => place(hintEntry, chip, true) })
