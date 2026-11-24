@@ -25,12 +25,15 @@
 .mood-prev { width: 100%; height: auto; border-radius: 9px; display: block; }
 .mood-name { margin-top: 4px; font-weight: 800; font-size: 0.875rem; line-height: 1.2; }
 .mood-blurb { color: var(--g-ink-2); font-size: 0.75rem; line-height: 1.25; }
+.mood-adds { color: var(--g-coral-ink); font-size: 0.75rem; font-weight: 800; line-height: 1.2; }
 .mood-foot { margin: 8px 0 0; font-size: 0.75rem; color: var(--g-ink-2); }
 /* Phones: under the pill and Next chip, so the room stays in view below. */
 @media (max-width: 640px) {
   .mood-card { top: calc(118px + env(safe-area-inset-top)); padding: 10px 10px 10px; }
   .mood-q { font-size: 1rem; margin-bottom: 8px; }
   .mood-opt { padding: 4px 4px 6px; }
-  .mood-blurb { display: none; }
+  /* The blurb stays (what you're choosing), smaller; "+ rug + lamp" says what the goal asks for. */
+  .mood-blurb { font-size: 0.6875rem; line-height: 1.2; }
+  .mood-adds { font-size: 0.6875rem; }
 }
 @media (prefers-reduced-motion: reduce) { .mood-card { animation: none; } .mood-opt { transition: none; } }

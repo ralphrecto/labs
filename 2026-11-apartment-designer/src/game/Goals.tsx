@@ -8,6 +8,8 @@ import { findDrop } from '../model/placement'
 import type { Doc } from '../model/types'
 import { activeLayout, useStore } from '../store'
 import { heldScore, lastAwayMs, settleStars, useGame, VISIT_KEY } from './gameStore'
+import { moodDoneTitle, moodRepaint, repaintDoc } from './moods'
+import { uid } from '../model/sample'
 import { bankableLevel, bestLevelKey, levelBlocker, CATEGORY_LABEL, CATEGORY_ORDER, LEVELS, levelProgress, MIN_PIECES, nextGoal, packedBoxIds, scoreHome, type Goal, type HomeScore } from './goals'
 import { unpackAndCelebrate } from './unpack'
 import { albumFor, TWIST_EMOJI, useAlbum } from './album'
@@ -223,7 +225,7 @@ export function VibeMeter() {
   const levelUp = useGame((s) => s.levelUp)
   const sheet = useGame((s) => s.sheet)
   const phone = usePhone()
-  const prev = useRef<{ key: string; stars: number; level: number; done: Set<string>; progress: Map<string, number>; visit?: string } | null>(null)
+  const prev = useRef<{ key: string; stars: number; level: number; done: Set<string>; progress: Map<string, number>; visit?: string; moods: string } | null>(null)
   const [pop, setPop] = useState<{ key: number; delta: number; half?: boolean; text?: string; tick?: string } | null>(null)
   const [banner, setBanner] = useState<Banner | null>(null)
   const [shown, setShown] = useState<string | null>(null)
@@ -304,7 +306,8 @@ export function VibeMeter() {
     const progress = new Map(score.goals.map((g) => [g.id, g.progress ?? 0]))
     const before = prev.current
     const visitGoal = score.goals.find((g) => g.visit)
-    prev.current = { key: designKey, stars: score.stars, level: score.level.index, done, progress, visit: visitGoal?.id }
+    const moodsNow = JSON.stringify(activeLayout(useStore.getState().doc).moods ?? {})
+    prev.current = { key: designKey, stars: score.stars, level: score.level.index, done, progress, visit: visitGoal?.id, moods: moodsNow }
     // First render, or another design or home: no fanfare.
     if (!before || before.key !== designKey) {
       if (before) setSkipped(NO_REFUSALS)
@@ -327,6 +330,9 @@ export function VibeMeter() {
       const g = score.goals.find((x) => x.id === t.id)
       if (g && !g.done && (g.progress ?? 0) <= t.progress + 1e-6) setSkipped((s) => new Set([...s, t.id]))
     }
+    // A room's mood chosen or changed (round 17): its goal starts afresh, so Next may offer it again.
+    const moodChanged = before.moods !== moodsNow
+    if (moodChanged) setSkipped((s) => ([...s].some((id) => id.startsWith('mood:')) ? new Set([...s].filter((id) => !id.startsWith('mood:'))) : s))
     // A visitor who arrives already happy (a new day) is no headline: only one the player pleases is.
     const fresh = score.goals.filter((g) => g.done && !before.done.has(g.id) && !(g.visit && before.visit !== g.id))
     // The drawer's hint pill ("Tap Plant → Bathroom") points at a goal's piece: once that goal is
@@ -362,6 +368,9 @@ export function VibeMeter() {
     const net = settleStars(before.stars, score.stars)
     // The drag lesson's piece sits a little aside on purpose: no loss pill while it's waiting there.
     if (net.kind === 'loss' && useGame.getState().dragLesson) return
+    // A new mood swaps the room's mood goal for a fresh one (round 17): that's a choice, not a
+    // mistake, so no loss pill; the mood card and its toast say the new mood brings a new goal.
+    if (net.kind === 'loss' && moodChanged) return
     if (net.kind === 'loss') {
       // A loss: say what broke, offer Undo, and clear any cheer (banner, pop, pending level-up).
       const broke = score.goals.filter((g) => !g.done && before.done.has(g.id)).sort((a, b) => b.stars - a.stars)[0]
@@ -397,10 +406,15 @@ export function VibeMeter() {
       if (placedToast) useStore.setState({ toast: null })
       setBanner({ key: Date.now(), kind: 'goal', goal: pleased, more: fresh.length - 1 })
     } else if (fresh.length && !(half && incidental)) {
-      const best = [...fresh].sort((a, b) => b.stars - a.stars)[0]
+      // A room's mood goal finished (round 17) is its own headline, ahead of any goal that finished
+      // alongside it: "🕯️ Your living room feels snug ★", even when the lamp was for another goal.
+      const doc = useStore.getState().doc
+      const moodDone = fresh.find((g) => g.perk === 'mood')
+      const moodTitle = moodDone && moodDoneTitle(doc, activeLayout(doc), moodDone)
+      const best = moodDone && moodTitle ? { ...moodDone, title: moodTitle } : [...fresh].sort((a, b) => b.stars - a.stars)[0]
       // One short line per action ("+1★ Every room has something"): the room shows in 3D and the
       // pill's pop has the total.
-      const line = ticks ? `✓ ${best.title}` : `+${best.stars}★ ${best.title}`
+      const line = moodTitle ? `${moodTitle} ★` : ticks ? `✓ ${best.title}` : `+${best.stars}★ ${best.title}`
       levelGoalLine = line
       if (placedToast) useStore.getState().notify(line)
       else setBanner({ key: Date.now(), kind: 'goal', goal: best, more: fresh.length - 1 })
@@ -435,7 +449,7 @@ export function VibeMeter() {
       line: `${homeCount() > 1 ? `${homeName} · ` : ''}${designName} · ${sc.level.name}`,
       stars: sc.stars,
       // At the top level a remix comes before any bonus goal (only core goals beat it).
-      top: sc.level.index >= LEVELS.length - 1 && (!nextRef.current || (!!nextRef.current.bonus && !nextRef.current.visit)),
+      top: sc.level.index >= LEVELS.length - 1 && (!nextRef.current || (!!nextRef.current.bonus && !nextRef.current.visit && nextRef.current.perk !== 'mood')),
       visit:
         vd && (!gone || today)
           ? { id: vd.id, text: vs.done ? `${vd.emoji} ${vd.who} loved it! Sticker collected` : `${vd.emoji} ${vd.line}${later ? ' (once this design is Cozy)' : ''}` }
@@ -520,7 +534,9 @@ export function VibeMeter() {
   const levelName = lagging ? LEVELS[Math.min(shownLevel, LEVELS.length - 1)] : score.level.name
   const fill = lagging ? 0 : levelProgress(score)
   // One quiet chip with the next goal. Tapping it steps it aside until the home changes.
-  const chip = next && !(top && next.bonus && !next.visit) && !banner && !levelUp && !sheet && !loss && shown !== next.id ? next : null
+  // At the top level bonus goals give way to the photo and Remix, but not a room's mood goal (round 17).
+  const topBonus = !!next && top && !!next.bonus && !next.visit && next.perk !== 'mood'
+  const chip = next && !topBonus && !banner && !levelUp && !sheet && !loss && shown !== next.id ? next : null
   const bestName = score.best > score.level.index ? LEVELS[score.best] : null
   useAlbum((s) => s.rev)
   const homeId = useStore((s) => s.doc.apartment.id)
@@ -586,7 +602,7 @@ export function VibeMeter() {
           </button>
         </div>
       )}
-      {top && (!next || (next.bonus && !next.visit)) && !banner && !levelUp && !sheet && !loss && (
+      {top && (!next || topBonus) && !banner && !levelUp && !sheet && !loss && (
         photographed ? (
           <button type="button" className="goal-next" onClick={tryVariation} aria-label="Top level reached. Remix this home with a twist">
             <span className="goal-next-text">
@@ -770,6 +786,21 @@ function showGoal(g: Goal) {
       const twist = g.id.slice(6) as keyof typeof TWISTS
       s.notify(m.done ? `${TWIST_EMOJI[twist] ?? '↻'} Twist done! Moved the ${name}.` : `Moved the ${name}. ${TWISTS[twist]?.name ?? 'Twist'}: a step closer.`)
     }, 40)
+    return
+  }
+  // A room's mood goal met by painting a piece it has (round 17: the Bold room's oak rug, painted
+  // blue): the chip selects it and paints it, one step to undo.
+  const st1 = useStore.getState()
+  const repaint = g.perk === 'mood' ? moodRepaint(st1.doc, activeLayout(st1.doc), g.id) : null
+  if (repaint) {
+    if (st1.mode !== 'select') st1.setMode('select')
+    useGame.setState({ mode: 'buy', sheet: null, buyHint: null })
+    st1.update((d: Doc) => repaintDoc(d, repaint.placementId, repaint.color, uid()))
+    st1.select({ kind: 'placement', id: repaint.placementId })
+    const d = useStore.getState().doc
+    const p = activeLayout(d).placements.find((x) => x.id === repaint.placementId)
+    const name = d.items.find((i) => i.id === p?.itemId)?.name.toLowerCase() ?? 'piece'
+    st1.notify(`Painted the ${name} ${repaint.name}.`)
     return
   }
   // A goal fixed by moving a piece (an overlap, a piece in a wall, a blocked door): select that piece.
