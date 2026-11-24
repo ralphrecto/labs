@@ -243,6 +243,7 @@ export function guessCategory(text: string): string | undefined {
     [/\bdesk\b/, 'desk'],
     [/\btable\b/, 'dining-table'],
     [/\b(rug|carpet|runner|mat)\b/, 'rug'],
+    [/\b(table|desk|bedside) lamp\b/, 'table-lamp'],
     [/\b(lamp|floor light|torchiere)\b/, 'floor-lamp'],
     [/\b(plant|planter|tree|ficus|monstera)\b/, 'plant'],
   ]

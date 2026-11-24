@@ -2,6 +2,7 @@
 // illustration per catalog category, drawn in the same oblique projection (depth runs up and to
 // the right), with light from the top left: tops are lighter, right sides darker.
 import { memo, type ReactNode } from 'react'
+import type { ThumbLook } from './swatches'
 
 // ---------------------------------------------------------------- color helpers
 
@@ -491,6 +492,37 @@ const SHOTS: Record<string, Shot> = {
     sx: 50,
     sw: 16,
   },
+  'table-lamp': {
+    draw: (p) => (
+      <>
+        <circle cx={50} cy={46} r={20} fill="#ffe7a3" opacity={0.35} stroke="none" />
+        <ellipse cx={50} cy={GROUND - 1} rx={9} ry={2.8} fill={p.base.s} stroke={p.line} />
+        <path d={`M41 ${GROUND - 2}Q38 ${GROUND - 16} 46 ${GROUND - 26}H54Q62 ${GROUND - 16} 59 ${GROUND - 2}Z`} fill={p.base.f} stroke={p.line} />
+        <path d={`M50 ${GROUND - 26}V54`} stroke={p.metal.t} strokeWidth={2} />
+        <polygon points={pts([[30, 56], [70, 56], [62, 34], [38, 34]])} fill={p.base.t} stroke={p.line} />
+        <ellipse cx={50} cy={56} rx={20} ry={3} fill={p.base.s} stroke={p.line} />
+      </>
+    ),
+    sx: 50,
+    sw: 20,
+  },
+  pendant: {
+    draw: (p) => (
+      <>
+        <polygon points={pts([[30, 54], [70, 54], [80, GROUND - 2], [20, GROUND - 2]])} fill="#ffe7a3" opacity={0.22} stroke="none" />
+        <ellipse cx={50} cy={GROUND - 2} rx={28} ry={5} fill="#ffe7a3" opacity={0.45} stroke="none" />
+        <rect x={42} y={6} width={16} height={4} rx={2} fill={p.metal.t} stroke={p.line} />
+        <path d="M50 10V29" stroke={p.line} strokeWidth={1.6} />
+        <path d="M45 29h10l2 6H43z" fill={p.base.s} stroke={p.line} />
+        <path d="M26 53Q28 35 50 34Q72 35 74 53Z" fill={p.base.f} stroke={p.line} />
+        <path d="M33 48Q36 39 46 37" stroke={p.base.t} strokeWidth={3} fill="none" />
+        <ellipse cx={50} cy={53} rx={24} ry={3.5} fill={p.base.s} stroke={p.line} />
+        <circle cx={50} cy={55.5} r={4.5} fill="#fff3d6" stroke={p.line} strokeWidth={1.4} />
+      </>
+    ),
+    sx: 50,
+    sw: 14,
+  },
   plant: {
     draw: (p) => {
       const leaf = (cx: number, cy: number, rot: number, s = 1, lit = false) => (
@@ -513,6 +545,153 @@ const SHOTS: Record<string, Shot> = {
     },
     sx: 50,
     sw: 22,
+  },
+}
+
+// Wall decor: drawn face-on (it hangs flat on a wall), with a soft wall-shadow behind and no floor shadow.
+const wallShadow = (x: number, y: number, w: number, h: number, r = 3) => <rect x={x + 2.5} y={y + 3} width={w} height={h} rx={r} fill="rgba(70, 45, 20, 0.14)" stroke="none" />
+Object.assign(SHOTS, {
+  'wall-art': {
+    draw: (p: Pal) => (
+      <>
+        {wallShadow(26, 14, 48, 64)}
+        <rect x={26} y={14} width={48} height={64} rx={2} fill={p.wood.t} stroke={p.line} />
+        <rect x={32} y={20} width={36} height={52} fill={mix(p.base.f, '#ffffff', 0.55)} stroke={p.line} strokeWidth={1.6} />
+        <circle cx={58} cy={33} r={6} fill="#ffc24b" stroke="none" />
+        <path d="M32 72V58Q41 46 50 56T68 50V72Z" fill={p.base.f} stroke="none" />
+        <path d="M32 72V64Q44 58 54 65T68 62V72Z" fill={p.base.s} stroke="none" />
+        <rect x={32} y={20} width={36} height={52} fill="none" stroke={p.line} strokeWidth={1.6} />
+      </>
+    ),
+    sx: 50,
+    sw: 0,
+  },
+  mirror: {
+    draw: (p: Pal) => (
+      <>
+        <circle cx={52.5} cy={49} r={30} fill="rgba(70, 45, 20, 0.14)" stroke="none" />
+        <circle cx={50} cy={46} r={30} fill={p.base.t} stroke={p.line} />
+        <circle cx={50} cy={46} r={24} fill="#dceef4" stroke={p.line} strokeWidth={1.6} />
+        <path d="M36 40Q40 28 52 25" stroke="#ffffff" strokeWidth={4} fill="none" />
+        <path d="M58 60L64 54" stroke="#ffffff" strokeWidth={2.4} fill="none" />
+      </>
+    ),
+    sx: 50,
+    sw: 0,
+  },
+  'wall-shelf': {
+    draw: (p: Pal) => (
+      <>
+        {[0, 1, 2, 3].map((i) => {
+          const h = [26, 22, 28, 18][i]
+          const x = 24 + i * 9
+          return i === 3 ? (
+            <rect key={i} x={x + 2} y={60 - h} width={7} height={h} rx={1} transform={`rotate(14 ${x + 9} 60)`} fill={tone(BOOKS[i]).f} stroke={p.line} />
+          ) : (
+            <rect key={i} x={x} y={60 - h} width={8} height={h} rx={1} fill={tone(BOOKS[i]).f} stroke={p.line} />
+          )
+        })}
+        <ellipse cx={68} cy={55} rx={6} ry={5} fill="#5f8f5a" stroke={p.line} />
+        <rect x={64} y={54} width={8} height={6} rx={1} fill="#d98a5f" stroke={p.line} />
+        <Box x={18} b={66} w={64} h={6} d={10} c={p.base} line={p.line} />
+        <rect x={22} y={67} width={60} height={3} fill="rgba(70, 45, 20, 0.14)" stroke="none" />
+      </>
+    ),
+    sx: 50,
+    sw: 0,
+  },
+  'wall-clock': {
+    draw: (p: Pal) => (
+      <>
+        <circle cx={52.5} cy={49} r={26} fill="rgba(70, 45, 20, 0.14)" stroke="none" />
+        <circle cx={50} cy={46} r={26} fill={p.wood.f} stroke={p.line} />
+        <circle cx={50} cy={46} r={21} fill={p.base.t} stroke={p.line} strokeWidth={1.6} />
+        {[0, 1, 2, 3].map((i) => (
+          <circle key={i} cx={50 + 16 * Math.sin((i * Math.PI) / 2)} cy={46 - 16 * Math.cos((i * Math.PI) / 2)} r={1.8} fill={p.ink} stroke="none" />
+        ))}
+        <path d="M50 46V32M50 46l9 5" stroke={p.ink} strokeWidth={2.4} />
+        <circle cx={50} cy={46} r={2.2} fill="#ff7a59" stroke="none" />
+      </>
+    ),
+    sx: 50,
+    sw: 0,
+  },
+  curtains: {
+    draw: (p: Pal) => (
+      <>
+        <rect x={34} y={18} width={32} height={42} fill="#dceef4" stroke={p.line} strokeWidth={1.6} />
+        <path d="M50 18V60M34 39H66" stroke={p.line} strokeWidth={1.4} />
+        <path d="M16 12H84" stroke={p.metal.s} strokeWidth={3} />
+        {[-1, 1].map((k) => {
+          const x0 = k < 0 ? 18 : 82
+          const x1 = k < 0 ? 40 : 60
+          return (
+            <g key={k}>
+              <path d={`M${x0} 13H${x1}Q${x1 - k * 2} 40 ${x1 + k * 4} 46Q${x1 - k * 6} 64 ${x1 - k * 2} ${GROUND}H${x0}Z`} fill={p.base.f} stroke={p.line} />
+              <path d={`M${(x0 + x1) / 2} 15V${GROUND - 2}M${x0 + (x1 - x0) * 0.75} 16Q${x0 + (x1 - x0) * 0.7} 60 ${x0 + (x1 - x0) * 0.8} ${GROUND - 2}`} stroke={p.base.s} strokeWidth={1.8} fill="none" />
+            </g>
+          )
+        })}
+      </>
+    ),
+    sx: 50,
+    sw: 0,
+  },
+} satisfies Record<string, Shot>)
+
+/** Variant shots ("category:look"): a round dining or coffee table on a pedestal, a tall chest of drawers. */
+const roundTable = (topY: number, rx: number, plates: boolean): Draw => (p) => {
+  const cx = 50
+  return (
+    <>
+      <ellipse cx={cx} cy={GROUND - 1} rx={rx * 0.42} ry={4} fill={p.base.s} stroke={p.line} />
+      <Box x={cx - 4} b={GROUND - 2} w={8} h={GROUND - 2 - topY} d={4} z={-2} c={p.base} line={p.line} />
+      <ellipse cx={cx} cy={topY + 2.5} rx={rx} ry={rx * 0.34} fill={p.base.s} stroke={p.line} />
+      <ellipse cx={cx} cy={topY} rx={rx} ry={rx * 0.34} fill={p.base.t} stroke={p.line} />
+      {plates &&
+        [-1, 1].map((k) => <ellipse key={k} cx={cx + k * rx * 0.48} cy={topY} rx={6} ry={2.2} fill={p.white.f} stroke={p.line} />)}
+      {plates && <rect x={cx - 2.5} y={topY - 9} width={5} height={9} rx={2} fill={tone(BOOKS[1]).f} stroke={p.line} />}
+    </>
+  )
+}
+/** A framed print drawn face-on in any box: frame, mat, a sun and two soft hills (tall and wide variants). */
+const framedArt = (x: number, y: number, w: number, h: number): Draw => (p) => {
+  const m = 6
+  const [ix, iy, iw, ih] = [x + m, y + m, w - 2 * m, h - 2 * m]
+  const b = iy + ih
+  return (
+    <>
+      {wallShadow(x, y, w, h)}
+      <rect x={x} y={y} width={w} height={h} rx={2} fill={p.wood.t} stroke={p.line} />
+      <rect x={ix} y={iy} width={iw} height={ih} fill={mix(p.base.f, '#ffffff', 0.55)} stroke="none" />
+      <circle cx={ix + iw * 0.72} cy={iy + ih * 0.25} r={Math.min(iw, ih) * 0.16} fill="#ffc24b" stroke="none" />
+      <path d={`M${ix} ${b}V${b - ih * 0.3}Q${ix + iw * 0.25} ${b - ih * 0.55} ${ix + iw * 0.5} ${b - ih * 0.32}T${ix + iw} ${b - ih * 0.4}V${b}Z`} fill={p.base.f} stroke="none" />
+      <path d={`M${ix} ${b}V${b - ih * 0.15}Q${ix + iw * 0.35} ${b - ih * 0.3} ${ix + iw * 0.6} ${b - ih * 0.14}T${ix + iw} ${b - ih * 0.18}V${b}Z`} fill={p.base.s} stroke="none" />
+      <rect x={ix} y={iy} width={iw} height={ih} fill="none" stroke={p.line} strokeWidth={1.6} />
+    </>
+  )
+}
+const VARIANTS: Record<string, Shot> = {
+  'wall-art:tall': { draw: framedArt(33, 6, 34, 80), sx: 50, sw: 0 },
+  'wall-art:wide': { draw: framedArt(12, 24, 76, 52), sx: 50, sw: 0 },
+  'dining-table:round': { draw: roundTable(GROUND - 44, 34, true), sx: 50, sw: 32 },
+  'coffee-table:round': { draw: roundTable(GROUND - 26, 30, false), sx: 50, sw: 30 },
+  'dresser:tall': {
+    draw: (p) => (
+      <>
+        <Box x={30} b={GROUND} w={3} h={6} d={2} z={16} c={p.base} line={p.line} />
+        <Box x={59} b={GROUND} w={3} h={6} d={2} z={16} c={p.base} line={p.line} />
+        <Box x={30} b={GROUND} w={3} h={6} d={2} z={1} c={p.base} line={p.line} />
+        <Box x={59} b={GROUND} w={3} h={6} d={2} z={1} c={p.base} line={p.line} />
+        <Box x={28} b={GROUND - 5} w={36} h={66} d={20} c={p.base} line={p.line} />
+        <path d={`M28 ${GROUND - 21.5}h36M28 ${GROUND - 38}h36M28 ${GROUND - 54.5}h36`} stroke={p.line} strokeWidth={1.6} />
+        {[0, 1, 2, 3].map((r) => (
+          <rect key={r} x={42} y={GROUND - 14.5 - r * 16.5} width={8} height={2.6} rx={1.3} fill={p.line} stroke="none" />
+        ))}
+      </>
+    ),
+    sx: 54,
+    sw: 26,
   },
 }
 
@@ -542,15 +721,24 @@ function palette(color: string): Pal {
   }
 }
 
-export const ItemThumb = memo(function ItemThumb({ category, color, size = 64 }: { category: string; color: string; size?: number }) {
-  const shot = SHOTS[category]
+export const ItemThumb = memo(function ItemThumb({ category, color, size = 64, look }: { category: string; color: string; size?: number; look?: ThumbLook }) {
+  const variant = look?.round ? VARIANTS[`${category}:round`] : look?.tall ? VARIANTS[`${category}:tall`] : look?.wide ? VARIANTS[`${category}:wide`] : undefined
+  const shot = variant ?? SHOTS[category]
+  const k = look?.scale && look.scale !== 1 ? look.scale : 1
   const p = palette(color || '#9aa4ad')
   const sx = shot?.sx ?? 52
   const sw = shot?.sw ?? 40
   return (
     <svg className="item-thumb" viewBox="0 0 100 100" width={size} height={size} aria-hidden strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round">
-      <ellipse cx={sx} cy={GROUND + 2} rx={sw} ry={5.5} fill="rgba(70, 45, 20, 0.16)" />
-      {shot ? shot.draw(p) : boxShot(p)}
+      <ellipse cx={sx} cy={GROUND + 2} rx={sw * k} ry={5.5} fill="rgba(70, 45, 20, 0.16)" />
+      {k === 1 ? (
+        shot ? shot.draw(p) : boxShot(p)
+      ) : (
+        // Smaller variants shrink toward the middle of their footprint, feet on the ground.
+        <g transform={`translate(${sx} ${GROUND}) scale(${k}) translate(${-sx} ${-GROUND})`} strokeWidth={2.2 / k}>
+          {shot ? shot.draw(p) : boxShot(p)}
+        </g>
+      )}
     </svg>
   )
 })

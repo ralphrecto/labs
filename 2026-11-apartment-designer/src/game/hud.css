@@ -1,22 +1,25 @@
 /* Game HUD: top bar, mode dock, build tray, selection bar, sheets. */
-.game { --dock-h: 96px; --top-h: 72px; }
+/* Both grow with the text when the root font size is raised ((1rem - 16px) is 0 at the default). */
+.game { --dock-h: calc(96px + (1rem - 16px) * 0.875); --top-h: calc(72px + (1rem - 16px) * 1.5); }
 
 .hud-stage { position: absolute; inset: 0; }
+/* The room owns pinch, drag and double-tap: they orbit and zoom the view instead of the page. */
+.hud-stage, .hud-stage canvas { touch-action: none !important; } /* !important: the orbit controls write touch-action inline */
 .hud-stage .scene-wrap canvas { outline: none; }
 .game .plan-wrap { background: #f7f1e6; }
 .game .plan-title, .game .plan-tools { display: none; }
 .game .draw-hint {
-  bottom: calc(var(--dock-h) + 18px + env(safe-area-inset-bottom)); border: none; border-radius: 16px; padding: 10px 14px; font: 700 14px var(--g-font);
+  bottom: calc(var(--dock-h) + 18px + env(safe-area-inset-bottom)); border: none; border-radius: 16px; padding: 10px 14px; font: 700 0.875rem var(--g-font);
   box-shadow: var(--g-shadow); background: var(--g-paper); white-space: normal; max-width: calc(100vw - 32px); flex-wrap: wrap; justify-content: center;
 }
 .game .draw-hint .muted { display: none; }
-.game .draw-hint input { font: 700 16px var(--g-font); border-radius: 10px; border: 2px solid var(--g-line); padding: 6px 10px; }
+.game .draw-hint input { font: 700 1rem var(--g-font); border-radius: 10px; border: 2px solid var(--g-line); padding: 6px 10px; }
 .game .draw-hint-sub { display: none; }
 
 /* ---------- top bar */
 .hud-top {
   position: absolute; top: 0; left: 0; right: 0; z-index: 20; display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 8px;
-  padding: calc(12px + env(safe-area-inset-top)) 16px 0; pointer-events: none;
+  padding: calc(12px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); pointer-events: none;
 }
 .hud-top > * { pointer-events: auto; }
 .hud-home {
@@ -25,28 +28,89 @@
   transition: transform 0.18s var(--g-ease);
 }
 .hud-home:hover { transform: translateY(-2px); }
-.hud-home-icon { width: 36px; height: 36px; border-radius: 50%; background: var(--g-coral); color: #fff; display: grid; place-items: center; flex: none; }
+/* Paper disc with a terracotta glyph: the filled terracotta is kept for the active dock mode. */
+.hud-home-icon { width: 36px; height: 36px; border-radius: 50%; background: var(--g-paper-2); color: var(--g-coral-ink); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--g-coral) 28%, transparent); display: grid; place-items: center; flex: none; }
 .hud-home-icon svg { width: 20px; height: 20px; }
 .hud-home-text { display: flex; flex-direction: column; min-width: 0; }
-.hud-home-text strong { font-weight: 900; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hud-home-text small { font-weight: 700; font-size: 12px; color: var(--g-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-home-text strong { font-weight: 900; font-size: 0.9375rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-home-text small { font-weight: 700; font-size: 0.75rem; color: var(--g-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hud-center { justify-self: center; }
 .hud-right { justify-self: end; display: flex; gap: 8px; }
+.hud-undo { display: contents; }
 @media (max-width: 640px) {
-  .hud-top { grid-template-columns: auto 1fr; grid-template-areas: 'home right' 'center center'; row-gap: 10px; }
-  .hud-home { grid-area: home; padding-right: 5px; }
+  /* One row: the Designs icon, the stars pill and Settings. The Next chip hangs right under the pill. */
+  .hud-top { grid-template-columns: auto 1fr auto; grid-template-areas: 'home center right'; align-items: center; column-gap: 8px; }
+  .hud-home { grid-area: home; padding: 4px; }
+  .hud-right .g-icon.sm { width: 44px; height: 44px; }
   .hud-home-text { display: none; }
   .hud-right { grid-area: right; }
-  .hud-center { grid-area: center; }
+  .hud-center { grid-area: center; min-width: 0; }
+  /* Undo and Redo move down beside the dock, within thumb reach: Undo to its left, Redo to its right. */
+  .hud-undo .g-icon { position: fixed; z-index: 30; bottom: calc(12px + 15px + env(safe-area-inset-bottom)); width: 44px; height: 44px; box-shadow: var(--g-shadow); }
+  .hud-undo .g-icon:first-child { left: max(12px, env(safe-area-inset-left)); }
+  .hud-undo .g-icon:last-child { right: max(12px, env(safe-area-inset-right)); }
+  /* Nothing to undo yet: no button, so the corners stay clear (it appears with the first edit). */
+  .hud-undo .g-icon:disabled { visibility: hidden; }
 }
 
 /* ---------- camera buttons */
-.hud-cam { position: absolute; right: 16px; top: calc(var(--top-h) + 10px + env(safe-area-inset-top)); z-index: 15; display: flex; flex-direction: column; gap: 8px; }
-@media (max-width: 640px) { .hud-cam { top: calc(124px + env(safe-area-inset-top)); } }
-.hud-look { position: absolute; top: calc(16px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 20; display: flex; gap: 8px; padding: 6px; background: var(--g-paper); border-radius: 999px; box-shadow: var(--g-shadow-sm); }
-.hud-look .g-chip { background: transparent; }
-.hud-look .g-chip.on { background: var(--g-ink); }
+.hud-cam { position: absolute; right: max(16px, env(safe-area-inset-right)); top: calc(var(--top-h) + 10px + env(safe-area-inset-top)); z-index: 15; display: flex; flex-direction: column; gap: 8px; }
+/* Phones: below the one-row top bar and the Next chip under it. */
+@media (max-width: 640px) { .hud-cam { top: calc(106px + env(safe-area-inset-top)); } }
+@media (max-width: 700px) and (orientation: portrait) {
+  .hud-cam .g-icon.sm { width: 44px; height: 44px; }
+  /* First-run captions sit under the buttons, small, instead of pills beside them. */
+  .hud-cam { gap: 6px; }
+  .hud-cam .hud-cam-row { flex-direction: column; align-items: center; gap: 2px; }
+  .hud-cam .hud-cam-label {
+    position: static; order: 2; transform: none; background: none; box-shadow: none; padding: 0; color: var(--g-ink);
+    font: 800 0.625rem/1.1 var(--g-font); text-shadow: 0 0 3px var(--g-paper), 0 0 3px var(--g-paper); animation: hud-caption 9s ease both;
+  }
+}
+@keyframes hud-caption { 0% { opacity: 0; } 5%, 88% { opacity: 1; } 100% { opacity: 0; } }
+/* Small phones: the column never runs down into the drawer; extra buttons wrap to its left. */
+@media (max-width: 360px) {
+  .hud-cam { max-height: calc(100vh - 106px - var(--dock-h) - 26vh - 12px); flex-wrap: wrap-reverse; align-content: flex-start; column-gap: 8px; }
+}
+.hud-drawer-slot { display: contents; }
+.hud-drawer-slot.tucked .buy-drawer { display: none; }
+.hud-cam-row { position: relative; display: flex; justify-content: flex-end; }
+/* While the style picker is open, lift the whole column above the drawer, selection bar and dock. */
+.hud-cam:has(.sty-pop) { z-index: 45; }
+.hud-cam-label {
+  position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%); white-space: nowrap; pointer-events: none;
+  background: var(--g-ink); color: #fff; font: 800 0.75rem var(--g-font); padding: 4px 10px; border-radius: 999px; box-shadow: var(--g-shadow-sm);
+  animation: hud-label 9s ease both;
+}
+@keyframes hud-label { 0% { opacity: 0; transform: translate(6px, -50%); } 5%, 88% { opacity: 1; transform: translate(0, -50%); } 100% { opacity: 0; } }
+
+/* Look mode: Dollhouse / Walk in segmented control, plus a round Spin toggle beside it. */
+.hud-look-bar { position: absolute; top: calc(16px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 10px; }
+.hud-look { display: flex; gap: 4px; padding: 5px; background: var(--g-paper); border-radius: 999px; box-shadow: var(--g-shadow-sm); }
+.hud-look .g-chip { background: transparent; position: relative; min-height: 38px; padding: 0 16px; }
+.hud-look .g-chip::after { content: ''; position: absolute; inset: -5px -2px; border-radius: 999px; } /* 48px touch target */
+.hud-look .g-chip.on { background: var(--g-coral); color: #fff; }
+.hud-spin {
+  width: 46px; height: 46px; flex: none; border-radius: 50%; border: 3px solid transparent; background: var(--g-paper); color: var(--g-ink-2); display: grid; place-items: center;
+  box-shadow: var(--g-shadow-sm); cursor: pointer; padding: 0; transition: border-color 0.15s, color 0.15s, transform 0.18s var(--g-ease);
+}
+.hud-spin:active { transform: scale(0.92); }
+.hud-spin.on { border-color: var(--g-coral); color: var(--g-coral-ink); }
+.hud-spin.on svg { animation: hud-spin 4s linear infinite; }
+@keyframes hud-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .hud-spin.on svg { animation: none; } }
+.game button.hud-spin:hover { border-color: var(--g-line); background: var(--g-paper); }
+.game button.hud-spin.on:hover { border-color: var(--g-coral); }
 .mode-look .hud-cam { display: none; }
+
+/* First walk-in: how to look around and move. */
+.scene-eye-hint {
+  position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 12; pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: rgba(45, 38, 32, 0.82); color: #fff; padding: 12px 20px; border-radius: 20px; font: 600 0.8125rem var(--g-font, system-ui); text-align: center;
+  width: max-content; max-width: calc(100vw - 48px); animation: g-pop 0.3s var(--g-ease, ease-out);
+}
+.scene-eye-hint b { font-weight: 900; font-size: 1rem; white-space: nowrap; }
+
 
 /* ---------- dock */
 .hud-dock {
@@ -55,23 +119,25 @@
 }
 .hud-mode {
   border: none; background: transparent; border-radius: 999px; padding: 8px 18px 8px 8px; display: flex; align-items: center; gap: 8px; cursor: pointer;
-  font: 900 15px var(--g-font); color: var(--g-ink-2); transition: background 0.2s, color 0.2s, transform 0.18s var(--g-ease);
+  font: 900 0.9375rem var(--g-font); color: var(--g-ink-2); transition: background 0.2s, color 0.2s, transform 0.18s var(--g-ease);
 }
-.hud-mode:hover { transform: translateY(-2px); }
+@media (hover: hover) { .hud-mode:not(.on):hover { transform: translateY(-2px); } }
+.hud-mode-label { line-height: 1.15; }
 .hud-mode-icon { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: var(--g-paper-2); transition: background 0.2s, transform 0.25s var(--g-ease); }
 .hud-mode-icon svg { width: 24px; height: 24px; }
 .hud-mode.on { color: var(--g-ink); }
 .hud-mode.on .hud-mode-icon { color: #fff; transform: scale(1.08) rotate(-6deg); }
-.hud-mode-build.on .hud-mode-icon { background: var(--g-plum); }
-.hud-mode-buy.on .hud-mode-icon { background: var(--g-coral); }
-.hud-mode-look.on .hud-mode-icon { background: var(--g-sky); }
+.hud-mode.on .hud-mode-icon { background: var(--g-coral); }
 .hud-mode.on { background: var(--g-paper-2); }
 @media (max-width: 480px) {
-  .hud-mode { flex-direction: column; gap: 2px; padding: 4px 12px 4px; font-size: 12px; }
+  .hud-mode { flex-direction: column; gap: 2px; padding: 4px 12px 4px; font-size: 0.75rem; }
   .hud-mode-icon { width: 44px; height: 44px; }
   .hud-mode.on { background: transparent; }
 }
-.mode-look .hud-dock { opacity: 0.85; }
+/* iPhone SE width: a narrower dock so Undo and Redo sit clear of it. */
+@media (max-width: 360px) {
+  .hud-mode { padding: 4px 6px; }
+}
 
 /* ---------- build tray */
 .hud-tray {
@@ -81,12 +147,17 @@
 }
 .hud-tool {
   border: none; background: var(--g-paper-2); border-radius: 16px; width: 78px; padding: 10px 4px 8px; display: flex; flex-direction: column; align-items: center; gap: 6px;
-  font: 800 12px var(--g-font); color: var(--g-ink); cursor: pointer; flex: none; transition: transform 0.18s var(--g-ease), background 0.15s;
+  font: 800 0.75rem var(--g-font); color: var(--g-ink); cursor: pointer; flex: none; transition: transform 0.18s var(--g-ease), background 0.15s;
 }
 .hud-tool:hover { transform: translateY(-3px); background: #efe4d3; }
 .hud-tool-icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--g-plum); color: #fff; }
 .hud-tool-icon svg { width: 22px; height: 22px; }
-@media (max-width: 480px) { .hud-tool { width: 64px; } }
+/* Phones: five tools fit across without scrolling. (A scrolling tray here also left a blank cream
+   box painted over the room in some browsers.) */
+@media (max-width: 480px) {
+  .hud-tray { gap: 6px; padding: 8px; overflow: visible; }
+  .hud-tool { width: calc((100vw - 24px - 16px - 24px) / 5); max-width: 64px; }
+}
 
 .hud-toolbanner {
   position: absolute; top: calc(16px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 35; display: flex; align-items: center; gap: 12px;
@@ -107,11 +178,11 @@
 .hud-ctx-roomicon svg { width: 24px; height: 24px; }
 .hud-ctx-text { display: flex; flex-direction: column; min-width: 0; max-width: 150px; }
 .hud-ctx-text strong { font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hud-ctx-text small { color: var(--g-ink-2); font-weight: 700; font-size: 12px; white-space: nowrap; }
+.hud-ctx-text small { color: var(--g-ink-2); font-weight: 700; font-size: 0.75rem; white-space: nowrap; }
 .hud-ctx-actions { display: flex; gap: 2px; }
 .hud-act {
   border: none; background: transparent; border-radius: 14px; width: 54px; padding: 6px 0 4px; display: flex; flex-direction: column; align-items: center; gap: 3px;
-  font: 800 11px var(--g-font); color: var(--g-ink-2); cursor: pointer; transition: transform 0.18s var(--g-ease), background 0.15s;
+  font: 800 0.8125rem var(--g-font); color: var(--g-ink-2); cursor: pointer; transition: transform 0.18s var(--g-ease), background 0.15s;
 }
 .hud-act svg { width: 22px; height: 22px; color: var(--g-ink); }
 .hud-act:hover { background: var(--g-paper-2); transform: translateY(-2px); }
@@ -121,7 +192,7 @@
 .hud-ctx-done { width: 48px; height: 48px; border-radius: 50%; border: none; background: var(--g-sage); color: #fff; display: grid; place-items: center; cursor: pointer; flex: none; box-shadow: 0 3px 0 #4a8a67; }
 .hud-ctx-done svg { width: 24px; height: 24px; }
 .hud-ctx-done:active { transform: translateY(2px); box-shadow: none; }
-.hud-ctx-warn { background: #fff1de; color: #8a4b0f; font-weight: 800; font-size: 13px; padding: 8px 14px; border-radius: 14px; box-shadow: var(--g-shadow-sm); max-width: 360px; text-align: center; animation: g-pop 0.25s var(--g-ease); }
+.hud-ctx-warn { background: #fff1de; color: #8a4b0f; font-weight: 800; font-size: 0.8125rem; padding: 8px 14px; border-radius: 14px; box-shadow: var(--g-shadow-sm); max-width: 360px; text-align: center; animation: g-pop 0.25s var(--g-ease); }
 .hud-ctx-warn::before { content: '⚠︎ '; }
 .hud-paint { display: grid; grid-template-columns: repeat(6, 32px); gap: 8px; padding: 12px; border-radius: 20px; animation: g-pop 0.2s var(--g-ease); }
 .hud-paint button { width: 32px; height: 32px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.25); cursor: pointer; padding: 0; transition: transform 0.15s var(--g-ease); }
@@ -129,7 +200,7 @@
 @media (max-width: 520px) {
   .hud-ctx { flex-wrap: wrap; justify-content: center; }
   .hud-ctx-id { width: 100%; padding: 0 4px; }
-  .hud-ctx-done { position: absolute; right: 8px; top: 8px; width: 40px; height: 40px; }
+  .hud-ctx-done { position: absolute; right: 8px; top: 8px; width: 44px; height: 44px; }
   .hud-ctx-wrap { width: calc(100vw - 16px); }
   .hud-ctx { width: 100%; position: relative; }
   .hud-ctx-text { max-width: none; }
@@ -138,22 +209,42 @@
 
 /* ---------- scan review (furniture detection) */
 .hud-review {
-  position: absolute; right: 16px; top: calc(var(--top-h) + 8px); bottom: calc(var(--dock-h) + 12px); width: 340px; z-index: 26; overflow-y: auto; padding: 4px;
+  position: absolute; right: max(16px, env(safe-area-inset-right)); top: calc(var(--top-h) + 8px); bottom: calc(var(--dock-h) + 12px); width: 340px; z-index: 26; overflow-y: auto; padding: 4px;
   animation: g-rise 0.3s var(--g-ease);
 }
 @media (max-width: 640px) { .hud-review { left: 8px; right: 8px; width: auto; top: auto; max-height: 50vh; } }
 
 /* ---------- toast */
 .hud-toast .toast {
-  bottom: auto; top: calc(var(--top-h) + 64px + env(safe-area-inset-top)); background: var(--g-ink); border-radius: 999px; padding: 10px 18px; font: 800 14px var(--g-font);
-  max-width: calc(100vw - 32px); text-align: center; animation: g-pop 0.25s var(--g-ease); z-index: 60;
+  bottom: auto; top: calc(var(--top-h) + 64px + env(safe-area-inset-top)); z-index: 60;
+  /* A paper pill like the rest of the HUD, with a honey dot, up to two lines so refusals stay readable. */
+  background: var(--g-paper); color: var(--g-ink); box-shadow: var(--g-shadow); border-radius: 999px;
+  /* The two-line clamp clips at the padding box, so the vertical breathing room is a transparent
+     border instead of padding: a third line is cut off cleanly rather than half showing. */
+  box-sizing: border-box; padding: 0 14px 0 26px; border: 0 solid transparent; border-block-width: 7px; font: 800 0.8125rem/1.3 var(--g-font);
+  max-width: calc(100vw - 32px); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-height: calc(2.6em + 14px); text-align: left;
+  background-image: radial-gradient(circle at 14px 50%, var(--g-sun) 0 4px, transparent 4.5px);
+  animation: g-pop 0.25s var(--g-ease); transition: top 0.25s var(--g-ease);
+}
+/* On phones the "Goal complete" banner slides in under the stars, right where the toast sits, so the
+   toast steps down below it while the banner shows. */
+@media (max-width: 640px) {
+  /* The Next chip sits under the stars on phones; the toast steps below it and keeps clear of the
+     camera buttons on the right. */
+  /* The toast takes the Next chip's place under the stars (the chip hides while it shows, below),
+     keeping clear of the camera buttons on the right. */
+  .game:has(.goal-next) .hud-toast .toast { top: calc(62px + env(safe-area-inset-top)); max-width: calc(100vw - 32px); }
+  .game:has(.goal-banner) .hud-toast .toast { top: calc(124px + env(safe-area-inset-top)); }
+  /* First-run labels beside the camera buttons would run under the Next chip, so the chip waits
+     until they have gone (about 9 s, or the first tap on a camera button). */
+  .game:has(.hud-cam.labelled) .goal-next { visibility: hidden; opacity: 0; }
 }
 
 /* ---------- sheets */
 .hud-sheet { position: relative; }
 .hud-sheet-close { position: absolute; top: 14px; right: 14px; box-shadow: none; background: var(--g-paper-2); }
 .hud-sheet h2 { padding-right: 48px; }
-.hud-h3 { margin: 22px 0 8px; font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em; color: var(--g-ink-2); }
+.hud-h3 { margin: 22px 0 8px; font-size: 0.8125rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em; color: var(--g-ink-2); }
 .hud-form { display: flex; flex-direction: column; gap: 14px; }
 .hud-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .hud-form-row input { width: 100%; min-width: 0; }
@@ -162,17 +253,24 @@
 .hud-settings .g-toggle + .g-toggle { border-top: 1px solid var(--g-line); }
 .hud-settings-btns { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
 .hud-settings-btns .g-btn { justify-content: flex-start; }
+.hud-settings-row { width: 100%; border: none; border-radius: 0; background: none; color: var(--g-ink); font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
+.hud-settings-row kbd { font: 800 0.8125rem/1 var(--g-font); padding: 4px 8px; border-radius: 6px; background: var(--g-paper-2); }
+.dz-file-links { display: flex; justify-content: center; gap: 18px; margin-top: 14px; }
+.g-link { border: none; background: none; padding: 6px 2px; color: var(--g-ink-2); font: 700 0.8125rem/1.2 var(--g-font); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.g-link:hover { color: var(--g-ink); }
+.dz-home.dz-home-add { gap: 6px; padding: 8px 14px; border: 2px dashed var(--g-line); background: none; color: var(--g-ink-2); font: 800 0.8125rem/1 var(--g-font); cursor: pointer; }
+.dz-home.dz-home-add:hover { color: var(--g-ink); border-color: var(--g-coral); }
 .hud-seg { display: inline-flex; background: var(--g-paper-2); border-radius: 999px; padding: 3px; }
-.hud-seg button { border: none; background: transparent; border-radius: 999px; padding: 6px 12px; font: 800 13px var(--g-font); color: var(--g-ink-2); cursor: pointer; }
+.hud-seg button { border: none; background: transparent; border-radius: 999px; padding: 6px 12px; font: 800 0.8125rem var(--g-font); color: var(--g-ink-2); cursor: pointer; }
 .hud-seg button.on { background: #fff; color: var(--g-ink); box-shadow: var(--g-shadow-sm); }
 .hud-homename { margin-bottom: 16px; }
 .hud-designs { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 .hud-design { display: flex; align-items: center; gap: 8px; padding: 8px; box-shadow: var(--g-shadow-sm); border: 3px solid transparent; }
 .hud-design.on { border-color: var(--g-coral); }
 .hud-design-main { flex: 1; border: none; background: none; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; cursor: pointer; font-family: var(--g-font); color: var(--g-ink); min-width: 0; }
-.hud-design-main strong { font-weight: 900; font-size: 16px; }
+.hud-design-main strong { font-weight: 900; font-size: 1rem; }
 .hud-design-main small { color: var(--g-ink-2); font-weight: 700; }
-.hud-design-main input { font: 900 16px var(--g-font); border: 2px solid var(--g-sky); border-radius: 10px; padding: 4px 8px; }
+.hud-design-main input { font: 900 1rem var(--g-font); border: 2px solid var(--g-sky); border-radius: 10px; padding: 4px 8px; }
 .hud-design-actions { display: flex; gap: 4px; }
 .hud-design-actions .g-icon { box-shadow: none; background: var(--g-paper-2); }
 .hud-scanrow { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 10px; flex-wrap: wrap; box-shadow: var(--g-shadow-sm); }
@@ -180,18 +278,18 @@
 .hud-scanrow-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
 /* The classic panels, shown inside game sheets and the review card. */
-.hud-classic .panel, .hud-review .panel { border: none; background: transparent; padding: 4px 0; font-family: var(--g-font); font-size: 14px; }
+.hud-classic .panel, .hud-review .panel { border: none; background: transparent; padding: 4px 0; font-family: var(--g-font); font-size: 0.875rem; }
 .hud-review .panel { padding: 12px 14px; }
-.hud-classic .panel h3, .hud-review .panel h3 { font-weight: 900; font-size: 17px; }
+.hud-classic .panel h3, .hud-review .panel h3 { font-weight: 900; font-size: 1.0625rem; }
 .hud-classic .panel + .panel { margin-top: 8px; border-top: 1px solid var(--g-line); padding-top: 14px; }
 .game .panel button:not(.link):not(.g-btn):not(.g-icon) { border-radius: 999px; border: none; background: var(--g-paper-2); font-weight: 800; padding: 7px 14px; }
-.game .panel button.primary { background: var(--g-coral); color: #fff; }
+.game .panel button.primary { background: var(--g-coral-fill); color: #fff; }
 .game .panel button.danger { color: var(--g-bad); }
-.game .panel input, .game .panel select { border-radius: 10px; border: 2px solid var(--g-line); padding: 6px 8px; font: 600 14px var(--g-font); }
+.game .panel input, .game .panel select { border-radius: 10px; border: 2px solid var(--g-line); padding: 6px 8px; font: 600 1rem var(--g-font); } /* 16px+: iOS doesn't zoom in on focus */
 .game .panel .field span { font-weight: 800; color: var(--g-ink-2); }
 
 .hud-back-to-game {
-  position: fixed; right: 12px; bottom: 12px; z-index: 100; border: none; border-radius: 999px; padding: 10px 18px; background: #ff7a59; color: #fff; font: 800 14px system-ui, sans-serif;
+  position: fixed; right: 12px; bottom: 12px; z-index: 100; border: none; border-radius: 999px; padding: 10px 18px; background: #c94a28; color: #fff; font: 800 0.875rem system-ui, sans-serif;
   box-shadow: 0 6px 18px rgba(0,0,0,0.2); cursor: pointer;
 }
 .game button.hud-tool:hover:not(:disabled) { border: none; background: #efe4d3; }
@@ -200,3 +298,231 @@
 .game button.hud-act:hover:not(:disabled) { background: var(--g-paper-2); }
 .game button.hud-ctx-done:hover { background: var(--g-sage); border: none; }
 .hud-look .g-chip { white-space: nowrap; }
+
+/* ---------- phone landscape (short screens): the drawer docks to the right as a side panel so the
+   room stays visible, and the dock moves to the left to make room for it. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .game { --side-w: min(300px, 40vw); }
+  .hud-drawer-slot .buy-drawer {
+    left: auto; right: max(12px, calc(8px + env(safe-area-inset-right))); top: calc(66px + env(safe-area-inset-top)); bottom: calc(12px + env(safe-area-inset-bottom));
+    width: var(--side-w); max-width: calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right) - 24px); max-height: none; margin: 0; border-radius: var(--g-r-lg); padding: 10px 0 6px;
+  }
+  .hud-drawer-slot .buy-tabs { justify-content: flex-start; }
+  .hud-drawer-slot .buy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); overflow-x: hidden; overflow-y: auto; flex: 1; }
+  .hud-drawer-slot .buy-grid .buy-card { width: auto; }
+  .hud-dock { left: max(12px, env(safe-area-inset-left)); transform: none; }
+  .hud-tray { left: max(12px, env(safe-area-inset-left)); transform: none; }
+  .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-cam { right: calc(max(12px, env(safe-area-inset-right)) + var(--side-w) + 12px); }
+  .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-toast .toast { left: calc(50% - var(--side-w) / 2); }
+  .hud-ctx-wrap { left: auto; right: max(12px, env(safe-area-inset-right)); transform: none; bottom: calc(12px + env(safe-area-inset-bottom)); max-width: calc(100vw - 440px); }
+  .hud-ctx-text { display: none; } /* the thumbnail names it; there is no room for the text beside the dock */
+  .g-sheet { max-height: 94vh; }
+}
+
+/* ==================== r3-c: drawer stays open, slim selection strip, shortcut list ==================== */
+/* Furnish keeps the drawer open while a piece is selected; its actions ride just above the drawer. */
+.buy-drawer > .hud-ctx-wrap.slim {
+  position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); z-index: 2;
+  width: max-content; max-width: calc(100vw - 16px);
+}
+.hud-ctx-wrap.slim .hud-ctx { flex-wrap: nowrap; width: auto; padding: 4px 6px 4px 4px; gap: 2px; border-radius: 999px; }
+.hud-ctx-wrap.slim .hud-ctx-id { width: auto; gap: 8px; padding: 0 6px 0 0; }
+.hud-ctx-wrap.slim .hud-ctx-thumb { width: 36px; height: 36px; border-radius: 50%; }
+.hud-ctx-wrap.slim .hud-ctx-roomicon { width: 28px; height: 28px; }
+.hud-ctx-wrap.slim .hud-ctx-text { max-width: 140px; }
+.hud-ctx-wrap.slim .hud-ctx-text strong { font-size: 0.875rem; }
+.hud-ctx-wrap.slim .hud-ctx-text small { font-size: 0.6875rem; }
+.hud-ctx-wrap.slim .hud-act { width: 40px; height: 40px; padding: 0; justify-content: center; border-radius: 50%; }
+.hud-ctx-wrap.slim .hud-act > span { display: none; }
+/* Round 16: the main action (Unpack) keeps its word in the slim bar, so "Tap Unpack!" finds it. */
+.hud-ctx-wrap.slim .hud-act.filled { width: auto; padding: 0 14px 0 10px; gap: 6px; border-radius: 999px; }
+.hud-ctx-wrap.slim .hud-act.filled > span { display: inline; font-weight: 800; font-size: 0.8125rem; }
+.hud-ctx-wrap.slim .hud-ctx-warn { font-size: 0.75rem; padding: 6px 12px; }
+@media (max-width: 520px) {
+  .hud-ctx-wrap.slim { width: max-content; }
+  .hud-ctx-wrap.slim .hud-ctx-text { max-width: 96px; }
+  .hud-ctx-wrap.slim .hud-ctx-text small { display: none; }
+  .hud-ctx-wrap.slim .hud-act { width: 44px; height: 44px; }
+}
+/* iPhone SE width: 44px actions leave no room for a readable name; the thumbnail names the piece. */
+@media (max-width: 360px) { .hud-ctx-wrap.slim .hud-ctx-text { display: none; } }
+
+/* Keyboard shortcuts: a "?" at the bottom left and the list it opens (desktop pointers only). */
+.hud-keys-btn { position: absolute; left: max(16px, env(safe-area-inset-left)); bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 15; font: 900 1rem var(--g-font); }
+.hud-keys {
+  position: absolute; left: max(16px, env(safe-area-inset-left)); bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 40;
+  padding: 14px 16px; border-radius: 18px; width: 330px; animation: g-pop 0.2s var(--g-ease); cursor: pointer;
+}
+.hud-keys strong { display: block; font-weight: 900; margin-bottom: 8px; }
+.hud-keys dl { margin: 0; display: grid; gap: 5px; }
+.hud-keys dl > div { display: grid; grid-template-columns: 128px 1fr; gap: 8px; align-items: baseline; }
+.hud-keys dt { margin: 0; }
+.hud-keys dd { margin: 0; font-size: 0.8125rem; font-weight: 700; color: var(--g-ink-2); }
+.hud-keys kbd { font: 800 0.75rem var(--g-font); background: var(--g-paper-2); border-radius: 6px; padding: 2px 6px; white-space: nowrap; }
+@media (hover: none), (pointer: coarse), (max-width: 640px) { .hud-keys-btn, .hud-keys { display: none; } }
+/* ==================== end r3-c ==================== */
+
+/* Phones: the drawer is compact by default, one row of small thumbnails with one-line names and
+   small tab icons (no sizes, presets or tags), so the room isn't hidden behind it. Tapping the
+   open tab again expands it to the full cards (.expanded, GameApp). */
+@media (max-width: 700px) and (orientation: portrait) {
+  .hud-drawer-slot:not(.expanded) .buy-drawer { padding: 6px 0 4px; }
+  .hud-drawer-slot:not(.expanded) .buy-tabs { padding: 2px 12px 4px; }
+  .hud-drawer-slot:not(.expanded) .buy-tab { min-width: 46px; }
+  .hud-drawer-slot:not(.expanded) .buy-tab-icon { width: 36px; height: 36px; }
+  .hud-drawer-slot:not(.expanded) .buy-tab-icon svg { width: 28px; height: 28px; }
+  .hud-drawer-slot:not(.expanded) .buy-tab-icon > svg:not(.item-thumb) { width: 18px; height: 18px; }
+  .hud-drawer-slot:not(.expanded) .buy-tab-label,
+  .hud-drawer-slot:not(.expanded) .buy-size,
+  .hud-drawer-slot:not(.expanded) .buy-presets,
+  .hud-drawer-slot:not(.expanded) .buy-tag { display: none; }
+  .hud-drawer-slot:not(.expanded) .buy-grid { padding: 6px 12px 4px; gap: 8px; scroll-padding: 0 12px; }
+  .hud-drawer-slot:not(.expanded) .buy-card { width: 72px; animation: none; }
+  .hud-drawer-slot:not(.expanded) .buy-hit { padding: 4px 4px 5px; }
+  .hud-drawer-slot:not(.expanded) .buy-thumb { height: 56px; margin: 0 0 2px; border-radius: 10px; }
+  .hud-drawer-slot:not(.expanded) .buy-thumb svg { width: 48px !important; height: 48px !important; }
+  .hud-drawer-slot:not(.expanded) .buy-name { display: block; max-width: 100%; font-size: 0.6875rem; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* The open tab carries a small chevron: tap it again to see more (or less). */
+  .buy-tab.on .buy-tab-icon::after {
+    content: ''; position: absolute; left: 50%; bottom: -7px; width: 7px; height: 7px; margin-left: -4px; border: solid var(--g-coral); border-width: 2px 0 0 2px;
+    transform: rotate(45deg); background: none;
+  }
+  .hud-drawer-slot.expanded .buy-tab.on .buy-tab-icon::after { transform: rotate(225deg); bottom: -9px; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) { padding: 6px 0 4px; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-name,
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-size,
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-presets,
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-tag { display: none; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-grid { padding: 6px 12px 4px; gap: 8px; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-card { width: 64px; animation: none; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-hit { padding: 4px; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-thumb { height: 52px; margin: 0; border-radius: 10px; }
+  .buy-drawer:has(> .hud-ctx-wrap.slim) .buy-thumb svg { width: 46px !important; height: 46px !important; }
+}
+
+/* ==================== r4-b: goals and rewards ==================== */
+/* The level-up carries the goal line, so no toast sits over it. */
+.game:has(.goal-levelup, .goal-levelup-mini) .hud-toast { display: none; }
+@media (max-width: 700px) {
+  /* The Next chip is the first thing a phone shows (no first-run camera labels there). */
+  .game:has(.hud-cam.labelled) .goal-next { visibility: visible; opacity: 1; }
+  /* Size chips crowd phone cards: only the card the Next chip pointed at keeps them. */
+  .buy-grid:has(.buy-card.hinted) .buy-card:not(.hinted) .buy-presets { display: none; }
+}
+/* ==================== end r4-b ==================== */
+
+/* ==================== r5-b: one chip under the stars ==================== */
+/* While a toast shows, the Next chip steps aside so only one pill floats under the stars. */
+.game:has(.hud-toast .toast) .goal-next,
+.game:has(.hud-toast .toast):has(.hud-cam.labelled) .goal-next { visibility: hidden; opacity: 0; pointer-events: none; }
+
+/* ==================== r9-c: laptops and desktops ==================== */
+/* Mode buttons carry their key on mouse-and-keyboard screens. */
+.hud-mode-key { display: none; }
+@media (hover: hover) and (pointer: fine) and (min-width: 641px) {
+  .hud-mode-key {
+    display: inline-grid; place-items: center; min-width: 18px; min-height: 18px; padding: 0 4px; margin-left: -2px; border-radius: 5px;
+    font: 800 0.6875rem/1 var(--g-font); color: var(--g-ink-2); background: var(--g-paper-2); box-shadow: inset 0 -1.5px 0 rgba(70, 50, 30, 0.14);
+  }
+  .hud-mode.on .hud-mode-key { background: #fff; }
+  /* The shortcut list opens at the top left in two columns, clear of the drawer's cards. */
+  .hud-keys { top: calc(var(--top-h) + 8px + env(safe-area-inset-top)); bottom: auto; width: min(660px, calc(100vw - 32px)); max-height: calc(100vh - var(--top-h) - var(--dock-h) - 24px); overflow-y: auto; }
+  .hud-keys dl { grid-template-columns: 1fr 1fr; column-gap: 20px; }
+  .hud-keys dl > div { grid-template-columns: 112px 1fr; }
+}
+/* ==================== end r9-c ==================== */
+
+/* Touch screens: the round icon buttons (Undo, Redo, Settings, Plan, the camera column) reach 44px. */
+@media (pointer: coarse) {
+  .hud-top .g-icon.sm, .hud-cam .g-icon.sm, .g-icon.sm.hud-view { width: 44px; height: 44px; }
+}
+
+/* ==================== r12-c: drag and drop, gestures, focus ==================== */
+/* Where a card dragged in from the drawer will land: its footprint, snapped, on the floor. */
+.hud-drop-ghost { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; overflow: visible; }
+.hud-drop-ghost polygon { fill: color-mix(in srgb, var(--g-sage) 22%, transparent); stroke: var(--g-sage); stroke-width: 2.5; stroke-dasharray: 7 5; stroke-linejoin: round; }
+/* Fiddling never costs stars mid-gesture: the meter holds its score until the piece is let go
+   (VibeMeter settles once, on the net change). A loss then waits a short beat, so a piece that
+   is let go and immediately picked up again never flashes the pill. */
+.game.gesturing .feel-loss { visibility: hidden; }
+.game .feel-loss { animation: hud-loss-hold 0.4s steps(1, end), g-fade 0.3s var(--g-ease, ease-out) 0.4s backwards; }
+@keyframes hud-loss-hold { from { visibility: hidden; } to { visibility: visible; } }
+@media (prefers-reduced-motion: reduce) { .game .feel-loss { animation: hud-loss-hold 0.4s steps(1, end); } }
+/* The star pill's focus ring in the game's warm coral, following its round shape. */
+.game .goal-meter:focus-visible { outline: 3px solid var(--g-coral); outline-offset: 3px; border-radius: 999px; }
+
+/* ---------------------------------------------------------------- screen reader & keyboard */
+
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+.game-main { display: contents; }
+/* The placed pieces as a keyboard list (GameApp SceneItems): hidden until a piece has focus, then
+   that piece's name shows as a chip at the top left of the stage. */
+.scene-items { list-style: none; margin: 0; padding: 0; }
+.scene-items button {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  border: 0; padding: 0;
+}
+.scene-items button:focus-visible {
+  top: calc(env(safe-area-inset-top, 0px) + 128px); left: 12px; z-index: 30; width: auto; height: auto;
+  clip-path: none; padding: 6px 12px; border-radius: 999px; background: var(--g-ink, #2b2622); color: #fff;
+  font: 600 0.875rem/1.2 var(--g-font); outline: 3px solid var(--g-sky, #4f8be8); outline-offset: 2px;
+}
+
+/* ==================== r14-b: short wide screens (a laptop at 200% zoom, ~720x450) ==================== */
+/* Too short for the side column (DESKTOP_SIDE_DRAWER needs 640px+ of height) and wider than a phone:
+   the drawer is the phone's compact bottom sheet above the centred dock, low enough that the camera
+   buttons and the Next chip under the stars stay clear of it. Phones in landscape (max-width 700)
+   keep the side panel above. `.game` lifts these over the landscape rules and buy.css.
+   Only a mouse/trackpad screen: real phones in landscape are 750-932 wide and keep the side panel
+   (r15: a 750x340 phone got this bottom sheet, its cards spilling under the dock). */
+@media (max-height: 520px) and (min-width: 700px) and (hover: hover) and (pointer: fine) {
+  .game .hud-drawer-slot .buy-drawer {
+    left: 16px; right: 16px; top: auto; bottom: var(--dock-h); width: auto; max-width: 920px; margin: 0 auto;
+    max-height: min(40vh, calc(100vh - var(--dock-h) - 180px)); border-radius: var(--g-r-lg); padding: 6px 0 4px;
+    overflow: hidden; /* cards never spill out over the dock */
+  }
+  .game .hud-drawer-slot.expanded .buy-drawer { max-height: calc(100vh - var(--dock-h) - 120px); }
+  .game .hud-drawer-slot .buy-tabs { justify-content: center; gap: 4px; padding: 2px 12px 4px; }
+  .game .hud-drawer-slot .buy-tab { min-width: 52px; gap: 3px; }
+  /* Icons and thumbnails give up height as the text grows (2rem = 32px at 200% text), so two-line names fit. */
+  .game .hud-drawer-slot .buy-tab-icon { width: clamp(26px, calc(52px - 1rem), 36px); height: clamp(26px, calc(52px - 1rem), 36px); }
+  .game .hud-drawer-slot .buy-tab-icon svg { width: 28px; height: 28px; }
+  .game .hud-drawer-slot .buy-tab-icon > svg:not(.item-thumb) { width: 18px; height: 18px; }
+  .game .hud-drawer-slot .buy-tab-label { font-size: 0.6875rem; white-space: nowrap; }
+  .game .hud-drawer-slot .buy-grid {
+    display: flex; justify-content: flex-start; gap: 8px; padding: 6px 12px 4px; overflow-x: auto; overflow-y: hidden;
+    flex: none; min-height: 0; scroll-snap-type: x proximity; scroll-padding: 0 12px; scrollbar-width: none;
+  }
+  .game .hud-drawer-slot .buy-grid .buy-empty { width: 150px; }
+  .game .hud-drawer-slot:not(.expanded) .buy-grid .buy-card { width: max(72px, 4.6rem); animation: none; }
+  .game .hud-drawer-slot:not(.expanded) .buy-hit { padding: 4px 4px 5px; }
+  .game .hud-drawer-slot:not(.expanded) .buy-thumb { height: clamp(28px, calc(96px - 2.5rem), 56px); margin: 0 0 2px; border-radius: 10px; }
+  .game .hud-drawer-slot:not(.expanded) .buy-thumb svg { width: clamp(24px, calc(88px - 2.5rem), 48px) !important; height: clamp(24px, calc(88px - 2.5rem), 48px) !important; }
+  .game .hud-drawer-slot:not(.expanded) .buy-shop-icons svg { width: 28px !important; height: 28px !important; padding: 5px; }
+  .game .hud-drawer-slot:not(.expanded) .buy-name {
+    /* Two lines at most, so a name still reads with large text (200%) instead of clipping to "So…". */
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; max-width: 100%;
+    font-size: 0.6875rem; line-height: 1.15; white-space: normal; overflow: hidden; overflow-wrap: anywhere;
+  }
+  .game .hud-drawer-slot:not(.expanded) .buy-size,
+  .game .hud-drawer-slot:not(.expanded) .buy-presets,
+  .game .hud-drawer-slot:not(.expanded) .buy-tag { display: none; }
+  .game .hud-drawer-slot.expanded .buy-grid .buy-card { width: 104px; }
+  /* Undo the phone-landscape side panel: dock, tray and selection bar centred again. */
+  .game .hud-dock, .game .hud-tray { left: 50%; transform: translateX(-50%); }
+  .game .hud-ctx-wrap { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(var(--dock-h) + 8px + env(safe-area-inset-bottom)); max-width: calc(100vw - 16px); }
+  .game .hud-ctx-text { display: flex; }
+  .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-cam { right: max(16px, env(safe-area-inset-right)); }
+  .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-toast .toast { left: 50%; }
+}
+
+/* Move-in day opens on the player's own scan (round 18): a beam sweeps it, then a veil fades into their style. */
+.hud-intro { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
+.hud-intro-beam { position: absolute; left: 0; right: 0; top: -20%; height: 18%; background: linear-gradient(180deg, rgba(120, 200, 255, 0) 0%, rgba(120, 200, 255, 0.22) 70%, rgba(190, 235, 255, 0.75) 100%); box-shadow: 0 2px 18px rgba(150, 215, 255, 0.6); animation: hud-intro-sweep 1.5s cubic-bezier(0.45, 0, 0.3, 1) both; }
+@keyframes hud-intro-sweep { from { transform: translateY(0); } to { transform: translateY(640%); } }
+.hud-intro-tag { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: rgba(29, 33, 41, 0.72); color: #dff1ff; font-weight: 800; font-size: 0.875rem; letter-spacing: 0.04em; animation: g-rise 0.4s var(--g-ease, ease) both; }
+.hud-intro-veil { position: absolute; inset: 0; pointer-events: none; z-index: 1; background: #fff4e2; animation: hud-intro-veil 700ms ease-in-out both; }
+@keyframes hud-intro-veil { 0% { opacity: 0; } 40% { opacity: 1; } 100% { opacity: 0; } }

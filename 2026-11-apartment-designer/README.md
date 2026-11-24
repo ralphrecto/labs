@@ -32,6 +32,13 @@ pasted text (M4), all wrapped in a game UI.
   The choice is remembered per browser; the classic editor keeps its plain look.
 - **Settings** (gear): units, overlays, snapping, saved designs, files, and the **Classic editor**
   with every panel and tool from the earlier milestones.
+- **Homes and designs** (the stacked-cards button top left, `src/game/Designs.tsx`): every home you
+  move into (a scan, the sample, an empty room, an opened file) gets its own save slot
+  (`src/storage.ts`: an `apartment-designer:homes` index plus `apartment-designer:home:<id>` per
+  home; the old single `doc:v1` save is migrated on first load and left in place). The sheet
+  switches, renames and deletes homes (never the last one), and shows each design as a small
+  top-down postcard with rename, copy and delete behind "…". Undo history is per session and
+  starts fresh when you switch or move into a home.
 
 Game state that isn't part of the document (phase, mode, camera, open sheet) is in
 `src/game/gameStore.ts`. Shared look: `src/game/theme.css` tokens and `.g-*` primitives; each game
@@ -65,7 +72,8 @@ it (`IMPORT_MODEL` overrides the model, default `claude-opus-5-5`).
 - **Two linked views.** A 2D plan (main editing view) and a 3D view with cut-away walls and an
   eye-level look-around. Drag furniture in either.
 - **Furniture.** A catalog of common pieces with real default sizes (bed presets twin to king).
-  Drag to move, R / Shift+R to rotate 15°, a rotation handle, arrow keys to nudge. Snaps backs
+  Drag to move, R / Shift+R to turn 90° (`,` / `.` for 15°), a rotation handle, arrow keys to nudge
+  (in the game's 3D view they follow the camera; a run of nudges or turns is one undo step). Snaps backs
   against walls, edges to other items, and to a grid (hold Alt to skip snapping). Items are boxes
   for collision; an optional GLB URL replaces the look, scaled to the item's true size.
 - **Starter catalog.** About 80 generic pieces at typical retail sizes (sofas, beds twin to

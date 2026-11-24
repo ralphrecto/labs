@@ -157,7 +157,8 @@ function notifyDeleted(what: string) {
 
 // ---------------------------------------------------------------- right: inspector + issues
 
-export function Inspector() {
+/** `game`: the game's Details sheet, where the selection bar already turns, copies and removes. */
+export function Inspector({ game = false }: { game?: boolean } = {}) {
   const selection = useStore((s) => s.selection)
   const doc = useStore((s) => s.doc)
   if (!selection)
@@ -167,7 +168,7 @@ export function Inspector() {
         <ApartmentInfo />
       </section>
     )
-  if (selection.kind === 'placement') return <PlacementInspector id={selection.id} />
+  if (selection.kind === 'placement') return <PlacementInspector id={selection.id} game={game} />
   if (selection.kind === 'room') {
     const room = doc.rooms.find((r) => r.id === selection.id)
     return room ? <RoomInspector id={room.id} /> : null
@@ -201,7 +202,7 @@ function ApartmentInfo() {
   )
 }
 
-function PlacementInspector({ id }: { id: string }) {
+function PlacementInspector({ id, game = false }: { id: string; game?: boolean }) {
   const doc = useStore((s) => s.doc)
   const s = useStore.getState()
   const units = doc.apartment.units
@@ -266,7 +267,7 @@ function PlacementInspector({ id }: { id: string }) {
           <input type="color" value={item.color} onChange={(e) => upd({ color: e.target.value })} />
         </label>
       </div>
-      <details open>
+      <details open={!game}>
         <summary>Clearance</summary>
         <div className="grid2">
           {(['front', 'back', 'left', 'right'] as const).map((side) => (
@@ -284,13 +285,15 @@ function PlacementInspector({ id }: { id: string }) {
         <TextField label="Link" value={item.link ?? ''} onChange={(link) => upd({ link: link || undefined })} />
         <TextField label="3D model URL (GLB)" value={item.glbUrl ?? ''} onChange={(glbUrl) => upd({ glbUrl: glbUrl || undefined })} />
       </details>
+      {!game && (
+        <div className="btn-row">
+          <button onClick={() => s.rotatePlacement(p.id, Math.PI / 12)}>Rotate 15°</button>
+          <button onClick={() => s.rotatePlacement(p.id, Math.PI / 2)}>90°</button>
+          <button onClick={() => s.duplicatePlacement(p.id)}>Duplicate</button>
+        </div>
+      )}
       <div className="btn-row">
-        <button onClick={() => s.rotatePlacement(p.id, Math.PI / 12)}>Rotate 15°</button>
-        <button onClick={() => s.rotatePlacement(p.id, Math.PI / 2)}>90°</button>
-        <button onClick={() => s.duplicatePlacement(p.id)}>Duplicate</button>
-      </div>
-      <div className="btn-row">
-        <button onClick={() => s.deletePlacement(p.id)}>Remove from layout</button>
+        {!game && <button onClick={() => s.deletePlacement(p.id)}>Remove from layout</button>}
         <button className="danger" onClick={() => notifyDeleted(`"${item.name}"`) && s.deleteItem(item.id)}>
           Delete item
         </button>

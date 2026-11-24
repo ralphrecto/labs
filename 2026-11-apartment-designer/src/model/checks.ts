@@ -3,29 +3,69 @@ import {
   bounds,
   centroid,
   clearanceZones,
+  closestPointOnSegment,
   convexOverlap,
   doorSwing,
   footprint,
   openingEndpoints,
+  dot,
+  norm,
+  openingEndpoints as windowEnds,
   pointInPolygon,
   polygonInsideRoom,
+  rot,
   scale,
+  sub,
   v,
   wallInwardNormal,
 } from './geometry'
 import type { Doc, Item, Layout, Placement, Room, Vec2 } from './types'
 import { formatLength } from './units'
+import { isWallDecor } from './wallDecor'
 
 export type Severity = 'error' | 'warning' | 'info'
 
 export interface Issue {
   id: string
   severity: Severity
-  kind: 'overlap' | 'wall' | 'clearance' | 'door' | 'path'
+  kind: 'overlap' | 'wall' | 'clearance' | 'door' | 'path' | 'window'
   message: string
   placementIds: string[]
   /** Area to highlight on the plan. */
   area?: Vec2[]
+}
+
+/**
+ * Round 18: a key for a home as the checks see it (its rooms, units and every placed piece with the
+ * fields that matter), so the same arrangement asked about again in one Next chip tap (each pick
+ * card dry-runs it, then the tap and the render that follows) is answered from a small cache. By
+ * content, not identity: trial layouts are rebuilt for each question.
+ */
+const itemSig = (i: Item) => `${i.id}|${i.category}|${i.name}|${i.width}|${i.depth}|${i.height}|${i.floorLevel ? 1 : 0}|${i.color}|${i.frameColor ?? ''}|${i.owned ? 1 : 0}|${i.unpack?.join(',') ?? ''}|${i.unpacked ? 1 : 0}|${JSON.stringify(i.clearance)}`
+export function homeKey(doc: Doc, layout: Layout): string {
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const ps = layout.placements.map((p) => {
+    const it = items.get(p.itemId)
+    return `${p.id}:${p.x}:${p.y}:${p.rotation}:${p.on ?? ''}:${it ? itemSig(it) : ''}`
+  })
+  return `${doc.apartment.units}#${JSON.stringify(doc.rooms)}#${ps.join('|')}`
+}
+
+/** A small first-in-first-out cache (round 18). */
+export class Memo<T> {
+  private m = new Map<string, T>()
+  private size: number
+  constructor(size = 48) {
+    this.size = size
+  }
+  get(key: string): T | undefined {
+    return this.m.get(key)
+  }
+  set(key: string, value: T): T {
+    if (this.m.size >= this.size) this.m.delete(this.m.keys().next().value!)
+    this.m.set(key, value)
+    return value
+  }
 }
 
 interface Placed {
@@ -55,11 +95,85 @@ export function doorSwings(rooms: Room[]) {
   return out
 }
 
+/** How far the landing in front of a door reaches into its room, and past the wall into the next (m). */
+export const DOOR_LANDING = 0.5
+
+/**
+ * The floor a doorway needs to walk through, a box each side of the opening (round 17: the drop
+ * search kept it clear, now the checks and the chip's moves do too). Inward: DOOR_LANDING into the
+ * door's room; outward: the wall plus DOOR_LANDING into the room beyond.
+ */
+export function doorLandings(rooms: Room[]) {
+  const out: { room: Room; openingId: string; poly: Vec2[] }[] = []
+  for (const room of rooms)
+    for (const o of room.openings) {
+      if (o.kind !== 'door') continue
+      const [a, b] = openingEndpoints(room, o)
+      const n = wallInwardNormal(room, o.wall)
+      const inD = DOOR_LANDING
+      const outD = room.wallThickness + DOOR_LANDING
+      out.push({ room, openingId: o.id, poly: [add(a, scale(n, inD)), add(b, scale(n, inD)), add(b, scale(n, -outD)), add(a, scale(n, -outD))] })
+    }
+  return out
+}
+
+/** Every door's keep-out floor: its swing and the landing either side (the drop search's hard rule). */
+export function doorKeepOut(rooms: Room[]): Vec2[][] {
+  return [...doorSwings(rooms).map((s) => s.poly), ...doorLandings(rooms).map((l) => l.poly)]
+}
+
+/** Pull-out space (m) kept free along the long sides of a dining table that seats four or more, measured from the table edge. */
+export const TABLE_PULL_OUT = 0.75
+/** A dining chair counts as at its table when this close (edge to edge, m). */
+export const CHAIR_REACH = 0.3
+/** Storage whose doors or drawers need this much free floor in front, at the very least (m). Up to the catalog ideal is a soft preference. */
+export const MIN_DRAWER_FRONT = 0.75
+export const DRAWER_PIECES = new Set(['dresser', 'wardrobe'])
+/** Less than this behind a chair pulled up to a table always gets flagged (m). */
+const MIN_CHAIR_BACK = 0.15
+
+/** Smallest distance between two convex polygons (0 when they touch or overlap). */
+export function polygonGap(a: Vec2[], b: Vec2[]): number {
+  if (convexOverlap(a, b, 0)) return 0
+  let best = Infinity
+  for (const [pts, poly] of [
+    [a, b],
+    [b, a],
+  ] as const)
+    for (const pt of pts)
+      for (let i = 0; i < poly.length; i++) best = Math.min(best, closestPointOnSegment(pt, poly[i], poly[(i + 1) % poly.length]).distance)
+  return best
+}
+
+/**
+ * Free floor a dining chair needs behind it (m). Pulled up to a table, the pull-out is measured
+ * from the table edge: TABLE_PULL_OUT less the gap to the table and the chair's own depth (never
+ * under 15 cm). Away from any table it needs its own back clearance.
+ */
+export function chairBackNeed(chair: { item: Pick<Item, 'depth' | 'clearance'>; body: Vec2[] }, tables: { body: Vec2[] }[]): number {
+  const gaps = tables.map((t) => polygonGap(chair.body, t.body)).filter((g) => g <= CHAIR_REACH)
+  if (!gaps.length) return chair.item.clearance.back
+  return Math.max(MIN_CHAIR_BACK, TABLE_PULL_OUT - Math.min(...gaps) - chair.item.depth)
+}
+
+/**
+ * The clearance a piece is checked against: a dresser or wardrobe needs only MIN_DRAWER_FRONT in
+ * front (its catalog ideal is a placement preference), and a dining chair at a table needs only
+ * what chairBackNeed says behind it.
+ */
+export function checkedClearance(item: Item, body: Vec2[], tables: { body: Vec2[] }[]): Item['clearance'] {
+  const c = item.clearance
+  if (DRAWER_PIECES.has(item.category) && c.front > MIN_DRAWER_FRONT) return { ...c, front: MIN_DRAWER_FRONT }
+  if (item.category === 'dining-chair' && c.back > 0) return { ...c, back: chairBackNeed({ item, body }, tables) }
+  return c
+}
+
 export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   const issues: Issue[] = []
   const units = doc.apartment.units
   const placed = placedItems(doc, layout)
-  const solid = placed.filter((x) => !x.item.floorLevel)
+  // Wall decor hangs above the floor: it never overlaps, needs no clearance and blocks no walkway.
+  const solid = placed.filter((x) => !x.item.floorLevel && !x.p.on && !isWallDecor(x.item.category))
 
   // Items overlapping each other.
   for (let i = 0; i < solid.length; i++)
@@ -78,6 +192,8 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
 
   // Items crossing walls or outside every room.
   for (const x of placed) {
+    // A table lamp stands on its host, which already answers for the walls.
+    if (x.p.on) continue
     const inside = doc.rooms.some((r) => polygonInsideRoom(x.body, r.polygon))
     if (!inside)
       issues.push({
@@ -90,10 +206,13 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
   }
 
   // Clearance zones blocked by other items or walls.
+  const tables = solid.filter((o) => o.item.category === 'dining-table')
   for (const x of placed) {
-    for (const zone of clearanceZones(x.item, x.p)) {
-      const need = x.item.clearance[zone.side]
-      const blockers = solid.filter((o) => o.p.id !== x.p.id && convexOverlap(zone.poly, o.body, 0.005))
+    if (x.p.on || isWallDecor(x.item.category)) continue
+    const checked = { ...x.item, clearance: checkedClearance(x.item, x.body, tables) }
+    for (const zone of clearanceZones(checked, x.p)) {
+      const need = checked.clearance[zone.side]
+      const blockers = solid.filter((o) => o.p.id !== x.p.id && !sideCompanion(x.item.category, zone.side, o.item.category) && convexOverlap(zone.poly, o.body, 0.005))
       for (const b of blockers)
         issues.push({
           id: `clear:${x.p.id}:${zone.side}:${b.p.id}`,
@@ -116,6 +235,21 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
     }
   }
 
+  // A TV backed onto a window: the daylight behind the screen washes it out (and blocks the view).
+  for (const x of solid) {
+    if (x.item.category !== 'tv-stand') continue
+    const w = backAgainstWindow(doc.rooms, x.item, x.p)
+    if (w)
+      issues.push({
+        id: `window:${x.p.id}:${w.openingId}`,
+        severity: 'warning',
+        kind: 'window',
+        message: `${x.item.name} sits under a window, where the glare washes out the screen; move it to a solid wall`,
+        placementIds: [x.p.id],
+        area: x.body,
+      })
+  }
+
   // Door swings blocked.
   for (const s of doorSwings(doc.rooms)) {
     for (const x of solid) {
@@ -130,8 +264,71 @@ export function checkLayout(doc: Doc, layout: Layout): Issue[] {
         })
     }
   }
+  // ...and the doorway itself: nothing solid stands on the landing either side of a door.
+  for (const l of doorLandings(doc.rooms)) {
+    for (const x of solid) {
+      if (convexOverlap(l.poly, x.body, 0.005) && !issues.some((i) => i.id === `door:${l.openingId}:${x.p.id}`))
+        issues.push({
+          id: `door:${l.openingId}:${x.p.id}`,
+          severity: 'warning',
+          kind: 'door',
+          message: `${x.item.name} stands in the ${l.room.name} doorway`,
+          placementIds: [x.p.id],
+          area: l.poly,
+        })
+    }
+  }
 
   return issues
+}
+
+/** How close (m) a piece's back must be to a wall to count as backed onto it. */
+export const BACK_TO_WALL = 0.2
+
+/**
+ * The window a piece's back is pushed against (its back edge on that window's wall and overlapping
+ * the window by more than a few cm), or null. A TV under a window fights the glare: checkLayout
+ * flags it, and auto-placement steers clear of it.
+ */
+export function backAgainstWindow(
+  rooms: Room[],
+  item: Pick<Item, 'width' | 'depth'>,
+  p: Pick<Placement, 'x' | 'y' | 'rotation'>,
+): { roomId: string; openingId: string } | null {
+  const c = v(p.x, p.y)
+  const hw = item.width / 2
+  const hd = item.depth / 2
+  const back = add(c, rot(v(0, -hd), p.rotation))
+  const left = add(c, rot(v(-hw, -hd), p.rotation))
+  const right = add(c, rot(v(hw, -hd), p.rotation))
+  const out = rot(v(0, -1), p.rotation)
+  for (const room of rooms) {
+    if (!pointInPolygon(c, room.polygon)) continue
+    for (const o of room.openings) {
+      if (o.kind !== 'window') continue
+      const [a, b] = windowEnds(room, o)
+      const dir = norm(sub(b, a))
+      // Square to the wall (the back faces it), and touching it.
+      if (Math.abs(dot(out, dir)) > 0.5 || dot(out, wallInwardNormal(room, o.wall)) > -0.5) continue
+      if (Math.abs(dot(sub(back, a), wallInwardNormal(room, o.wall))) > BACK_TO_WALL) continue
+      const t0 = Math.min(dot(sub(left, a), dir), dot(sub(right, a), dir))
+      const t1 = Math.max(dot(sub(left, a), dir), dot(sub(right, a), dir))
+      const len = Math.hypot(b.x - a.x, b.y - a.y)
+      if (Math.min(t1, len) - Math.max(t0, 0) > 0.05) return { roomId: room.id, openingId: o.id }
+    }
+  }
+  return null
+}
+
+/**
+ * Pieces that belong in another's clearance and don't block it: a nightstand or side table beside
+ * a bed or seat, the chair at a desk, a coffee table in front of a seat.
+ */
+export function sideCompanion(ownerCategory: string, side: string, blockerCategory: string) {
+  if (side === 'front' && ownerCategory === 'desk' && blockerCategory === 'office-chair') return true
+  // A coffee table or ottoman belongs in front of a seat; how close is judged by the coffee-table goal (35-60 cm).
+  if (side === 'front' && ['sofa', 'armchair'].includes(ownerCategory) && ['coffee-table', 'ottoman'].includes(blockerCategory)) return true
+  return (side === 'left' || side === 'right') && ['bed', 'sofa', 'armchair'].includes(ownerCategory) && ['nightstand', 'side-table', 'floor-lamp', 'table-lamp'].includes(blockerCategory)
 }
 
 function centerOf(poly: Vec2[]) {
@@ -167,17 +364,28 @@ export const ARCH = 10
 export const MIN_WALKWAY = 0.6
 export const COMFORTABLE_WALKWAY = 0.9
 
-export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport {
-  const rooms = doc.rooms
-  let entrance: { room: Room; at: Vec2; inward: Vec2 } | null = null
-  for (const room of rooms)
-    for (const o of room.openings)
-      if (o.kind === 'door' && o.entrance) {
-        const [a, b] = openingEndpoints(room, o)
-        entrance = { room, at: scale(add(a, b), 0.5), inward: wallInwardNormal(room, o.wall) }
-      }
-  if (!entrance || rooms.length === 0) return { entrance: false, results: [] }
+/** The rooms' part of the walking grid (rooms, door passages, the empty home's widths), kept per room shape. */
+interface RoomGrid {
+  x0: number
+  y0: number
+  W: number
+  H: number
+  /** Floor cells (rooms and door passages) before furniture. */
+  free: Uint8Array
+  roomOf: Int16Array
+  /** Distance to the nearest wall in the empty home, in meters. */
+  distEmpty: Float64Array
+}
+const roomGrids = new Map<string, RoomGrid>()
 
+/**
+ * Round 17: the grid of the empty home only changes with the rooms, so it is built once per room
+ * shape (the Next chip scores a dozen arrangements of one home per tap) instead of on every call.
+ */
+function roomGrid(rooms: Room[], cell: number): RoomGrid {
+  const key = `${cell}|${JSON.stringify(rooms.map((r) => [r.polygon, r.openings, r.wallThickness]))}`
+  const hit = roomGrids.get(key)
+  if (hit) return hit
   const allPts = rooms.flatMap((r) => r.polygon)
   const bb = bounds(allPts)
   const pad = 0.5
@@ -188,7 +396,6 @@ export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport 
   const free = new Uint8Array(W * H)
   const roomOf = new Int16Array(W * H).fill(-1)
   const cellCenter = (i: number, j: number) => v(x0 + (i + 0.5) * cell, y0 + (j + 0.5) * cell)
-
   // Rasterize rooms.
   rooms.forEach((room, ri) => {
     const b = bounds(room.polygon)
@@ -210,38 +417,71 @@ export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport 
       const [a, b] = openingEndpoints(room, o)
       const n = wallInwardNormal(room, o.wall)
       const depthOut = room.wallThickness + 0.1
-      const poly = [
-        add(a, scale(n, 0.05)),
-        add(b, scale(n, 0.05)),
-        add(b, scale(n, -depthOut)),
-        add(a, scale(n, -depthOut)),
-      ]
-      fillConvex(poly)
+      const poly = [add(a, scale(n, 0.05)), add(b, scale(n, 0.05)), add(b, scale(n, -depthOut)), add(a, scale(n, -depthOut))]
+      fillGrid(free, poly, x0, y0, W, H, cell, 1)
     }
-  const emptyFree = free.slice()
+  const distEmpty = distanceTransform(free, W, H).map((d) => Math.sqrt(d) * cell)
+  const g = { x0, y0, W, H, free, roomOf, distEmpty }
+  if (roomGrids.size >= 16) roomGrids.delete(roomGrids.keys().next().value!)
+  roomGrids.set(key, g)
+  return g
+}
+
+/** Sets the cells whose centres lie in a convex polygon. */
+function fillGrid(free: Uint8Array, poly: Vec2[], x0: number, y0: number, W: number, H: number, cell: number, value: number) {
+  const b = bounds(poly)
+  const i0 = Math.max(0, Math.floor((b.minX - x0) / cell))
+  const i1 = Math.min(W - 1, Math.ceil((b.maxX - x0) / cell))
+  const j0 = Math.max(0, Math.floor((b.minY - y0) / cell))
+  const j1 = Math.min(H - 1, Math.ceil((b.maxY - y0) / cell))
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (pointInPolygon(v(x0 + (i + 0.5) * cell, y0 + (j + 0.5) * cell), poly)) free[j * W + i] = value
+}
+
+const DI = [1, -1, 0, 0, 1, 1, -1, -1]
+const DJ = [0, 0, 1, -1, 1, -1, 1, -1]
+
+/** Walking paths, by home (round 18: one tap asks about the same arrangement several times over). */
+const pathMemo = new Memo<PathReport>(32)
+export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport {
+  const key = `${cell}#${homeKey(doc, layout)}`
+  const r = pathMemo.get(key) ?? pathMemo.set(key, walkingPathsOnce(doc, layout, cell))
+  return { ...r, results: r.results.slice() }
+}
+
+function walkingPathsOnce(doc: Doc, layout: Layout, cell: number): PathReport {
+  const rooms = doc.rooms
+  let entrance: { room: Room; at: Vec2; inward: Vec2 } | null = null
+  for (const room of rooms)
+    for (const o of room.openings)
+      if (o.kind === 'door' && o.entrance) {
+        const [a, b] = openingEndpoints(room, o)
+        entrance = { room, at: scale(add(a, b), 0.5), inward: wallInwardNormal(room, o.wall) }
+      }
+  if (!entrance || rooms.length === 0) return { entrance: false, results: [] }
+
+  const grid = roomGrid(rooms, cell)
+  const { x0, y0, W, H, roomOf, distEmpty } = grid
+  const N = W * H
+  const free = grid.free.slice()
+  const cellCenter = (i: number, j: number) => v(x0 + (i + 0.5) * cell, y0 + (j + 0.5) * cell)
   // Block furniture (rugs don't block).
   for (const x of placedItems(doc, layout)) {
-    if (x.item.floorLevel) continue
-    fillConvex(x.body, 0)
-  }
-
-  function fillConvex(poly: Vec2[], value = 1) {
-    const b = bounds(poly)
-    const i0 = Math.max(0, Math.floor((b.minX - x0) / cell))
-    const i1 = Math.min(W - 1, Math.ceil((b.maxX - x0) / cell))
-    const j0 = Math.max(0, Math.floor((b.minY - y0) / cell))
-    const j1 = Math.min(H - 1, Math.ceil((b.maxY - y0) / cell))
-    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (pointInPolygon(cellCenter(i, j), poly)) free[j * W + i] = value
+    if (x.item.floorLevel || x.p.on || isWallDecor(x.item.category)) continue
+    fillGrid(free, x.body, x0, y0, W, H, cell, 0)
   }
 
   // Distance (in meters) from each free cell to the nearest blocked cell, with and without furniture.
   const distM = distanceTransform(free, W, H).map((d) => Math.sqrt(d) * cell)
-  const distEmpty = distanceTransform(emptyFree, W, H).map((d) => Math.sqrt(d) * cell)
   // Free width through a cell ≈ twice the distance to the nearest obstacle, minus one cell.
-  const rawWidth = (k: number) => Math.max(0, 2 * distM[k] - cell)
   // Only furniture-made pinches count: where the width is the same as in the empty apartment,
   // the walls (a doorway, a narrow hall) are the limit and there's nothing to rearrange.
-  const width = (k: number) => (rawWidth(k) < Math.max(0, 2 * distEmpty[k] - cell) - 1.5 * cell ? rawWidth(k) : ARCH)
+  const raw = new Float64Array(N)
+  const widthOf = new Float64Array(N)
+  for (let k = 0; k < N; k++) {
+    const r = Math.max(0, 2 * distM[k] - cell)
+    raw[k] = r
+    widthOf[k] = r < Math.max(0, 2 * distEmpty[k] - cell) - 1.5 * cell ? r : ARCH
+  }
 
   // Start: nearest free cell just inside the entrance.
   const startPt = add(entrance.at, scale(entrance.inward, 0.15))
@@ -249,46 +489,45 @@ export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport 
   if (start < 0) return { entrance: true, results: rooms.map((r) => ({ roomId: r.id, roomName: r.name, reachable: false, narrowest: 0, path: [] })) }
 
   // Widest-path (maximin) search.
-  const best = new Float64Array(W * H).fill(-1)
-  const parent = new Int32Array(W * H).fill(-1)
+  const best = new Float64Array(N).fill(-1)
   const heap = new MaxHeap()
-  best[start] = width(start)
+  best[start] = widthOf[start]
   heap.push(start, best[start])
-  const dirs = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-    [1, 1],
-    [1, -1],
-    [-1, 1],
-    [-1, -1],
-  ]
   while (heap.size) {
-    const [k, val] = heap.pop()
+    const val = heap.topVal
+    const k = heap.pop()
     if (val < best[k]) continue
     const i = k % W
     const j = (k - i) / W
-    for (const [di, dj] of dirs) {
+    for (let d = 0; d < 8; d++) {
+      const di = DI[d]
+      const dj = DJ[d]
       const ni = i + di
       const nj = j + dj
       if (ni < 0 || nj < 0 || ni >= W || nj >= H) continue
       const nk = nj * W + ni
       if (!free[nk]) continue
       if (di && dj && (!free[j * W + ni] || !free[nj * W + i])) continue
-      const nv = Math.min(val, width(nk))
+      const w = widthOf[nk]
+      const nv = val < w ? val : w
       if (nv > best[nk]) {
         best[nk] = nv
-        parent[nk] = k
         heap.push(nk, nv)
       }
     }
   }
 
+  // Target per room: the most open reachable spot in it (the first such cell on ties).
+  const targets = new Int32Array(rooms.length).fill(-1)
+  for (let k = 0; k < N; k++) {
+    const ri = roomOf[k]
+    if (ri < 0 || !free[k] || best[k] < 0) continue
+    if (targets[ri] < 0 || distM[k] > distM[targets[ri]]) targets[ri] = k
+  }
+  const cost = new Float64Array(N)
+  const prev = new Int32Array(N)
   const results: PathResult[] = rooms.map((room, ri) => {
-    // Target: the most open reachable spot in the room.
-    let target = -1
-    for (let k = 0; k < W * H; k++) if (roomOf[k] === ri && free[k] && best[k] >= 0 && (target < 0 || distM[k] > distM[target])) target = k
+    const target = targets[ri]
     if (target < 0) return { roomId: room.id, roomName: room.name, reachable: false, narrowest: 0, path: [] }
     const bottleneck = best[target]
     // The widest path can wander; draw the shortest route that is still that wide, preferring open space.
@@ -296,8 +535,8 @@ export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport 
     let narrowest = Infinity
     let pinch: Vec2 | undefined
     for (const k of route) {
-      if (width(k) < narrowest) {
-        narrowest = width(k)
+      if (widthOf[k] < narrowest) {
+        narrowest = widthOf[k]
         const i = k % W
         pinch = cellCenter(i, (k - i) / W)
       }
@@ -312,26 +551,29 @@ export function walkingPaths(doc: Doc, layout: Layout, cell = 0.05): PathReport 
   return { entrance: true, results }
 
   function shortestRoute(target: number, minWidth: number): number[] {
-    const cost = new Float64Array(W * H).fill(Infinity)
-    const prev = new Int32Array(W * H).fill(-1)
+    cost.fill(Infinity)
+    prev.fill(-1)
     const heap = new MaxHeap() // max-heap on negative cost
     cost[start] = 0
     heap.push(start, 0)
+    const floor = minWidth - 1e-9
     while (heap.size) {
-      const [k, negc] = heap.pop()
-      const c = -negc
+      const c = -heap.topVal
+      const k = heap.pop()
       if (c > cost[k]) continue
       if (k === target) break
       const i = k % W
       const j = (k - i) / W
-      for (const [di, dj] of dirs) {
+      for (let d = 0; d < 8; d++) {
+        const di = DI[d]
+        const dj = DJ[d]
         const ni = i + di
         const nj = j + dj
         if (ni < 0 || nj < 0 || ni >= W || nj >= H) continue
         const nk = nj * W + ni
-        if (!free[nk] || width(nk) < minWidth - 1e-9) continue
+        if (!free[nk] || widthOf[nk] < floor) continue
         if (di && dj && (!free[j * W + ni] || !free[nj * W + i])) continue
-        const step = (di && dj ? Math.SQRT2 : 1) * (1 + 0.25 / Math.max(0.05, rawWidth(nk)))
+        const step = (di && dj ? Math.SQRT2 : 1) * (1 + 0.25 / Math.max(0.05, raw[nk]))
         const nc = c + step
         if (nc < cost[nk]) {
           cost[nk] = nc
@@ -439,37 +681,52 @@ export function distanceTransform(free: Uint8Array, W: number, H: number): Float
   return f
 }
 
+/** A binary max-heap of (cell, value) pairs in typed arrays (round 17: no tuples per pop). */
 class MaxHeap {
-  private keys: number[] = []
-  private vals: number[] = []
-  get size() {
-    return this.keys.length
+  private keys = new Int32Array(1024)
+  private vals = new Float64Array(1024)
+  size = 0
+  /** The value at the top (read it before pop). */
+  get topVal() {
+    return this.vals[0]
   }
   push(k: number, val: number) {
-    this.keys.push(k)
-    this.vals.push(val)
-    let i = this.keys.length - 1
+    if (this.size === this.keys.length) {
+      const nk = new Int32Array(this.size * 2)
+      nk.set(this.keys)
+      this.keys = nk
+      const nv = new Float64Array(this.size * 2)
+      nv.set(this.vals)
+      this.vals = nv
+    }
+    const keys = this.keys
+    const vals = this.vals
+    let i = this.size++
+    keys[i] = k
+    vals[i] = val
     while (i > 0) {
       const p = (i - 1) >> 1
-      if (this.vals[p] >= this.vals[i]) break
+      if (vals[p] >= vals[i]) break
       this.swap(i, p)
       i = p
     }
   }
-  pop(): [number, number] {
-    const top: [number, number] = [this.keys[0], this.vals[0]]
-    const lk = this.keys.pop()!
-    const lv = this.vals.pop()!
-    if (this.keys.length) {
-      this.keys[0] = lk
-      this.vals[0] = lv
+  /** Removes the top and returns its key. */
+  pop(): number {
+    const keys = this.keys
+    const vals = this.vals
+    const top = keys[0]
+    const n = --this.size
+    if (n) {
+      keys[0] = keys[n]
+      vals[0] = vals[n]
       let i = 0
       for (;;) {
         const l = 2 * i + 1
         const r = l + 1
         let m = i
-        if (l < this.keys.length && this.vals[l] > this.vals[m]) m = l
-        if (r < this.keys.length && this.vals[r] > this.vals[m]) m = r
+        if (l < n && vals[l] > vals[m]) m = l
+        if (r < n && vals[r] > vals[m]) m = r
         if (m === i) break
         this.swap(i, m)
         i = m
@@ -478,7 +735,11 @@ class MaxHeap {
     return top
   }
   private swap(a: number, b: number) {
-    ;[this.keys[a], this.keys[b]] = [this.keys[b], this.keys[a]]
-    ;[this.vals[a], this.vals[b]] = [this.vals[b], this.vals[a]]
+    const k = this.keys[a]
+    this.keys[a] = this.keys[b]
+    this.keys[b] = k
+    const x = this.vals[a]
+    this.vals[a] = this.vals[b]
+    this.vals[b] = x
   }
 }

@@ -40,16 +40,16 @@
 @keyframes onb-in { from { opacity: 0; transform: translateX(24px); } }
 
 .onb-title { text-align: center; }
-.onb-title h1 { margin: 0; font-size: 32px; line-height: 1.1; font-weight: 900; letter-spacing: -0.01em; }
-.onb-title p { margin: 8px auto 0; max-width: 30em; color: var(--g-ink-2); font-size: 16px; line-height: 1.4; font-weight: 600; }
-.onb-kicker { display: inline-block; margin-bottom: 6px; padding: 4px 10px; border-radius: 99px; background: rgba(255, 122, 89, 0.14); color: var(--g-coral-dk); font-weight: 800; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+.onb-title h1 { margin: 0; font-size: 2rem; line-height: 1.1; font-weight: 900; letter-spacing: -0.01em; }
+.onb-title p { margin: 8px auto 0; max-width: 30em; color: var(--g-ink-2); font-size: 1rem; line-height: 1.4; font-weight: 600; }
+.onb-kicker { display: inline-block; margin-bottom: 6px; padding: 4px 10px; border-radius: 99px; background: rgba(255, 122, 89, 0.14); color: var(--g-coral-dk); font-weight: 800; font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; }
 
 .onb-actions { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }
 .onb-wide { width: 100%; max-width: 360px; }
 .onb-alt { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 10px; color: var(--g-ink-2); }
-.onb-link, .onb-link:hover:not(:disabled) { border: none; background: none; padding: 6px 2px; font: 800 14px var(--g-font); color: var(--g-ink-2); text-decoration: underline; text-decoration-color: rgba(70, 50, 30, 0.25); text-underline-offset: 3px; cursor: pointer; }
+.onb-link, .onb-link:hover:not(:disabled) { border: none; background: none; padding: 6px 2px; font: 800 0.875rem var(--g-font); color: var(--g-ink-2); text-decoration: underline; text-decoration-color: rgba(70, 50, 30, 0.25); text-underline-offset: 3px; cursor: pointer; }
 .onb-link:hover:not(:disabled) { color: var(--g-coral-dk); text-decoration-color: currentColor; }
-.onb-note { margin: 10px auto 0; max-width: 30em; text-align: center; color: var(--g-ink-2); font-size: 13px; font-weight: 600; }
+.onb-note { margin: 10px auto 0; max-width: 30em; text-align: center; color: var(--g-ink-2); font-size: 0.8125rem; font-weight: 600; }
 .onb-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
 .onb-row .g-btn.primary { flex: 1; max-width: 240px; margin-left: auto; }
 .onb-center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; text-align: center; }
@@ -57,8 +57,8 @@
 
 /* ---- welcome */
 .onb-welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; padding-bottom: 4vh; }
-.onb-welcome .onb-title h1 { font-size: 42px; }
-.onb-welcome .onb-title p { font-size: 18px; }
+.onb-welcome .onb-title h1 { font-size: 2.625rem; }
+.onb-welcome .onb-title p { font-size: 1.125rem; }
 .onb-house { width: min(240px, 62vw); height: auto; animation: g-pop 0.5s var(--g-ease); overflow: visible; }
 .onb-house.sm { width: 150px; }
 .onb-smoke circle { animation: onb-puff 2.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
@@ -73,9 +73,9 @@
 .onb-tip { display: flex; align-items: center; gap: 14px; padding: 12px 14px; animation: g-rise 0.4s var(--g-ease) both; }
 .onb-tip-art { width: 58px; height: 58px; flex: none; border-radius: 14px; background: var(--g-paper-2); display: flex; align-items: center; justify-content: center; }
 .onb-tip-art svg { width: 48px; height: 48px; }
-.onb-tip-title { display: flex; align-items: center; gap: 8px; font-weight: 900; font-size: 16px; }
-.onb-tip-n { width: 22px; height: 22px; border-radius: 50%; background: var(--g-ink); color: #fff; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
-.onb-tip p { margin: 3px 0 0; color: var(--g-ink-2); font-size: 14px; line-height: 1.35; font-weight: 600; }
+.onb-tip-title { display: flex; align-items: center; gap: 8px; font-weight: 900; font-size: 1rem; }
+.onb-tip-n { width: 1.375rem; height: 1.375rem; border-radius: 50%; background: var(--g-ink); color: #fff; font-size: 0.75rem; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.onb-tip p { margin: 3px 0 0; color: var(--g-ink-2); font-size: 0.875rem; line-height: 1.35; font-weight: 600; }
 .onb-walker { animation: onb-walk 4s linear infinite; }
 @keyframes onb-walk { 0% { transform: translate(0, 0); } 25% { transform: translate(34px, 0); } 50% { transform: translate(34px, 34px); } 75% { transform: translate(0, 34px); } 100% { transform: translate(0, 0); } }
 .onb-walk-path { animation: onb-dash 1.2s linear infinite; }
@@ -84,11 +84,29 @@
 .onb-drop { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 16px 14px; border: 3px dashed #dccbb3; border-radius: var(--g-r); background: rgba(255, 250, 242, 0.6); transition: border-color 0.15s, background 0.15s, transform 0.2s var(--g-ease); }
 .onb-drop.over { border-color: var(--g-coral); background: rgba(255, 122, 89, 0.08); transform: scale(1.02); }
 .onb-drop-hint { font-weight: 800; color: var(--g-ink-2); }
-.onb-formats { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; color: #b5a48e; }
+/* Phones can't drag files in: no "Drop your scan here", and a calmer box around the button. */
+@media (pointer: coarse) {
+  .onb-drop-hint { display: none; }
+  .onb-drop { border-style: solid; border-width: 2px; }
+}
+
+/* "No scan yet? Try ours": first thing under the title, so it's in view on a phone. */
+.onb-try { display: flex; align-items: center; gap: 12px; width: 100%; margin: 14px 0 0; padding: 12px 14px; border: none; text-align: left; font: inherit; color: var(--g-ink); cursor: pointer; box-shadow: 0 0 0 2px var(--g-sun), var(--g-shadow-sm); animation: g-pop 0.4s var(--g-ease) both; transition: transform 0.15s var(--g-ease); }
+.onb-try:hover:not(:disabled) { transform: translateY(-1px); background: var(--g-paper); border: none; }
+.onb-try:active { transform: scale(0.98); }
+.onb-try-ico { width: 40px; height: 40px; flex: none; border-radius: 12px; background: var(--g-sun); color: #fff; display: inline-flex; align-items: center; justify-content: center; }
+.onb-try-ico svg { width: 24px; height: 24px; }
+.onb-try-text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.onb-try-text b { font-weight: 900; font-size: 1rem; }
+.onb-try-text small { font-weight: 700; font-size: 0.8125rem; color: var(--g-ink-2); }
+.onb-try-go { font-weight: 900; font-size: 1.625rem; line-height: 1; color: var(--g-coral-dk); }
+.onb-formats { font-size: 0.8125rem; font-weight: 700; color: var(--g-ink-2); text-align: center; max-width: 320px; }
+.onb-formats summary { cursor: pointer; font-weight: 800; color: #b5a48e; list-style-position: inside; }
+.onb-formats[open] summary { margin-bottom: 4px; }
 .onb-drop + .onb-alt { margin-top: 8px; }
-.onb-error { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; color: var(--g-ink); font-size: 14px; font-weight: 600; }
+.onb-error { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; color: var(--g-ink); font-size: 0.875rem; font-weight: 600; }
 .onb-error span { color: var(--g-ink-2); overflow-wrap: anywhere; }
-.onb-error-face { width: 44px; height: 44px; border-radius: 50%; background: var(--g-sun); font-weight: 900; font-size: 18px; display: flex; align-items: center; justify-content: center; transform: rotate(90deg); margin-bottom: 4px; }
+.onb-error-face { width: 44px; height: 44px; border-radius: 50%; background: var(--g-sun); font-weight: 900; font-size: 1.125rem; display: flex; align-items: center; justify-content: center; transform: rotate(90deg); margin-bottom: 4px; }
 
 .onb-scanning { position: relative; padding: 10px 20px; }
 .onb-beam { position: absolute; left: 0; right: 0; top: 0; height: 6px; border-radius: 99px; background: var(--g-sky); box-shadow: 0 0 18px 6px rgba(79, 139, 232, 0.45); animation: onb-sweep 1.4s ease-in-out infinite alternate; }
@@ -96,13 +114,13 @@
 
 /* ---- measure */
 .onb-measure, .onb-detect { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.onb-measure .onb-title p { font-size: 15px; }
-.onb-measure .onb-title h1, .onb-detect .onb-title h1 { font-size: 28px; }
+.onb-measure .onb-title p { font-size: 0.9375rem; }
+.onb-measure .onb-title h1, .onb-detect .onb-title h1 { font-size: 1.75rem; }
 .onb-plan { position: relative; flex: 1; min-height: 240px; margin-top: 14px; overflow: hidden; background: #fff; }
 .onb-plan .draw-hint, .onb-preview .draw-hint, .onb-preview .plan-tools { display: none; }
 .onb-plan .plan-tools { top: auto; bottom: 10px; right: 10px; }
-.onb-plan .plan-tools button { border: none; border-radius: 99px; background: var(--g-paper); box-shadow: var(--g-shadow-sm); padding: 6px 12px; font: 800 13px var(--g-font); }
-.onb-plan-hint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 20px); padding: 9px 16px; border-radius: 99px; background: var(--g-ink); color: #fff; font-weight: 800; font-size: 14px; white-space: nowrap; box-shadow: var(--g-shadow-sm); pointer-events: none; }
+.onb-plan .plan-tools button { border: none; border-radius: 99px; background: var(--g-paper); box-shadow: var(--g-shadow-sm); padding: 6px 12px; font: 800 0.8125rem var(--g-font); }
+.onb-plan-hint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 20px); padding: 9px 16px; border-radius: 99px; background: var(--g-ink); color: #fff; font-weight: 800; font-size: 0.875rem; white-space: nowrap; box-shadow: var(--g-shadow-sm); pointer-events: none; }
 .onb-plan-hint svg { width: 18px; height: 18px; flex: none; }
 .onb-plan-hint.second { background: var(--g-plum); animation: onb-nudge 1s ease-in-out infinite; }
 @keyframes onb-nudge { 0%, 100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, -5px); } }
@@ -112,13 +130,17 @@
 
 .onb-measure-foot { flex: none; padding-top: 12px; }
 .onb-length { display: flex; flex-direction: column; gap: 8px; animation: g-rise 0.3s var(--g-ease); }
-.onb-length label { font-weight: 900; font-size: 18px; }
-.onb-length label span { font-weight: 700; font-size: 14px; color: var(--g-ink-2); }
+.onb-length label { font-weight: 900; font-size: 1.125rem; }
+.onb-length label span { font-weight: 700; font-size: 0.875rem; color: var(--g-ink-2); }
 .onb-length-row { display: flex; gap: 10px; }
-.onb-length-row input { flex: 1; min-width: 0; font: 900 26px var(--g-font); color: var(--g-ink); padding: 10px 16px; border: 3px solid var(--g-line); border-radius: 16px; background: #fff; outline: none; }
+.onb-length-row input { flex: 1; min-width: 0; font: 900 1.625rem var(--g-font); color: var(--g-ink); padding: 10px 16px; border: 3px solid var(--g-line); border-radius: 16px; background: #fff; outline: none; }
 .onb-length-row input:focus { border-color: var(--g-sky); }
 .onb-length-row .g-btn { flex: none; }
 .onb-length .onb-link { align-self: center; }
+.onb-readout { min-height: 22px; font-weight: 800; font-size: 0.9375rem; color: var(--g-ink); }
+.onb-readout.warn { color: var(--g-warn); font-weight: 700; }
+.onb-fix { border: none; background: var(--g-paper); color: var(--g-ink); font: 900 0.9375rem var(--g-font); padding: 4px 12px; border-radius: 99px; box-shadow: var(--g-shadow-sm); cursor: pointer; }
+.onb-fix:hover { background: var(--g-paper-2); }
 
 .onb-refs { display: flex; flex-wrap: wrap; gap: 8px; }
 .onb-ref { display: inline-flex; align-items: center; gap: 6px; padding: 6px 6px 6px 12px; border-radius: 99px; background: var(--g-paper); box-shadow: var(--g-shadow-sm); font-weight: 900; animation: g-pop 0.3s var(--g-ease); }
@@ -126,11 +148,28 @@
 .onb-ref small { font-weight: 800; color: var(--g-sage); }
 .onb-ref.bad { box-shadow: 0 0 0 2px var(--g-bad); }
 .onb-ref.bad small, .onb-ref.bad svg { color: var(--g-bad); }
-.onb-ref button, .onb-ref button:hover:not(:disabled) { width: 24px; height: 24px; border-radius: 50%; border: none; background: var(--g-paper-2); color: var(--g-ink-2); padding: 0; font: 900 15px/1 var(--g-font); }
-.onb-conf { margin: 10px 0 0; display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 14px; color: var(--g-ink-2); }
+.onb-ref button, .onb-ref button:hover:not(:disabled) { width: 1.5rem; height: 1.5rem; border-radius: 50%; border: none; background: var(--g-paper-2); color: var(--g-ink-2); padding: 0; font: 900 0.9375rem/1 var(--g-font); }
+.onb-conf { margin: 10px 0 0; display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 0.875rem; color: var(--g-ink-2); }
 .onb-conf.warn { color: var(--g-warn); }
-.onb-stars { color: var(--g-sun); font-size: 20px; letter-spacing: 1px; flex: none; text-shadow: 0 1px 0 #e6a52c; }
+.onb-stars { color: var(--g-sun); font-size: 1.25rem; letter-spacing: 1px; flex: none; text-shadow: 0 1px 0 #e6a52c; }
 .onb-stars i { font-style: normal; color: #e3d6c3; text-shadow: none; }
+
+/* ---- sample scan: measured for you */
+.onb-auto { gap: 18px; }
+.onb-auto .onb-title h1 { font-size: 1.75rem; }
+.onb-auto-len { font-weight: 900; color: var(--g-ink); font-variant-numeric: tabular-nums; }
+.onb-tape { position: relative; width: min(280px, 80vw); height: 70px; }
+.onb-tape-wall { position: absolute; left: 0; right: 0; bottom: 8px; height: 8px; border-radius: 4px; background: #d9c7ad; }
+.onb-tape-strip { position: absolute; left: 0; bottom: 18px; height: 14px; width: 100%; border-radius: 3px; transform-origin: left center; background: repeating-linear-gradient(90deg, var(--g-ink) 0 2px, transparent 2px 14px) bottom / 100% 6px no-repeat, var(--g-sun); box-shadow: 0 2px 0 #e6a52c; animation: onb-tape 0.9s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+.onb-tape-case { position: absolute; left: -10px; bottom: 12px; width: 42px; height: 42px; border-radius: 12px; background: var(--g-coral); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: var(--g-shadow-sm); }
+.onb-tape-case svg { width: 24px; height: 24px; }
+.onb-tape.landed .onb-tape-strip { animation: onb-tape 0.9s cubic-bezier(0.2, 0.7, 0.3, 1) both, onb-tape-land 0.35s var(--g-ease) 0.9s; }
+@keyframes onb-tape { from { transform: scaleX(0.04); } }
+@keyframes onb-tape-land { 50% { transform: scaleY(1.35); } }
+.onb-auto-stars { justify-content: center; margin: 0; min-height: 28px; }
+.onb-auto-stars .onb-stars { opacity: 0.25; transition: opacity 0.2s; }
+.onb-auto-stars.on .onb-stars { opacity: 1; animation: g-pop 0.4s var(--g-ease); }
+@media (prefers-reduced-motion: reduce) { .onb-tape-strip, .onb-tape.landed .onb-tape-strip { animation: none; } }
 
 /* ---- detect */
 .onb-detecting { position: relative; width: 200px; }
@@ -142,15 +181,15 @@
 @keyframes onb-found { 0% { opacity: 0; transform: scale(0.4); } 20%, 80% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1); } }
 .onb-glass { position: absolute; width: 64px; height: 64px; left: 0; top: 0; animation: onb-search 2.4s ease-in-out infinite; filter: drop-shadow(0 4px 6px rgba(60, 40, 20, 0.2)); }
 @keyframes onb-search { 0% { transform: translate(20px, 10px); } 25% { transform: translate(110px, 14px); } 50% { transform: translate(100px, 70px); } 75% { transform: translate(30px, 60px); } 100% { transform: translate(20px, 10px); } }
-.onb-shrug { font-size: 36px; font-weight: 900; color: var(--g-ink-2); }
+.onb-shrug { font-size: 2.25rem; font-weight: 900; color: var(--g-ink-2); }
 
 .onb-preview { position: relative; height: 30%; min-height: 160px; max-height: 300px; margin-top: 14px; overflow: hidden; background: #fff; flex: none; }
 .onb-preview .plan-wrap { pointer-events: none; }
 .onb-found { margin-top: 12px; padding: 4px 16px; overflow-y: auto; flex: 1; min-height: 90px; }
 .onb-found-row { border-bottom: 1px solid var(--g-line); }
 .onb-found-row:last-child { border-bottom: none; }
-.onb-found-row > span { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 16px; }
-.onb-found-row small { flex-basis: 100%; margin-left: 38px; margin-top: -6px; font-size: 12px; color: var(--g-ink-2); font-weight: 700; }
+.onb-found-row > span { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 1rem; }
+.onb-found-row small { flex-basis: 100%; margin-left: 38px; margin-top: -6px; font-size: 0.75rem; color: var(--g-ink-2); font-weight: 700; }
 .onb-found-ico { width: 28px; height: 28px; border-radius: 9px; background: #d8cfc2; display: inline-flex; align-items: center; justify-content: center; color: #fff; flex: none; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.5); }
 .onb-found-row.room .onb-found-ico { background: var(--g-plum); }
 .onb-found-ico svg { width: 16px; height: 16px; }
@@ -168,14 +207,56 @@
 .onb-confetti i { position: absolute; top: -20px; width: 9px; height: 14px; border-radius: 3px; animation-name: onb-fall; animation-timing-function: cubic-bezier(0.3, 0.6, 0.5, 1); animation-iteration-count: 2; animation-fill-mode: both; }
 .onb-confetti i:nth-child(3n) { width: 11px; height: 11px; border-radius: 50%; }
 @keyframes onb-fall { 0% { opacity: 1; translate: 0 0; rotate: 0deg; } 100% { opacity: 0; translate: 30px 105vh; rotate: 540deg; } }
-.onb-done .onb-title h1 { font-size: 40px; }
+.onb-done .onb-title h1 { font-size: 2.5rem; }
+/* The first goal, so the game starts with something to do. */
+.onb-goal { display: flex; align-items: center; gap: 12px; padding: 12px 18px; text-align: left; font-weight: 900; font-size: 1.125rem; animation: g-rise 0.4s var(--g-ease) 0.3s both; }
+.onb-goal > span:last-child { display: flex; flex-direction: column; }
+.onb-goal small { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--g-coral-dk); }
+.onb-goal-star { width: 2.375rem; height: 2.375rem; flex: none; border-radius: 50%; background: var(--g-sun); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 1.375rem; text-shadow: 0 1px 0 #e6a52c; }
 
 @media (min-width: 700px) {
   .onb-stage { padding-top: 24px; padding-bottom: 32px; }
-  .onb-title h1 { font-size: 38px; }
+  .onb-title h1 { font-size: 2.375rem; }
   .onb-plan { min-height: 360px; }
 }
 @media (max-height: 700px) {
   .onb-house { width: 170px; }
   .onb-welcome { gap: 18px; }
+}
+
+/* Ceiling sanity check after sizing */
+.onb-ceiling { margin: 10px auto 0; max-width: 34em; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 10px; padding: 8px 14px; border-radius: 14px; background: color-mix(in srgb, var(--g-sun) 22%, var(--g-paper)); color: var(--g-ink); font-size: 0.8125rem; font-weight: 700; text-align: center; }
+.onb-ceiling .onb-fix { display: inline-flex; align-items: center; gap: 4px; }
+.onb-ceiling .onb-fix svg { width: 14px; height: 14px; }
+.onb-back-home { margin-top: 4px; font-size: 0.8125rem; opacity: 0.85; }
+
+/* Narrow phones: the two welcome links wrap, so drop the dot between them. */
+@media (max-width: 430px) { .onb-dot { display: none; } }
+
+/* Found screen: the room's name is editable in place. */
+.g-toggle input.onb-room-name { appearance: none; flex: 1 1 120px; width: auto; min-width: 0; height: auto; font: inherit; font-weight: 800; color: var(--g-ink); background: transparent; border: none; border-bottom: 2px dashed #d9c7ad; border-radius: 0; padding: 2px 0; margin-right: 8px; cursor: text; box-shadow: none; }
+.g-toggle input.onb-room-name::after { content: none; }
+.g-toggle input.onb-room-name:focus { outline: none; border-bottom-color: var(--g-coral); border-bottom-style: solid; }
+.onb-door-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; }
+.onb-door-row > span { flex: 1; min-width: 0; }
+.onb-found-ico.door { background: var(--g-sage); }
+.onb-door-row .g-btn { flex: none; padding: 8px 14px; font-size: 0.8125rem; }
+.onb-door-row .g-btn svg { width: 14px; height: 14px; }
+.onb-unsized { background: color-mix(in srgb, var(--g-coral) 14%, var(--g-paper)); }
+.onb-found .onb-door-row small { margin-top: 0; }
+
+/* Phones: the file button comes right after the title, before the how-to tips, so it's above the fold. */
+@media (max-width: 699px) {
+  .onb-scroll { display: flex; flex-direction: column; }
+  .onb-scroll > * { flex: none; }
+  .onb-scroll > .onb-title { order: -3; }
+  .onb-scroll > .onb-drop { order: -2; margin-top: 12px; }
+  .onb-scroll > .onb-try { order: -1; margin-top: 12px; }
+  .onb-scroll > .onb-tips { margin-top: 14px; }
+}
+
+/* The player's own scan from above on the move-in card (round 18). */
+.onb-snap { display: block; width: min(260px, 66vw); max-height: 220px; height: auto; border-radius: 22px; background: #1d2129; padding: 10px; box-shadow: 0 10px 26px rgba(70, 50, 30, 0.18); animation: g-pop 0.5s var(--g-ease); }
+@media (max-height: 700px) {
+  .onb-snap { width: 190px; max-height: 160px; }
 }

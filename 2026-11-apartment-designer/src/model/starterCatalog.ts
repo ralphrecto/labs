@@ -96,7 +96,7 @@ const groups: Record<string, Row[]> = {
     ['desk-standing', 'Standing desk', 'desk', 152, 76, 74, { tags: 'sit stand adjustable' }],
     ['desk-l', 'Corner desk (long side)', 'desk', 152, 61, 76, { tags: 'l-shaped' }],
     ['office-chair', 'Office chair', 'office-chair', 66, 66, 107, { tags: 'task chair' }],
-    ['file-cabinet', 'Filing cabinet', 'nightstand', 38, 51, 66, { tags: 'file drawers' }],
+    ['file-cabinet', 'Filing cabinet', 'bookshelf', 38, 51, 66, { tags: 'file drawers' }],
   ],
   'Rugs': [
     ['rug-5x8', "Rug 5' × 8'", 'rug', 244, 152, 1, { tags: '150 x 240' }],
@@ -109,14 +109,27 @@ const groups: Record<string, Row[]> = {
   'Lights & plants': [
     ['floor-lamp', 'Floor lamp', 'floor-lamp', 40, 40, 160],
     ['arc-lamp', 'Arc floor lamp', 'floor-lamp', 100, 40, 200, { tags: 'arched' }],
+    ['table-lamp', 'Table lamp', 'table-lamp', 30, 30, 55, { tags: 'bedside desk reading' }],
+    ['pendant', 'Pendant', 'pendant', 45, 45, 30, { tags: 'dining ceiling hanging' }],
     ['plant-lg', 'Large floor plant', 'plant', 60, 60, 160, { tags: 'fiddle leaf fig tree' }],
     ['plant-md', 'Medium plant', 'plant', 45, 45, 100],
+  ],
+  'Wall decor': [
+    ['art-sm', 'Small framed print', 'wall-art', 40, 3, 50, { tags: 'picture poster frame' }],
+    ['art-md', 'Framed art', 'wall-art', 60, 4, 80, { tags: 'picture painting frame' }],
+    ['art-land', 'Landscape print', 'wall-art', 70, 3, 50, { color: '#8fae84', tags: 'picture poster frame horizontal' }],
+    ['art-tall', 'Tall framed print', 'wall-art', 45, 3, 90, { color: '#c98f86', tags: 'picture poster frame portrait vertical botanical' }],
+    ['art-lg', 'Large canvas', 'wall-art', 100, 4, 70, { color: '#7fa7c9', tags: 'picture painting landscape' }],
+    ['mirror-round', 'Round mirror', 'mirror', 60, 4, 60],
+    ['wall-shelf', 'Floating shelf with books', 'wall-shelf', 80, 22, 30, { tags: 'ledge books' }],
+    ['wall-clock', 'Wall clock', 'wall-clock', 35, 5, 35],
+    ['curtains', 'Curtains (pair)', 'curtains', 180, 12, 230, { tags: 'drapes window' }],
   ],
   'Appliances & other': [
     ['fridge', 'Refrigerator', 'box', 91, 76, 178, { color: '#d9dcdf', tags: 'fridge kitchen' }],
     ['washer', 'Washer or dryer', 'box', 69, 76, 99, { color: '#e6e8ea', tags: 'laundry' }],
     ['piano', 'Upright piano', 'box', 150, 60, 125, { color: '#2b2522' }],
-    ['tv-65', '65" TV on a stand', 'box', 145, 30, 90, { color: '#1f1f1f', tags: 'television' }],
+    ['tv-65', '65" TV on a stand', 'tv-stand', 145, 30, 90, { color: '#1f1f1f', tags: 'television' }],
   ],
 }
 

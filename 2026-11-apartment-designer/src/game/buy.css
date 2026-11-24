@@ -13,12 +13,22 @@
 @media (min-width: 700px) {
   .buy-drawer { left: 16px; right: 16px; width: auto; border-radius: var(--g-r-lg); max-height: min(46vh, 380px); padding: 12px 0 10px; }
 }
+/* Phones: the compact drawer (hud.css) is short; expanded it may take more of the screen. */
+@media (max-width: 700px) and (orientation: portrait) {
+  /* (1rem - 16px) is 0 at the default size: larger text gets a taller drawer instead of cut-off names. */
+  .buy-drawer { max-height: calc(26vh + (1rem - 16px) * 4); }
+  .hud-drawer-slot.expanded .buy-drawer { max-height: calc(42vh + (1rem - 16px) * 4); }
+}
+/* Touch screens: the size and colour chips are big enough to hit. */
+@media (pointer: coarse) {
+  .buy-preset { min-height: 32px; padding: 3px 8px; }
+}
 @keyframes buy-open { from { transform: translateY(70%) scale(0.98); opacity: 0; } 60% { opacity: 1; } }
 
 /* ---------------------------------------------------------------- category tabs */
 
 .buy-tabs {
-  display: flex; gap: 4px; padding: 0 12px 8px; overflow-x: auto; scrollbar-width: none; flex: none;
+  display: flex; gap: 4px; padding: 6px 12px 8px; overflow-x: auto; scrollbar-width: none; flex: none;
   scroll-snap-type: x proximity;
 }
 .buy-tabs::-webkit-scrollbar { display: none; }
@@ -27,7 +37,7 @@
 .buy-tab {
   flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; scroll-snap-align: start;
   border: none; background: none; padding: 2px 4px; min-width: 56px; cursor: pointer; color: var(--g-ink-2);
-  font: 800 12px/1 var(--g-font);
+  font: 800 0.75rem/1 var(--g-font);
 }
 .buy-tab-icon {
   position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
@@ -40,8 +50,8 @@
 .buy-tab.on { color: var(--g-ink); }
 .buy-tab.on .buy-tab-icon { background: #fff; box-shadow: 0 0 0 3px var(--g-coral), var(--g-shadow-sm); transform: translateY(-1px); }
 .buy-badge {
-  position: absolute; top: -3px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
-  background: var(--g-coral); color: #fff; font: 900 11px/18px var(--g-font); text-align: center; box-shadow: 0 0 0 2px var(--g-paper);
+  position: absolute; top: -3px; right: -5px; min-width: 18px; min-height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--g-paper-2); color: var(--g-ink-2); font: 800 0.6875rem/1.125rem var(--g-font); text-align: center; box-shadow: 0 0 0 2px var(--g-paper);
 }
 
 /* ---------------------------------------------------------------- item cards */
@@ -55,6 +65,11 @@
   .buy-grid { display: grid; grid-template-columns: repeat(auto-fit, 104px); justify-content: center; gap: 8px; overflow-x: hidden; overflow-y: auto; padding: 12px 14px 8px; scrollbar-width: thin; }
   .buy-grid .buy-card { width: 104px; }
   .buy-grid .buy-empty { width: 150px; }
+}
+/* Tablets in portrait: one row of cards that scrolls sideways (as on phones), never a row cut in half. */
+@media (min-width: 700px) and (max-width: 1099px) and (orientation: portrait) {
+  .buy-drawer { max-height: none; }
+  .buy-grid { display: flex; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; }
 }
 
 .buy-card {
@@ -83,27 +98,40 @@
 }
 .buy-card:hover .item-thumb { animation: g-bounce 0.6s var(--g-ease); }
 .buy-photo { width: 100%; height: 100%; object-fit: cover; }
-.buy-name { font: 800 13.5px/1.15 var(--g-font); color: var(--g-ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.buy-size { font: 700 11.5px/1.2 var(--g-font); color: var(--g-ink-2); white-space: nowrap; }
-.buy-count { position: absolute; right: 5px; top: 5px; padding: 2px 6px; border-radius: 99px; background: var(--g-sage); color: #fff; font: 900 10px/1.4 var(--g-font); }
+.buy-name { font: 800 0.84375rem/1.15 var(--g-font); color: var(--g-ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.buy-size { font: 700 0.71875rem/1.2 var(--g-font); color: var(--g-ink-2); white-space: nowrap; }
+.buy-count { position: absolute; right: 5px; top: 5px; padding: 2px 6px; border-radius: 99px; background: var(--g-sage); color: #fff; font: 900 0.625rem/1.4 var(--g-font); }
 .buy-tag {
   position: absolute; left: 5px; bottom: 5px; padding: 2px 7px; border-radius: 99px; background: rgba(255, 255, 255, 0.92);
-  font: 900 10px/1.4 var(--g-font); color: var(--g-ink-2); box-shadow: 0 1px 3px rgba(60, 40, 20, 0.15);
+  font: 900 0.625rem/1.4 var(--g-font); color: var(--g-ink-2); box-shadow: 0 1px 3px rgba(60, 40, 20, 0.15);
 }
 
 /* Bed sizes as tiny chips inside the card. */
-.buy-presets { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; padding: 0 6px 8px; margin-top: -4px; }
+.buy-presets {
+  display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 3px; padding: 0 6px 2px; margin: -4px 0 8px;
+  overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; scroll-snap-type: x proximity;
+  /* one row that scrolls sideways; the soft fade on the right says there are more */
+  mask-image: linear-gradient(90deg, #000 85%, transparent); -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent);
+}
+.buy-presets::-webkit-scrollbar { display: none; }
+.buy-preset { flex: none; scroll-snap-align: start; white-space: nowrap; }
 .buy-preset {
-  border: none; border-radius: 99px; padding: 3px 7px; background: var(--g-paper-2); color: var(--g-ink);
-  font: 800 10.5px/1 var(--g-font); cursor: pointer; transition: transform 0.15s var(--g-ease), background 0.15s;
+  border: none; border-radius: 99px; padding: 3px 7px; min-height: 32px; background: var(--g-paper-2); color: var(--g-ink);
+  font: 800 0.75rem/1 var(--g-font); cursor: pointer; transition: transform 0.15s var(--g-ease), background 0.15s;
 }
 .buy-preset:hover { background: var(--g-sky); color: #fff; transform: translateY(-1px); }
 .buy-preset:active { transform: scale(0.9); }
+/* With a mouse the size chips stay tucked away until the card is hovered or focused: one card, one
+   button, until you reach for it. Still in the layout (no jump) and still reachable with the arrows. */
+@media (hover: hover) and (pointer: fine) {
+  .buy-card .buy-presets { opacity: 0; visibility: hidden; transition: opacity 0.15s, visibility 0s 0.15s; }
+  .buy-card:hover .buy-presets, .buy-card:focus-within .buy-presets { opacity: 1; visibility: visible; transition: opacity 0.15s; }
+}
 
 /* "+1" that floats up from a tapped card. */
 .buy-plus {
   position: absolute; top: 4px; right: 6px; pointer-events: none; padding: 3px 8px; border-radius: 99px;
-  background: var(--g-sage); color: #fff; font: 900 12px/1 var(--g-font); box-shadow: var(--g-shadow-sm);
+  background: var(--g-sage); color: #fff; font: 900 0.75rem/1 var(--g-font); box-shadow: var(--g-shadow-sm);
   animation: buy-plus 0.9s ease-out forwards;
 }
 @keyframes buy-plus { 0% { transform: translateY(6px) scale(0.5); opacity: 0; } 25% { transform: translateY(-4px) scale(1.15); opacity: 1; } 70% { opacity: 1; } 100% { transform: translateY(-22px) scale(1); opacity: 0; } }
@@ -123,7 +151,7 @@
 .buy-empty { justify-content: center; align-items: center; text-align: center; padding: 10px; width: 150px; background: var(--g-paper-2); box-shadow: none; cursor: default; }
 .buy-empty:hover { transform: none; box-shadow: none; }
 .buy-empty svg { width: 26px; height: 26px; color: var(--g-sun); fill: var(--g-sun); stroke: #d99a1e; }
-.buy-empty p { margin: 6px 0 0; font: 700 12.5px/1.3 var(--g-font); color: var(--g-ink-2); }
+.buy-empty p { margin: 6px 0 0; font: 700 0.78125rem/1.3 var(--g-font); color: var(--g-ink-2); }
 
 /* ---------------------------------------------------------------- shop sheet: the import dialog in game clothes */
 
@@ -133,7 +161,7 @@
 }
 .buy-shop .modal {
   width: min(760px, 100%); max-height: 88vh; overflow-y: auto; gap: 14px;
-  background: var(--g-paper); color: var(--g-ink); font-family: var(--g-font); font-size: 15px;
+  background: var(--g-paper); color: var(--g-ink); font-family: var(--g-font); font-size: 0.9375rem;
   border-radius: var(--g-r-lg) var(--g-r-lg) 0 0; padding: 20px 20px calc(22px + env(safe-area-inset-bottom));
   box-shadow: var(--g-shadow); animation: g-rise 0.36s var(--g-ease);
 }
@@ -143,20 +171,22 @@
   .buy-shop .modal { border-radius: var(--g-r-lg); padding: 24px 26px 26px; }
 }
 .buy-shop .modal header { align-items: flex-start; gap: 12px; }
-.buy-shop .modal h2 { font: 900 22px/1.2 var(--g-font); }
+.buy-shop .modal h2 { font: 900 1.375rem/1.2 var(--g-font); }
+/* The same round × as the game's other sheets (the word stays for screen readers via aria-label). */
 .buy-shop .modal header button.link {
-  flex: none; border-radius: 999px; padding: 8px 14px; background: var(--g-paper-2); color: var(--g-ink-2);
-  font: 800 13px/1 var(--g-font); text-decoration: none;
+  flex: none; width: 38px; height: 38px; border-radius: 50%; padding: 0; background: var(--g-paper-2); color: var(--g-ink);
+  font-size: 0; text-decoration: none; display: inline-flex; align-items: center; justify-content: center;
 }
+.buy-shop .modal header button.link::before { content: '\00d7'; font: 700 1.625rem/1 var(--g-font); }
 .buy-shop .modal header button.link:hover { background: #fff; color: var(--g-ink); box-shadow: var(--g-shadow-sm); }
 .buy-shop .modal p { line-height: 1.4; }
 .buy-shop .muted { color: var(--g-ink-2); }
-.buy-shop .small { font-size: 13px; }
+.buy-shop .small { font-size: 0.8125rem; }
 
 /* Tabs as a segmented pill. */
 .buy-shop .tabs { border: none; background: var(--g-paper-2); border-radius: 999px; padding: 4px; gap: 4px; align-self: flex-start; }
 .buy-shop button.tab {
-  border: none; border-radius: 999px; padding: 9px 16px; color: var(--g-ink-2); font: 800 14px/1 var(--g-font); background: none;
+  border: none; border-radius: 999px; padding: 9px 16px; color: var(--g-ink-2); font: 800 0.875rem/1 var(--g-font); background: none;
   transition: background 0.15s, color 0.15s, transform 0.15s var(--g-ease);
 }
 .buy-shop button.tab:hover:not(.active) { background: rgba(255, 255, 255, 0.6); }
@@ -167,18 +197,18 @@
 @media (max-width: 700px) { .buy-shop .import-draft { border-left: none; padding-left: 0; border-top: 2px dashed var(--g-line); padding-top: 14px; } }
 
 /* Fields and inputs. */
-.buy-shop .field { font: 700 13px/1.2 var(--g-font); gap: 5px; margin: 6px 0; }
+.buy-shop .field { font: 700 0.8125rem/1.2 var(--g-font); gap: 5px; margin: 6px 0; }
 .buy-shop .field > span:first-child { color: var(--g-ink-2); }
-.buy-shop .field.checkbox { font-size: 14px; }
+.buy-shop .field.checkbox { font-size: 0.875rem; }
 .buy-shop .field.checkbox > span { color: var(--g-ink); }
 .buy-shop input:not([type='checkbox']):not([type='color']), .buy-shop select, .buy-shop textarea, .buy-shop .modal textarea {
-  font: 600 16px/1.3 var(--g-font); color: var(--g-ink); border: 2px solid var(--g-line); border-radius: 12px;
+  font: 600 1rem/1.3 var(--g-font); color: var(--g-ink); border: 2px solid var(--g-line); border-radius: 12px;
   padding: 10px 12px; background: #fff; outline: none; min-width: 0;
 }
 .buy-shop input:focus, .buy-shop select:focus, .buy-shop textarea:focus { border-color: var(--g-sky); }
 .buy-shop input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--g-sage); }
 .buy-shop input[type='color'] { height: 44px; border: 2px solid var(--g-line); border-radius: 12px; padding: 3px; background: #fff; }
-.buy-shop .field-input em { font: 700 12px var(--g-font); color: var(--g-ink-2); }
+.buy-shop .field-input em { font: 700 0.75rem var(--g-font); color: var(--g-ink-2); }
 .buy-shop .modal .row { gap: 8px; }
 .buy-shop .modal .row input { padding: 10px 12px; }
 
@@ -187,7 +217,7 @@
 
 /* Buttons become chunky pills. */
 .buy-shop .modal button:not(.tab):not(.link) {
-  border: none; border-radius: 999px; padding: 11px 18px; font: 800 14px/1 var(--g-font); background: var(--g-paper-2); color: var(--g-ink);
+  border: none; border-radius: 999px; padding: 11px 18px; font: 800 0.875rem/1 var(--g-font); background: var(--g-paper-2); color: var(--g-ink);
   box-shadow: 0 3px 0 rgba(70, 50, 30, 0.12); transition: transform 0.18s var(--g-ease);
 }
 .buy-shop .modal button:not(.tab):not(.link):hover:not(:disabled) { transform: translateY(-2px); }
@@ -195,16 +225,93 @@
 .buy-shop .modal button.primary:not(.tab):not(.link) { background: var(--g-coral); color: #fff; box-shadow: 0 4px 0 var(--g-coral-dk); }
 .buy-shop .modal button.primary:not(.tab):not(.link):active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 var(--g-coral-dk); }
 .buy-shop .btn-row { margin-top: 14px; }
-.buy-shop .btn-row button.primary:not(.tab) { flex: 1; padding: 15px 22px; font-size: 16px; }
+.buy-shop .btn-row button.primary:not(.tab) { flex: 1; padding: 15px 22px; font-size: 1rem; }
 
 .buy-shop .dropzone {
   border: 3px dashed rgba(255, 122, 89, 0.45); border-radius: var(--g-r); min-height: 160px; background: #fff6f1;
-  color: var(--g-coral-dk); font: 800 15px/1.3 var(--g-font); transition: background 0.15s, transform 0.2s var(--g-ease);
+  color: var(--g-coral-dk); font: 800 0.9375rem/1.3 var(--g-font); transition: background 0.15s, transform 0.2s var(--g-ease);
 }
 .buy-shop .dropzone.over, .buy-shop .dropzone:hover { border-color: var(--g-coral); background: #ffece4; transform: scale(1.01); }
 .buy-shop .dropzone img { border-radius: 12px; }
 .buy-shop .note { background: var(--g-paper-2); border-radius: 12px; padding: 10px 12px; }
 .buy-shop .error { color: var(--g-bad); }
-.buy-shop .badge { font: 800 12px/1.3 var(--g-font); padding: 6px 10px; border-radius: 10px; }
+.buy-shop .badge { font: 800 0.75rem/1.3 var(--g-font); padding: 6px 10px; border-radius: 10px; }
 .buy-shop .thumb { border-radius: 14px; border: none; box-shadow: var(--g-shadow-sm); }
 .buy-shop .draft-head { grid-template-columns: 84px 1fr; gap: 12px; }
+
+/* The piece the "Next" goal chip pointed at: a gentle glow until it's placed. */
+.buy-card.hinted .buy-thumb { box-shadow: 0 0 0 3px var(--g-sun), 0 0 14px color-mix(in srgb, var(--g-sun) 60%, transparent); animation: buy-hint 1.4s ease-in-out 3; }
+@keyframes buy-hint { 50% { transform: translateY(-4px); } }
+
+/* ---------------------------------------------------------------- phones: the compact drawer */
+/* (Overrides hud.css's compact rules: labels stay, the badge sits inside the circle, names fit.) */
+@media (max-width: 700px) and (orientation: portrait) {
+  /* All seven tabs (Mine included) share the row on a 360px phone: each takes an equal share instead
+     of a fixed 58px (7 x 58 overflowed 390 and cut "Mine" to "Mi"). Larger text still scrolls sideways
+     ((1rem - 16px) is 0 at the default). */
+  .game .buy-tabs { gap: 0; padding-left: 6px; padding-right: 6px; justify-content: space-between; }
+  .game .buy-tab { flex: 1 1 0; min-width: calc(44px + (1rem - 16px) * 4); padding: 2px 0; }
+  .game .hud-drawer-slot:not(.expanded) .buy-tab { min-width: calc(44px + (1rem - 16px) * 4); gap: 3px; }
+  .game .buy-tab-label { font: 800 0.6875rem/1.1 var(--g-font); letter-spacing: -0.02em; white-space: nowrap; }
+  .game .hud-drawer-slot:not(.expanded) .buy-tab-label { display: block; }
+  .game .buy-tab.on .buy-tab-label { color: var(--g-coral-dk); }
+  /* The badge tucks inside the circle's corner instead of hanging off it. */
+  .game .buy-tab .buy-badge { top: 2px; right: 2px; min-width: 16px; height: auto; min-height: 16px; padding: 0 4px; border-radius: 8px; font: 900 0.625rem/1rem var(--g-font); }
+  /* The open tab's chevron cut through its label now the labels stay: the coral ring and label mark it instead. */
+  .game .buy-tab.on .buy-tab-icon::after { display: none; }
+  /* Names one size up, a touch tighter, on a card wide enough for "Dining table". */
+  .game .hud-drawer-slot:not(.expanded) .buy-card { width: 86px; }
+  .game .hud-drawer-slot:not(.expanded) .buy-name { font-size: 0.8125rem; letter-spacing: -0.01em; }
+  /* The link/photo card's two icons fit the short compact thumb. */
+  .game .hud-drawer-slot:not(.expanded) .buy-shop-icons { gap: 3px; }
+  .game .hud-drawer-slot:not(.expanded) .buy-shop-icons svg { width: 32px !important; height: 32px !important; padding: 6px; }
+  .game .hud-drawer-slot:not(.expanded) .buy-shop-icons svg:last-child { transform: rotate(8deg) translateY(3px); }
+}
+/* The link/photo card: paper like the others, with a coral icon (not a coral slab). */
+.game .buy-shopcard { background: var(--g-paper); box-shadow: inset 0 0 0 1.5px var(--g-line), 0 3px 0 rgba(70, 50, 30, 0.08); }
+.game .buy-shopcard .buy-thumb { background: radial-gradient(circle at 50% 35%, #fffdf8 0, var(--g-paper-2) 75%); }
+.game .buy-shopcard .buy-name { color: var(--g-ink); }
+.game .buy-shop-icons svg { background: #fff; color: var(--g-coral); box-shadow: 0 0 0 2px color-mix(in srgb, var(--g-coral) 40%, transparent); }
+.game .buy-shop-icons svg:last-child { background: #fff; color: var(--g-coral); box-shadow: 0 0 0 2px color-mix(in srgb, var(--g-coral) 40%, transparent); }
+
+/* ---------------------------------------------------------------- laptops and desktops */
+/* The drawer is a column down the right, from under the top bar to above the mode bar, so the
+   home keeps most of the screen. GameApp's useHudInset counts its width at the right (keep the
+   query in step with DESKTOP_SIDE_DRAWER there). */
+@media (min-width: 1100px) and (min-height: 700px), (min-width: 1000px) and (min-height: 640px) and (orientation: landscape) {
+  /* Wider, and two columns of cards, when the text is larger ((1rem - 16px) is 0 at the default). */
+  .game { --desk-side-w: clamp(calc(320px + (1rem - 16px) * 6), 30vw, calc(360px + (1rem - 16px) * 8)); }
+  .hud-drawer-slot .buy-drawer {
+    left: auto; right: 16px; top: calc(var(--top-h) + 8px); bottom: calc(var(--dock-h) + 4px);
+    width: var(--desk-side-w); max-width: none; max-height: none; margin: 0; border-radius: var(--g-r-lg); padding: 10px 0 8px;
+    box-shadow: -6px 0 30px rgba(60, 40, 20, 0.12), 0 1px 4px rgba(60, 40, 20, 0.06);
+    transform-origin: 100% 50%; animation-name: buy-side-open;
+  }
+  .hud-drawer-slot .buy-tabs { justify-content: space-between; gap: 0; padding: 4px 10px 8px; border-bottom: 1.5px solid var(--g-line); }
+  /* Larger text: the tabs keep room for their labels and the row scrolls sideways ((1rem - 16px) is 0 at the default). */
+  .hud-drawer-slot .buy-tab { min-width: calc((1rem - 16px) * 7); flex: 1 1 0; padding: 2px 0; }
+  .hud-drawer-slot .buy-grid .buy-size { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .hud-drawer-slot .buy-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(88px + (1rem - 16px) * 6), 1fr)); justify-content: stretch; align-content: start;
+    gap: 8px; padding: 10px 12px 8px; overflow-x: hidden; overflow-y: auto; flex: 1; scroll-snap-type: none;
+  }
+  .hud-drawer-slot .buy-grid .buy-card { width: auto; min-width: 0; }
+  .hud-drawer-slot .buy-grid .buy-empty { width: auto; grid-column: 1 / -1; }
+  /* The selection strip moves to the top left of the stage, clear of the room and the drawer. */
+  .hud-drawer-slot .buy-drawer > .hud-ctx-wrap.slim {
+    top: 0; bottom: auto; left: calc(var(--desk-side-w) + 32px - 100vw); transform: none; align-items: flex-start;
+    max-width: calc(100vw - var(--desk-side-w) - 64px);
+  }
+  /* Cards are narrow in the side drawer: the size chips stay one row that scrolls sideways (whole
+     labels, never "Larg"), so a card with four sizes is no taller than its neighbours. */
+  .hud-drawer-slot .buy-presets { flex-wrap: nowrap; overflow-x: auto; }
+  .hud-drawer-slot .buy-preset { min-height: 32px; padding: 3px 6px; }
+  /* "Pick one" floats just left of the drawer, at its foot (above the dock), close to where the eye is. */
+  .hud-drawer-slot .buy-drawer > .feel-pick {
+    top: auto; bottom: 0; left: auto; right: calc(100% + 12px); align-items: flex-end;
+    max-width: min(420px, calc(100vw - var(--desk-side-w) - 64px));
+  }
+  .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-cam { right: calc(16px + var(--desk-side-w) + 12px); }
+  .game:has(.hud-drawer-slot:not(.tucked) .buy-drawer) .hud-toast .toast { left: calc(50% - var(--desk-side-w) / 2); }
+}
+@keyframes buy-side-open { from { transform: translateX(40%); opacity: 0; } 60% { opacity: 1; } }

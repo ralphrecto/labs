@@ -1,0 +1,39 @@
+/* Mood moments (round 17): one card, three moods, each with a tiny room preview. */
+.mood-card {
+  position: absolute; z-index: 60; left: 50%; top: calc(108px + env(safe-area-inset-top));
+  transform: translateX(-50%); width: min(460px, calc(100vw - 32px)); padding: 14px 16px 12px;
+  font-family: var(--g-font); color: var(--g-ink); text-align: center;
+  box-shadow: 0 0 0 3px rgba(255, 194, 75, 0.55), var(--g-shadow);
+  animation: mood-in 0.42s var(--g-ease, ease-out) both;
+}
+@keyframes mood-in { from { opacity: 0; transform: translate(-50%, -10px) scale(0.96); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+.mood-kicker { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--g-coral-ink); }
+.mood-q { margin: 2px 28px 10px; font-size: 1.125rem; font-weight: 800; line-height: 1.25; }
+.mood-close {
+  position: absolute; top: 6px; right: 6px; width: 36px; height: 36px; border: 0; border-radius: 50%;
+  background: transparent; color: var(--g-ink-2); font-size: 1.5rem; line-height: 1; cursor: pointer;
+}
+.mood-close:hover, .mood-close:focus-visible { background: var(--g-paper-2); }
+.mood-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.mood-opt {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 6px 8px; min-width: 0;
+  border: 2px solid var(--g-line); border-radius: 14px; background: var(--g-paper-2); color: inherit;
+  font: inherit; cursor: pointer; transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.mood-opt:hover, .mood-opt:focus-visible { transform: translateY(-2px); border-color: var(--g-sun); box-shadow: var(--g-shadow-sm); }
+.mood-opt.on { border-color: var(--g-coral); }
+.mood-prev { width: 100%; height: auto; border-radius: 9px; display: block; }
+.mood-name { margin-top: 4px; font-weight: 800; font-size: 0.875rem; line-height: 1.2; }
+.mood-blurb { color: var(--g-ink-2); font-size: 0.75rem; line-height: 1.25; }
+.mood-adds { color: var(--g-coral-ink); font-size: 0.75rem; font-weight: 800; line-height: 1.2; }
+.mood-foot { margin: 8px 0 0; font-size: 0.75rem; color: var(--g-ink-2); }
+/* Phones: under the pill and Next chip, so the room stays in view below. */
+@media (max-width: 640px) {
+  .mood-card { top: calc(118px + env(safe-area-inset-top)); padding: 10px 10px 10px; }
+  .mood-q { font-size: 1rem; margin-bottom: 8px; }
+  .mood-opt { padding: 4px 4px 6px; }
+  /* The blurb stays (what you're choosing), smaller; "+ rug + lamp" says what the goal asks for. */
+  .mood-blurb { font-size: 0.6875rem; line-height: 1.2; }
+  .mood-adds { font-size: 0.6875rem; }
+}
+@media (prefers-reduced-motion: reduce) { .mood-card { animation: none; } .mood-opt { transition: none; } }

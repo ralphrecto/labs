@@ -51,8 +51,16 @@ export const CATALOG: CatalogEntry[] = [
   { category: 'bookshelf', name: 'Bookshelf', width: 0.8, depth: 0.35, height: 1.8, clearance: c(0.6), color: '#b08d68' },
   { category: 'rug', name: 'Rug', width: 2.4, depth: 1.7, height: 0.01, clearance: c(), color: '#c7a98a', floorLevel: true },
   { category: 'floor-lamp', name: 'Floor lamp', width: 0.4, depth: 0.4, height: 1.6, clearance: c(), color: '#e2d6b8' },
+  { category: 'table-lamp', name: 'Table lamp', width: 0.3, depth: 0.3, height: 0.55, clearance: c(), color: '#e2d6b8' },
+  { category: 'pendant', name: 'Pendant', width: 0.45, depth: 0.45, height: 0.3, clearance: c(), color: '#e2d6b8' },
   { category: 'plant', name: 'Plant', width: 0.45, depth: 0.45, height: 1.1, clearance: c(), color: '#5f8f5a' },
-  { category: 'box', name: 'Box', width: 1, depth: 1, height: 1, clearance: c(), color: '#9aa4ad' },
+  // Wall decor (see wallDecor.ts): hangs on a wall, takes no floor and needs no clearance. Depth is how far it stands off the wall.
+  { category: 'wall-art', name: 'Framed art', width: 0.6, depth: 0.04, height: 0.8, clearance: c(), color: '#e8a27c' },
+  { category: 'mirror', name: 'Round mirror', width: 0.6, depth: 0.04, height: 0.6, clearance: c(), color: '#c9a26b' },
+  { category: 'wall-shelf', name: 'Floating shelf', width: 0.8, depth: 0.22, height: 0.3, clearance: c(), color: '#b08d68' },
+  { category: 'wall-clock', name: 'Wall clock', width: 0.35, depth: 0.05, height: 0.35, clearance: c(), color: '#f6efe3' },
+  { category: 'curtains', name: 'Curtains', width: 1.8, depth: 0.12, height: 2.3, clearance: c(), color: '#e9d8c4' },
+  { category: 'box', name: 'Box', width: 1, depth: 1, height: 1, clearance: c(), color: '#c8a27a' },
 ]
 
 export function catalogEntry(category: string): CatalogEntry {

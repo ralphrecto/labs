@@ -39,6 +39,40 @@ describe('scan palette', () => {
     expect(p.floor!.rgba[mid + 3]).toBe(255)
   })
 
+  it('lets a rug lying on the boards show through, not the boards seen under it', () => {
+    // Dense red boards everywhere, and a sparse blue rug 1 cm up over x, y in 1..3 (a scan sees the boards through it).
+    const pos: number[] = []
+    const col: number[] = []
+    let seed = 3
+    const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+    for (let i = 0; i < 40000; i++) {
+      pos.push(rand() * 4, (rand() - 0.5) * 0.006, rand() * 3)
+      col.push(0.8, 0.2, 0.2)
+    }
+    for (let i = 0; i < 1200; i++) {
+      pos.push(1 + rand() * 2, 0.01 + (rand() - 0.5) * 0.006, 1 + rand())
+      col.push(0.2, 0.3, 0.8)
+    }
+    // A sofa's foot standing on the boards: too tall to be a rug.
+    for (let i = 0; i < 600; i++) {
+      pos.push(0.2 + rand() * 0.4, 0.035 + rand() * 0.02, 0.2 + rand() * 0.4)
+      col.push(0.1, 0.8, 0.1)
+    }
+    const p = scanPalette([{ count: pos.length / 3, positions: Float32Array.from(pos), colors: Float32Array.from(col) }], [room])
+    const f = p.floor!
+    const at = (x: number, y: number) => {
+      const k = (Math.floor((y - f.y0) / f.cell) * f.width + Math.floor((x - f.x0) / f.cell)) * 4
+      return [f.rgba[k], f.rgba[k + 1], f.rgba[k + 2]]
+    }
+    const [r, , b] = at(2, 1.5)
+    expect(b).toBeGreaterThan(r) // the rug's blue, not the boards' red
+    expect(b).toBeGreaterThan(170)
+    const [r2, g2] = at(3.5, 2.5)
+    expect(r2).toBeGreaterThan(190) // plain boards stay red
+    expect(at(0.4, 0.4)[1]).toBeLessThan(80) // the sofa foot doesn't paint the floor green
+    expect(r2 - g2).toBeGreaterThan(120)
+  })
+
   it('returns nothing for scans without colors', () => {
     const s = boxScan()
     const p = scanPalette([{ ...s, colors: undefined }], [room])

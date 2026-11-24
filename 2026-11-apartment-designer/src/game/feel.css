@@ -1,0 +1,127 @@
+/* Game feel: the star-loss pill, the buy hint pill and the Dream home card. */
+
+/* A soft coral pill under the vibe meter when stars drop: what broke, and Undo. */
+.feel-loss {
+  position: absolute; top: calc(100% + 6px); z-index: 5; display: inline-flex; align-items: center; gap: 8px;
+  max-width: min(330px, calc(100vw - 112px)); padding: 4px 4px 4px 12px; border-radius: 999px;
+  background: color-mix(in srgb, var(--g-coral, #e9785a) 16%, var(--g-paper, #fffdf8)); color: #8a3a26;
+  box-shadow: var(--g-shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.12)); font: 700 0.75rem/1.2 var(--g-font, system-ui); white-space: nowrap; pointer-events: auto;
+  animation: g-fade 0.3s var(--g-ease, ease-out);
+}
+.feel-loss-text { overflow: hidden; text-overflow: ellipsis; }
+.feel-loss-text b { font-weight: 900; color: #b2462c; }
+.feel-loss-undo {
+  flex: none; border: none; cursor: pointer; padding: 4px 11px; border-radius: 999px; background: var(--g-coral, #e9785a); color: #fff;
+  font: 900 0.75rem/1.2 var(--g-font, system-ui);
+}
+.feel-loss-undo:active { transform: scale(0.95); }
+
+/* The instruction behind the Next chip, kept above the cards while its hint is up. */
+.feel-hint-pill {
+  /* Floats just above the drawer, so it never pushes the card it names below the dock. */
+  position: absolute; left: 12px; bottom: calc(100% + 6px); z-index: 3;
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; margin: 0; padding: 5px 12px; border-radius: 999px;
+  background: var(--g-sun, #f3b53c); color: #5a3a08; font: 700 0.75rem/1.2 var(--g-font, system-ui); box-shadow: var(--g-shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.12));
+  width: fit-content; max-width: calc(100% - 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  animation: g-fade 0.3s var(--g-ease, ease-out);
+}
+.feel-hint-pill b { font-weight: 900; }
+
+/* "Pick one": 2-3 small cards for the hinted piece, floating where the hint pill sits. One tap places. */
+.feel-pick {
+  position: absolute; left: 12px; bottom: calc(100% + 6px); z-index: 3;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: calc(100% - 24px);
+  pointer-events: none; animation: g-fade 0.3s var(--g-ease, ease-out);
+}
+.feel-pick-head {
+  padding: 3px 10px; border-radius: 999px; background: var(--g-sun, #f3b53c); color: #5a3a08;
+  font: 800 0.6875rem/1.2 var(--g-font, system-ui); box-shadow: var(--g-shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.12));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.feel-pick-head b { font-weight: 900; }
+.feel-pick-row { display: flex; gap: 6px; max-width: 100%; pointer-events: auto; }
+.game button.feel-pick-card, .feel-pick-card {
+  position: relative; flex: 0 1 100px; min-width: 72px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 5px 6px 6px; border: 2px solid color-mix(in srgb, var(--g-sun, #f3b53c) 70%, transparent); border-radius: 14px; cursor: pointer;
+  background: var(--g-paper, #fffdf8); color: var(--g-ink, #3a2f26); box-shadow: 0 3px 0 rgba(90, 58, 8, 0.14), var(--g-shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.12));
+  transition: transform 0.15s var(--g-ease, ease-out);
+}
+.feel-pick-card:active { transform: scale(0.94); }
+.feel-pick-card.pop { animation: g-pop 0.4s var(--g-ease, ease-out); }
+.feel-pick-card.mine { border-color: var(--g-coral, #e9785a); background: color-mix(in srgb, var(--g-coral, #e9785a) 10%, var(--g-paper, #fffdf8)); }
+.feel-pick-thumb { position: relative; display: grid; place-items: center; width: 44px; height: 40px; }
+.feel-pick .feel-pick-label {
+  /* Up to two lines ("Seats 4", "From your boxes"), so labels read whole rather than "Mediu…" or "Mediu/m". */
+  max-width: 100%; font: 800 0.75rem/1.15 var(--g-font, system-ui); text-align: center; overflow-wrap: normal; word-break: keep-all; hyphens: none;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+.feel-pick .feel-pick-card.mine .feel-pick-label { font-size: 0.625rem; }
+/* "Your style": the colour you picked last for this kind of material. */
+.feel-pick-dot {
+  position: absolute; top: -1px; right: -3px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--g-coral, #e9785a); box-shadow: 0 0 0 2px var(--g-paper, #fffdf8);
+}
+@media (max-width: 360px) {
+  .feel-pick { left: 8px; max-width: calc(100% - 16px); }
+  .game button.feel-pick-card, .feel-pick-card { flex-basis: 92px; padding: 4px 4px 5px; }
+}
+
+/* The goals sheet's way into a remix at Dream home (the chip may be today's visitor). */
+.game button.goal-hero-remix, .goal-hero-remix {
+  margin-top: 8px; padding: 6px 14px; border: none; border-radius: 999px; cursor: pointer;
+  background: var(--g-sun, #f3b53c); color: #5a3a08; font: 800 0.75rem/1.2 var(--g-font, system-ui);
+  box-shadow: 0 3px 0 rgba(90, 58, 8, 0.18);
+}
+
+/* Dream home: the full card on every screen, with a photo button. */
+.feel-dream { background: radial-gradient(circle at 50% 42%, rgba(255, 194, 75, 0.3), rgba(45, 38, 32, 0.42) 75%); animation: g-fade 0.4s ease both; }
+/* The usual level-up fades itself out after 3.6 s; this one stays until tapped (or 12 s). */
+.feel-dream .goal-levelup-card { padding-bottom: 22px; animation: g-fade 0.5s var(--g-ease, ease-out) both; }
+.feel-dream .goal-levelup-card strong { font-size: 2.125rem; }
+.feel-dream-photo { margin-top: 14px; }
+/* goals.css's .goal-levelup dims the whole overlay out at 3.6 s; the Dream card outlives that, so the
+   overlay must not turn invisible while it still sits on top catching taps. */
+.goal-levelup.feel-dream { animation: g-fade 0.4s ease both; }
+@media (prefers-reduced-motion: reduce) {
+  .goal-levelup.feel-dream,
+  .feel-loss, .feel-hint-pill, .feel-pick, .feel-pick-card.pop, .feel-dream, .feel-dream .goal-levelup-card { animation: none; }
+}
+
+/* Moving boxes: the filled Unpack action, and a small confetti burst where the box stood. */
+.game button.hud-act.filled, .game button.hud-act.filled:hover:not(:disabled) { background: var(--g-coral-fill); color: #fff; box-shadow: 0 3px 0 var(--g-coral-ledge); }
+.hud-act.filled svg { color: #fff; }
+.goal-confetti.unpack-burst { position: relative; inset: auto; width: 0; height: 0; overflow: visible; }
+.goal-confetti.unpack-burst i { top: 0; left: 0; width: 8px; height: 11px; animation: unpack-burst 0.9s cubic-bezier(0.2, 0.7, 0.4, 1) both; }
+@keyframes unpack-burst {
+  0% { opacity: 1; translate: 0 0; rotate: 0deg; scale: 0.4; }
+  60% { opacity: 1; scale: 1; }
+  100% { opacity: 0; translate: var(--dx) calc(var(--dy) + 40px); rotate: 360deg; scale: 0.8; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .unpack-burst { display: none; }
+}
+
+/* Round 16: a button a level just unlocked glows "new" until it's first used. */
+.g-new { position: relative; animation: g-new-glow 1.8s ease-in-out infinite; }
+.g-new:not(.sty-btn)::after {
+  content: 'New'; position: absolute; top: -8px; right: -6px; padding: 1px 7px; border-radius: 999px;
+  background: var(--g-coral-fill); color: #fff; font: 700 11px/16px var(--g-font); letter-spacing: 0.02em; pointer-events: none;
+}
+@keyframes g-new-glow {
+  0%, 100% { box-shadow: var(--g-shadow-sm), 0 0 0 0 color-mix(in srgb, var(--g-coral) 55%, transparent); }
+  50% { box-shadow: var(--g-shadow-sm), 0 0 0 7px color-mix(in srgb, var(--g-coral) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-new { animation: none; box-shadow: var(--g-shadow-sm), 0 0 0 3px var(--g-coral); }
+}
+
+/* Round 16: a remix's goals-done count on the pill pops each time a goal is finished. */
+.goal-meter-tick { display: inline-block; color: #2f6b2a; animation: g-tick-pop 0.5s var(--g-ease, ease-out); }
+@keyframes g-tick-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.6); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .goal-meter-tick { animation: none; }
+}

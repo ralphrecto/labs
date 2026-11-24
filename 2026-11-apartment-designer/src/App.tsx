@@ -10,8 +10,9 @@ import { useScanUI } from './scan/scanUi'
 import { exportPlanPNG } from './exporting'
 import { Scene3D } from './three/Scene3D'
 import { activeLayout, loadSample, newEmptyDoc, useStore, type Mode, type View } from './store'
-import { downloadJSON, parseDoc } from './storage'
+import { allHomeScanIds, downloadJSON, parseDoc } from './storage'
 import { parseLength, unitLabel } from './model/units'
+import { flushEditRun, nudgePlacement, rotatePlacementSmart } from './game/editActions'
 
 /** Set when built for an embedded preview where printing and downloads are unavailable. */
 const EMBEDDED = import.meta.env.VITE_EMBED === '1'
@@ -81,6 +82,11 @@ export function useShortcuts() {
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return
       const s = useStore.getState()
       const mod = e.metaKey || e.ctrlKey
+      // Only more turns (R , .) and nudges (arrows) extend a run of edits into one undo step; any
+      // other key (undo, duplicate, delete...) closes it first, so each stays its own step.
+      const runKey = !mod && !e.altKey && (e.key.toLowerCase() === 'r' || ',.<>'.includes(e.key) || e.key.startsWith('Arrow'))
+      const modifier = e.key === 'Shift' || e.key === 'Control' || e.key === 'Meta' || e.key === 'Alt'
+      if (!runKey && !modifier) flushEditRun()
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) s.redo()
@@ -91,8 +97,11 @@ export function useShortcuts() {
       } else if (mod && e.key.toLowerCase() === 'd' && s.selection?.kind === 'placement') {
         e.preventDefault()
         s.duplicatePlacement(s.selection.id)
-      } else if (!mod && e.key.toLowerCase() === 'r' && s.selection?.kind === 'placement') {
-        s.rotatePlacement(s.selection.id, ((e.shiftKey ? -1 : 1) * Math.PI) / 12)
+      } else if (!mod && !e.altKey && e.key.toLowerCase() === 'r' && s.selection?.kind === 'placement') {
+        // A quarter turn (Shift turns back); , and . turn 15° for fine angles.
+        rotatePlacementSmart(s.selection.id, ((e.shiftKey ? -1 : 1) * Math.PI) / 2)
+      } else if (!mod && (e.key === ',' || e.key === '.' || e.key === '<' || e.key === '>') && s.selection?.kind === 'placement') {
+        rotatePlacementSmart(s.selection.id, ((e.key === ',' || e.key === '<' ? -1 : 1) * Math.PI) / 12)
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         if (s.mode === 'draw-room') return
         if (s.selection?.kind === 'placement') s.deletePlacement(s.selection.id)
@@ -102,12 +111,10 @@ export function useShortcuts() {
         else s.select(null)
       } else if (s.selection?.kind === 'placement' && e.key.startsWith('Arrow')) {
         e.preventDefault()
-        const step = e.shiftKey ? 0.1 : 0.01
-        const p = activeLayout(s.doc).placements.find((x) => x.id === s.selection!.id)
-        if (!p) return
-        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0
-        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0
-        s.updatePlacement(p.id, { x: p.x + dx, y: p.y + dy })
+        // Arrows follow the screen (in 3D they turn with the camera); a run of them is one undo step.
+        const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
+        const dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0
+        nudgePlacement(s.selection.id, { x: dx, y: dy }, e.shiftKey ? 0.1 : 0.01)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -322,7 +329,8 @@ export function useScanFiles() {
     for (const r of scans ?? []) void ensureScanLoaded(r)
   }, [scans])
   useEffect(() => {
-    void pruneScanFiles((useStore.getState().doc.scans ?? []).map((r) => r.id))
+    // Keep the scan files of every saved home, not just the open one.
+    void pruneScanFiles(allHomeScanIds((useStore.getState().doc.scans ?? []).map((r) => r.id)))
   }, [])
 }
 

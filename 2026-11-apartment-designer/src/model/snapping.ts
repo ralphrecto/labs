@@ -1,5 +1,6 @@
 import { add, closestPointOnSegment, DEG, dot, norm, rot, scale, sub, v, wallInwardNormal, wallSegments } from './geometry'
 import type { Item, Placement, Room, Vec2 } from './types'
+import { isWallDecor } from './wallDecor'
 
 export interface SnapSettings {
   grid: number // 0 = off
@@ -44,6 +45,8 @@ export function snapPlacement(
 ): SnapResult {
   let p = { ...proposed }
   const guides: SnapGuide[] = []
+  // Wall decor hangs above the floor: floor pieces don't line up against it.
+  others = others.filter((o) => !isWallDecor(o.item.category))
 
   if (settings.grid > 0) {
     p.x = Math.round(p.x / settings.grid) * settings.grid

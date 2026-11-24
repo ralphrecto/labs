@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { create } from 'zustand'
 import { useStore } from '../store'
 import { RENDER_STYLES, type RenderStyle } from '../three/style'
-import { useGame } from './gameStore'
+import { useGame, useHomeReached } from './gameStore'
 import './style-picker.css'
 
 // The "map layers" control: a small round button showing the current look. Tapping it fans out
@@ -12,7 +13,7 @@ export function StyleSwatch({ id }: { id: RenderStyle }) {
   const ink = id === 'toon' ? '#3d2c25' : id === 'blueprint' ? '#e8f2ff' : 'none'
   const sw = id === 'toon' ? 1.6 : id === 'blueprint' ? 1.2 : 0
   const fill = (toon: string, real: string, clay: string) => (id === 'toon' ? toon : id === 'real' ? real : id === 'clay' ? clay : id === 'blueprint' ? 'rgba(93,149,224,0.25)' : 'none')
-  const bg = id === 'scan' ? '#1d2129' : id === 'blueprint' ? '#1c4a8a' : id === 'toon' ? '#fde9cf' : id === 'real' ? '#e9edf0' : '#e7e3dd'
+  const bg = id === 'scan' ? '#1d2129' : id === 'blueprint' ? '#1c4a8a' : id === 'toon' ? '#fde9cf' : id === 'real' ? '#ddd0bd' : '#e4d9ca'
   return (
     <svg viewBox="0 0 64 64" aria-hidden className="sty-swatch">
       <defs>
@@ -29,8 +30,8 @@ export function StyleSwatch({ id }: { id: RenderStyle }) {
           <stop offset="1" stopColor="#56677f" />
         </linearGradient>
         <radialGradient id="sty-clay" cx="0.35" cy="0.3" r="0.9">
-          <stop offset="0" stopColor="#fbf9f6" />
-          <stop offset="1" stopColor="#d6d0c7" />
+          <stop offset="0" stopColor="#efe6da" />
+          <stop offset="1" stopColor="#c4b39d" />
         </radialGradient>
       </defs>
       <rect width="64" height="64" fill={bg} />
@@ -84,12 +85,34 @@ const SCAN_DOTS: [number, number, string][] = (() => {
   return out
 })()
 
+/**
+ * Whether a style picker is open. The HUD tucks the furniture drawer away meanwhile, so on a phone
+ * the tiles and their names aren't hidden under it.
+ */
+export const useStylePicker = create<{ open: boolean; setOpen: (open: boolean) => void }>((set) => ({
+  open: false,
+  setOpen: (open) => set({ open }),
+}))
+
+/** Styles are a first reward: they unlock at "Moving in" (or stay, once a style other than Cartoon is picked). */
+export function useStylesUnlocked(): boolean {
+  const style = useGame((s) => s.renderStyle)
+  const homeId = useStore((s) => s.doc.apartment.id)
+  return useHomeReached(homeId, 1) || style !== 'toon'
+}
+
 export function StylePicker({ className = '' }: { className?: string }) {
   const style = useGame((s) => s.renderStyle)
   const hasScan = useStore((s) => (s.doc.scans ?? []).length > 0)
   const [open, setOpen] = useState(false)
+  useEffect(() => {
+    useStylePicker.getState().setOpen(open)
+  }, [open])
+  useEffect(() => () => useStylePicker.getState().setOpen(false), [])
   const [hint, setHint] = useState<RenderStyle | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  // Just unlocked (round 16): the button glows "new" until it's first used.
+  const fresh = useGame((g) => g.freshUnlocks.includes('style'))
 
   useEffect(() => {
     if (!open) return
@@ -121,7 +144,10 @@ export function StylePicker({ className = '' }: { className?: string }) {
 
   return (
     <div className={`sty ${className}`} ref={ref}>
-      <button className={`sty-btn${open ? ' open' : ''}`} onClick={() => setOpen((o) => !o)} aria-label={`Style: ${current.label}. Change how the room is drawn`} aria-expanded={open} title="Change the style">
+      <button className={`sty-btn${open ? ' open' : ''}${fresh ? ' g-new' : ''}`} onClick={() => {
+          useGame.getState().spendUnlock('style')
+          setOpen((o) => !o)
+        }} aria-label={`Style: ${current.label}. Change how the room is drawn`} aria-expanded={open} title="Change the style">
         <StyleSwatch id={style} />
         <span className="sty-badge" aria-hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round">
@@ -131,7 +157,7 @@ export function StylePicker({ className = '' }: { className?: string }) {
       </button>
       {open && (
         <div className="sty-pop g-card" role="menu" aria-label="Styles">
-          {RENDER_STYLES.map((s, i) => {
+          {RENDER_STYLES.filter((s) => (s.id !== 'scan' || hasScan || style === 'scan') && (s.id !== 'blueprint' || style === 'blueprint')).map((s, i) => {
             const disabled = s.id === 'scan' && !hasScan
             return (
               <button

@@ -68,6 +68,8 @@ export interface Item {
   height: number
   clearance: Clearance
   color: string
+  /** Frame finish for framed wall pieces (wall art, mirrors); the model's wood frame when unset. */
+  frameColor?: string
   /** Rugs and other floor coverings can sit under other items. */
   floorLevel?: boolean
   /** Optional model; the box is still used for collisions and snapping. */
@@ -84,6 +86,10 @@ export interface Item {
   /** Items detected in a scan: which scan, and how sure the detector was about the type (0..1). */
   scanId?: string
   confidence?: number
+  /** A moving box: the catalog categories inside it, unpacked with the Unpack action. */
+  unpack?: string[]
+  /** The box has been unpacked (its placement is gone; the item stays so the goal can count it). */
+  unpacked?: boolean
 }
 
 export interface Placement {
@@ -94,12 +100,46 @@ export interface Placement {
   y: number
   /** Rotation in radians, clockwise on the plan. 0 means the front faces +y (down on the plan). */
   rotation: number
+  /** Placement id of the furniture this sits on (table lamps). Same layout. x/y stay absolute plan coordinates. */
+  on?: string
+  /** Wall decor only: height (m) of the piece's bottom edge when it was hung above or below another frame. Unset: the category's usual height (see wallDecor.mountBottom). */
+  mountY?: number
 }
 
 export interface Layout {
   id: string
   name: string
   placements: Placement[]
+  /** A remix: started from another design's big pieces, with a twist to meet (see TWISTS in game/goals). */
+  remix?: Remix
+  /** How the player wants each room to feel (round 17 mood moments), by room id. See game/moods. */
+  moods?: Record<string, MoodId>
+  /**
+   * Moods each room has finished before it was changed (round 18), by room id: a finished mood keeps
+   * its star when the room's mood changes (one star per room at most). See game/moods.changeMood.
+   */
+  moodsDone?: Record<string, MoodId[]>
+  /**
+   * What each room already had when its mood was chosen (round 18), as "itemId:color" keys: the
+   * mood's goal counts only pieces placed, brought in or repainted after, so it always asks for a step.
+   */
+  moodBase?: Record<string, string[]>
+}
+
+/** A room's mood, chosen on a mood moment card: Bright & airy, Warm & snug, Bold & playful. */
+export type MoodId = 'airy' | 'snug' | 'bold'
+
+/** The twist challenges a remix can take on. */
+export type TwistId = 'window-seat' | 'fresh-spots' | 'bed-swap' | 'talk-corner' | 'open-floor' | 'less-is-more'
+
+export interface Remix {
+  /** The design it was remixed from. */
+  from: string
+  twist: TwistId
+  /** How many anchor pieces it started with. */
+  anchors: number
+  /** When it first reached Dream home. */
+  dreamAt?: number
 }
 
 export interface Apartment {

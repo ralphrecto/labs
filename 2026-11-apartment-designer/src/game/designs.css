@@ -1,0 +1,86 @@
+/* Your designs sheet: homes strip, design postcards, the "…" menu. Prefix .dz- */
+.dz-homes { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 8px; }
+.dz-home { display: flex; align-items: center; gap: 2px; flex: none; max-width: 260px; background: var(--g-paper-2); border-radius: 16px; padding: 4px 4px 4px 0; border: 3px solid transparent; }
+.dz-home.on { border-color: var(--g-coral); background: var(--g-paper); }
+.dz-home-main { display: flex; align-items: center; gap: 8px; border: none; background: none; padding: 6px 4px 6px 10px; cursor: pointer; font-family: var(--g-font); color: var(--g-ink); text-align: left; min-width: 0; }
+.dz-home.on .dz-home-main { cursor: default; }
+.dz-home-main svg { color: var(--g-coral); flex: none; }
+.dz-home-main span { display: flex; flex-direction: column; min-width: 0; }
+.dz-home-main strong { font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dz-home-main small { font-size: 0.6875rem; font-weight: 700; color: var(--g-ink-2); white-space: nowrap; }
+.dz-home .dz-more-btn { width: 32px; height: 32px; box-shadow: none; background: transparent; }
+
+.dz-designs { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.dz-design { display: flex; align-items: center; gap: 4px; padding: 8px; box-shadow: var(--g-shadow-sm); border: 3px solid transparent; }
+.dz-design.on { border-color: var(--g-coral); }
+.dz-design-main { flex: 1; display: flex; align-items: center; gap: 12px; border: none; background: none; text-align: left; padding: 2px; cursor: pointer; font-family: var(--g-font); color: var(--g-ink); min-width: 0; }
+.dz-design-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dz-design-text strong { font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dz-design-text small { font-size: 0.75rem; font-weight: 700; color: var(--g-ink-2); }
+.dz-thumb { flex: none; background: var(--g-paper-2); border-radius: 12px; }
+.dz-rename { font: 700 1rem var(--g-font); /* 16px+: iOS doesn't zoom in on focus */ color: var(--g-ink); border: 2px solid var(--g-sky); border-radius: 10px; padding: 6px 10px; background: #fff; outline: none; width: 100%; max-width: 240px; box-sizing: border-box; }
+
+.dz-more { position: relative; flex: none; }
+.dz-more-btn { box-shadow: none; background: var(--g-paper-2); }
+.dz-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 180px; max-width: min(280px, calc(100vw - 48px)); padding: 6px; display: flex; flex-direction: column; animation: g-pop 0.2s var(--g-ease); }
+/* Opens upward when there is no room under the button inside the sheet (iPhone SE: the last design's menu). */
+.dz-menu.up { top: auto; bottom: calc(100% + 6px); }
+.dz-menu-item { display: flex; align-items: center; gap: 10px; border: none; background: none; border-radius: 12px; padding: 10px 12px; font: 800 0.875rem var(--g-font); color: var(--g-ink); cursor: pointer; text-align: left; }
+.dz-menu-item:hover { background: var(--g-paper-2); }
+.dz-menu-item.danger { color: var(--g-bad); }
+.dz-ask { margin: 6px 8px 10px; font-weight: 700; font-size: 0.875rem; color: var(--g-ink); line-height: 1.35; }
+.dz-ask-btns { display: flex; gap: 6px; justify-content: flex-end; }
+.g-btn.dz-danger { background: var(--g-bad); color: #fff; }
+
+/* Sheet actions: "Try a variation" leads, "New empty design" sits beside it. */
+.dz-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* Stars, level and the best design's crown on each card. */
+.dz-score { color: var(--g-coral-ink); white-space: nowrap; }
+.dz-crown { display: inline-flex; align-items: center; gap: 3px; color: #b8860b; font-weight: 900; }
+.dz-crown svg { width: 14px; height: 14px; }
+.dz-design-text small { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: center; }
+/* Deleted home: "Deleted X · Undo" until the sheet closes. */
+.dz-undo { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 0 10px; padding: 8px 8px 8px 14px; border-radius: 14px; background: var(--g-paper-2); font: 700 0.875rem var(--g-font); color: var(--g-ink); }
+.dz-undo span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Save failed: stays up until a save goes through. */
+.dz-save-failed { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(110px + env(safe-area-inset-bottom)); z-index: 70; display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 16px; border-radius: 18px; font: 800 0.875rem var(--g-font); color: var(--g-ink); max-width: calc(100vw - 32px); box-sizing: border-box; border: 3px solid var(--g-bad); }
+@media (max-width: 640px) { .dz-save-failed { bottom: auto; top: calc(200px + env(safe-area-inset-top)); width: calc(100vw - 32px); flex-direction: column; align-items: stretch; text-align: center; gap: 8px; } }
+
+/* Top bar: the open design's name under the home icon, on phones only (the name beside it is hidden there). */
+.dz-hud-icon-col { display: contents; }
+.dz-hud-design { display: none; }
+@media (max-width: 640px) {
+  .dz-hud-icon-col { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; }
+  /* The name under the icon is hidden too: the top bar is one row on phones (the sheet names it). */
+  .dz-hud-design { display: none; max-width: 92px; font: 800 0.625rem/1.1 var(--g-font); color: var(--g-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* Welcome back (Goals.tsx): stays up until tapped or a piece is placed, with the home · design · level line. */
+.goal-banner.welcome.dz-stay { animation: g-pop 0.3s var(--g-ease) both; }
+.dz-welcome-line { font-size: 0.75rem; font-weight: 800; color: var(--g-ink-2); overflow: hidden; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+/* The welcome card wraps to two lines and stays clear of the camera / plan buttons on the right. */
+.goal-banner.welcome.dz-stay { white-space: normal; max-width: min(360px, calc(100vw - 96px)); }
+.goal-banner.welcome .goal-banner-check { width: auto; min-width: 30px; padding: 0 6px; border-radius: 15px; gap: 2px; font-weight: 900; font-size: 0.75rem; }
+.goal-banner.welcome .goal-banner-check svg { width: 14px; height: 14px; }
+
+/* ---- Remix: twist badge, level bar, Dream ribbon, untouched copies, twist picker ---- */
+.dz-same { color: var(--g-ink-soft, #8a7a68); font-style: italic; }
+.dz-bar { display: inline-block; width: 36px; height: 4px; margin-left: 6px; vertical-align: middle; border-radius: 2px; background: var(--g-line, #e6dccf); overflow: hidden; }
+.dz-bar > i { display: block; height: 100%; background: var(--g-accent, #e07a4f); border-radius: 2px; }
+.dz-twist { display: inline-block; padding: 1px 6px; border-radius: 999px; background: var(--g-line, #efe6da); font-size: 0.85em; }
+.dz-twist.done { background: #dcefd9; color: #2f6b2a; }
+.dz-ribbon { display: inline-block; padding: 1px 6px; border-radius: 4px; background: #f6d77a; color: #5a4300; font-weight: 600; font-size: 0.85em; }
+.dz-dreams { margin: -4px 0 8px; font-size: 0.9em; color: var(--g-ink-soft, #8a7a68); }
+.dz-picker { display: flex; flex-direction: column; gap: 8px; padding: 12px; flex: 1 1 100%; }
+.dz-picker-h { margin: 0; font-size: 0.95em; }
+.dz-picker-note { margin: 0; font-size: 0.85em; color: var(--g-ink-soft, inherit); opacity: 0.85; }
+.dz-picker-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--g-line, #e6dccf); background: var(--g-card, #fff); color: inherit; text-align: left; cursor: pointer; min-height: 44px; }
+.dz-picker-opt small { opacity: 0.75; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+
+/* "Dream ★": a small ribbon in a remix card's top corner, clear of the ⋯ menu. */
+.dz-design { position: relative; }
+.dz-dream { position: absolute; top: 8px; right: 44px; z-index: 1; font-size: 0.6875rem; line-height: 1.4; padding: 2px 8px; border-radius: 999px; background: #ffc24b; color: #5a3d00; font-weight: 700; pointer-events: none; }
+.dz-twist-won { padding: 1px 6px; border-radius: 999px; background: #fff1c9; color: #8a5a00; font-size: 0.85em; }
+.dz-picker-done { color: #2f6b2a; font-weight: 900; }
+.dz-picker-count { margin: 0; font-size: 0.85em; font-weight: 800; color: var(--g-ink-2); }

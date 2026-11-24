@@ -90,24 +90,47 @@ export function closestPointOnSegment(p: Vec2, a: Vec2, b: Vec2): { point: Vec2;
 
 /** Separating axis test for two convex polygons. Returns true if interiors overlap by more than eps. */
 export function convexOverlap(a: Vec2[], b: Vec2[], eps = 1e-4) {
+  // Round 18 (speed): boxes that don't touch can't overlap. The drop search asks this thousands of
+  // times a tap, and nearly every pair is far apart.
+  if (eps >= 0) {
+    let ax0 = Infinity, ax1 = -Infinity, ay0 = Infinity, ay1 = -Infinity
+    for (const p of a) {
+      if (p.x < ax0) ax0 = p.x
+      if (p.x > ax1) ax1 = p.x
+      if (p.y < ay0) ay0 = p.y
+      if (p.y > ay1) ay1 = p.y
+    }
+    let bx0 = Infinity, bx1 = -Infinity, by0 = Infinity, by1 = -Infinity
+    for (const p of b) {
+      if (p.x < bx0) bx0 = p.x
+      if (p.x > bx1) bx1 = p.x
+      if (p.y < by0) by0 = p.y
+      if (p.y > by1) by1 = p.y
+    }
+    if (ax1 < bx0 || bx1 < ax0 || ay1 < by0 || by1 < ay0) return false
+  }
   for (const poly of [a, b]) {
     for (let i = 0; i < poly.length; i++) {
       const p = poly[i]
       const q = poly[(i + 1) % poly.length]
-      const axis = norm({ x: -(q.y - p.y), y: q.x - p.x })
+      const ex = -(q.y - p.y)
+      const ey = q.x - p.x
+      const l = len({ x: ex, y: ey })
+      const nx = l < 1e-12 ? 0 : ex / l
+      const ny = l < 1e-12 ? 0 : ey / l
       let minA = Infinity
       let maxA = -Infinity
       let minB = Infinity
       let maxB = -Infinity
       for (const pt of a) {
-        const d = dot(pt, axis)
-        minA = Math.min(minA, d)
-        maxA = Math.max(maxA, d)
+        const d = pt.x * nx + pt.y * ny
+        if (d < minA) minA = d
+        if (d > maxA) maxA = d
       }
       for (const pt of b) {
-        const d = dot(pt, axis)
-        minB = Math.min(minB, d)
-        maxB = Math.max(maxB, d)
+        const d = pt.x * nx + pt.y * ny
+        if (d < minB) minB = d
+        if (d > maxB) maxB = d
       }
       if (maxA <= minB + eps || maxB <= minA + eps) return false
     }

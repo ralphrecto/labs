@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import { useAnalysis } from '../analysis'
+import { usePageZoomGuard } from '../gestureGuard'
 import { catalogEntry } from '../model/catalog'
 import {
   add,
@@ -7,6 +8,7 @@ import {
   centroid,
   clearanceZones,
   closestPointOnSegment,
+  convexOverlap,
   dist,
   doorSwing,
   dot,
@@ -14,6 +16,7 @@ import {
   norm,
   offsetPolygon,
   openingEndpoints,
+  pointInPolygon,
   polygonArea,
   scale,
   sub,
@@ -21,14 +24,20 @@ import {
   wallInwardNormal,
   wallSegments,
 } from '../model/geometry'
+import { clampOnHost, HOSTED, hostAt } from '../model/placement'
+import { isWallDecor, snapToWall } from '../model/wallDecor'
+
+/** A touch screen: wall decor badges are drawn bigger so a finger can grab them. */
+const COARSE = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches
 import { snapDrawPoint, snapPlacement, type SnapGuide } from '../model/snapping'
 import type { Doc, Layout, Room, Vec2 } from '../model/types'
 import { formatLength, parseLength } from '../model/units'
 import { activeLayout, useStore } from '../store'
-import { planToScan, rotateAbout, scanToPlan, snapAxes, straightenFromLine, svgTransform, underlayAt } from '../scan/align'
+import { planToScan, rotateAbout, scanToPlan, snapAxes, snapCorner, straightenFromLine, svgTransform, underlayAt } from '../scan/align'
 import { scanCenter, scanCorners, underlayOf, useScanRuntime } from '../scan/runtime'
 import type { ScanRef } from '../model/types'
 import { PlanScanLayer } from './ScanPanels'
+import { viewFrame } from '../three/viewFrame'
 import { placementShift } from '../scan/apply'
 import { reviewChoice, useScanUI } from '../scan/scanUi'
 
@@ -63,15 +72,128 @@ interface ViewState {
   k: number
 }
 
+
+/** A touch on wall decor inside the room only belongs to it this close (screen px) to its wall line. */
+export const DECOR_TOUCH_PX = 8
+
+type Piece = { p: { id: string; x: number; y: number; rotation: number }; item: { width: number; depth: number } }
+/** A world point in a piece's own frame (x along its width, y along its depth, +y away from its back). */
+const toLocal = (w: Vec2, p: Piece['p']): Vec2 => {
+  const dx = w.x - p.x
+  const dy = w.y - p.y
+  const c = Math.cos(-p.rotation)
+  const s = Math.sin(-p.rotation)
+  return v(dx * c - dy * s, dx * s + dy * c)
+}
+
+/**
+ * Who gets a touch that lands on a wall piece's hit area. Wall decor is drawn over the furniture, so
+ * on a finger the floor pieces under the touch win, unless it starts on the wall side of the decor or
+ * within DECOR_TOUCH_PX of its wall line. Returns the placement id that takes it.
+ */
+export function decorTouchTarget(o: { at: Vec2; decor: Piece; floor: Piece[]; px: number }): string {
+  const { at, decor, floor, px } = o
+  const ly = toLocal(at, decor.p).y + decor.item.depth / 2 // 0 on the wall line, + into the room
+  if (ly <= DECOR_TOUCH_PX * px) return decor.p.id
+  const under = floor.find(({ p, item }) => {
+    const q = toLocal(at, p)
+    return Math.abs(q.x) <= item.width / 2 && Math.abs(q.y) <= item.depth / 2
+  })
+  return under ? under.p.id : decor.p.id
+}
+
+/** Tiny badge glyphs for wall decor in the plan. */
+const WALL_GLYPH: Record<string, string> = { 'wall-art': '▣', mirror: '◯', 'wall-shelf': '☰', 'wall-clock': '◷', curtains: '⫴' }
 export interface PlanViewProps {
   /** Show a specific layout read-only (used by compare). Defaults to the active layout, editable. */
   layoutId?: string
   readOnly?: boolean
   svgRef?: React.RefObject<SVGSVGElement | null>
   title?: string
+  /**
+   * Screen space (CSS px) the game HUD covers at the top, bottom and right: the plan is fitted into
+   * what's left, with a tighter margin. Leave out for the classic editor (whole pane).
+   */
+  inset?: { top: number; bottom: number; right?: number; ctx?: number }
+  /**
+   * Scan measure step: told whether the measured line (or the live line to the cursor) runs more
+   * than MEASURE_SKEW_DEG off the scan's wall axes, i.e. probably isn't along a wall. The plan's own
+   * hint says so too; a step (Onboarding's MeasureStep) can use this to show its own warning.
+   */
+  onMeasureSkew?: (skewed: boolean) => void
 }
 
-export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: PlanViewProps) {
+/** A measured line further than this (degrees) off the scan's wall axes is probably not a wall. */
+export const MEASURE_SKEW_DEG = 5
+
+/** How far (degrees, 0..45) the line a→b is off the plan axes, which the scan's walls are squared to. */
+export function offAxisDeg(a: Vec2, b: Vec2): number {
+  const ang = (Math.abs(Math.atan2(b.y - a.y, b.x - a.x)) * 180) / Math.PI
+  const m = ang % 90
+  return Math.min(m, 90 - m)
+}
+
+/** Whether a measured line is long enough to judge and more than MEASURE_SKEW_DEG off the wall axes. */
+export const measureSkewed = (a: Vec2, b: Vec2 | null | undefined) => !!b && dist(a, b) > 0.3 && offAxisDeg(a, b) > MEASURE_SKEW_DEG
+
+/**
+ * Pick where a scan-measure tap lands, given the corner magnet's hit (`corner`), the wall snap's
+ * hit along the plan axes (`wall`: x for a vertical wall, y for a horizontal one, both at a corner)
+ * and the line's first end (`anchor`, for the second tap). A tap well inside a wall's span (more
+ * than half the corner radius from the corner, along that wall) goes onto the wall, not the
+ * corner; so does a second tap whose corner would make the line skewed while the wall wouldn't.
+ */
+export function pickMeasureSnap(o: { tap: Vec2; corner: Vec2 | null; wall: { x?: number; y?: number }; anchor?: Vec2 | null; cornerRadius: number }): Vec2 {
+  const { tap, corner, wall, anchor, cornerRadius } = o
+  const one = (wall.x == null) !== (wall.y == null)
+  const proj = wall.x != null || wall.y != null ? v(wall.x ?? tap.x, wall.y ?? tap.y) : null
+  if (!corner) return proj ?? tap
+  if (!proj || !one) return corner
+  const along = wall.x != null ? Math.abs(tap.y - corner.y) : Math.abs(tap.x - corner.x)
+  if (along > 0.5 * cornerRadius) return proj
+  if (anchor && dist(anchor, corner) > 0.3 && offAxisDeg(anchor, corner) > MEASURE_SKEW_DEG && offAxisDeg(anchor, proj) <= MEASURE_SKEW_DEG) return proj
+  return corner
+}
+
+/** Badge radius (screen px) of a wall decor piece in the plan; bigger on a touch screen. */
+export const decorBadgeR = (coarse = COARSE) => (coarse ? 8 : 5.5)
+
+/**
+ * Where a wall decor badge is drawn (world): just outside the wall stroke, behind the piece's back
+ * (`wallT` is the thickest wall, `r` the badge radius in world units).
+ */
+export function decorBadgeCenter(p: { x: number; y: number; rotation: number }, depth: number, wallT: number, px: number, r: number): Vec2 {
+  const by = -depth / 2 - wallT - 3 * px - r
+  return v(p.x - by * Math.sin(p.rotation), p.y + by * Math.cos(p.rotation))
+}
+
+/**
+ * Where a wall's length label goes: just outside the wall; else further out, past the decor badges that
+ * sit outside the wall; else just inside. `halfN` is the label's half extent across the wall, `boxAt`
+ * the label's box at a spot, `ok` the other checks (furniture, labels drawn already). A spot whose
+ * box touches a badge (`badges`, world boxes) is never taken, so badges and lengths never overlap.
+ */
+export function wallLabelSpot(o: {
+  mid: Vec2
+  n: Vec2
+  wallT: number
+  decorWallT: number
+  px: number
+  badgeR: number
+  halfN: number
+  badges: Box[]
+  boxAt: (q: Vec2) => Box
+  ok?: (q: Vec2) => boolean
+}): Vec2 | null {
+  const { mid, n, wallT, decorWallT, px, badgeR, halfN, badges, boxAt, ok } = o
+  const near = add(mid, scale(n, -(wallT + 10 * px)))
+  const beyond = add(mid, scale(n, -(decorWallT + 3 * px + 2 * badgeR + 3 * px + halfN)))
+  const inside = add(mid, scale(n, 14 * px))
+  const free = (b: Box) => !badges.some((o) => o.maxX > b.minX && o.minX < b.maxX && o.maxY > b.minY && o.minY < b.maxY)
+  return [near, beyond, inside].find((q) => free(boxAt(q)) && (!ok || ok(q))) ?? null
+}
+
+export function PlanView({ layoutId, readOnly, svgRef: externalRef, title, inset, onMeasureSkew }: PlanViewProps) {
   const doc = useStore((s) => s.doc)
   const mode = useStore((s) => (readOnly ? 'select' : s.mode))
   const selection = useStore((s) => s.selection)
@@ -84,6 +206,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<SVGSVGElement>(null)
+  // A pinch on the plan zooms the plan, never the page (iOS Safari's gesture events).
+  usePageZoomGuard(wrapRef)
   const svgRef = externalRef ?? innerRef
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [view, setView] = useState<ViewState | null>(null)
@@ -122,9 +246,18 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
       return
     }
     const b = bounds(pts)
-    const w = b.maxX - b.minX + 1.6
-    const h = b.maxY - b.minY + 1.6
-    setView({ cx: (b.minX + b.maxX) / 2, cy: (b.minY + b.maxY) / 2, k: Math.min(size.w / w, size.h / h) })
+    const pad = inset ? 0.8 : 1.6
+    const w = b.maxX - b.minX + pad
+    const h = b.maxY - b.minY + pad
+    const top = inset?.top ?? 0
+    const right = inset?.right ?? 0
+    const availW = Math.max(size.w * 0.5, size.w - right)
+    const availH = Math.max(size.h * 0.25, size.h - top - (inset?.bottom ?? 0) - (inset?.ctx ?? 0))
+    const k = Math.min(availW / w, availH / h)
+    // Centre the plan in the part of the pane the HUD leaves visible, not the middle of the pane.
+    const dx = (availW - size.w) / 2
+    const dy = top + availH / 2 - size.h / 2
+    setView({ cx: (b.minX + b.maxX) / 2 - dx / k, cy: (b.minY + b.maxY) / 2 - dy / k, k })
   }
   // Fit on first layout and when the container size first becomes known.
   const fitted = useRef(false)
@@ -135,6 +268,12 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])
+  // Re-fit when the HUD around the game's plan settles into a new shape.
+  const insetKey = inset ? `${Math.round(inset.top)}:${Math.round(inset.bottom)}:${Math.round(inset.right ?? 0)}:${inset.ctx ?? 0}` : ''
+  useEffect(() => {
+    if (fitted.current) fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insetKey])
   // Re-fit when the whole document is replaced (new apartment, import).
   const aptId = doc.apartment.id
   useEffect(() => {
@@ -181,13 +320,39 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     return v(vb.x + (e.clientX - r.left) / vs.k, vb.y + (e.clientY - r.top) / vs.k)
   }
 
+  // The HUD maps drawer drops through the plan when it's showing (see viewFrame).
+  const mapRef = useRef({ toWorld, vb, k: vs.k })
+  mapRef.current = { toWorld, vb, k: vs.k }
+  useEffect(() => {
+    const toFloor = (x: number, y: number) => (svgRef.current ? mapRef.current.toWorld({ clientX: x, clientY: y }) : null)
+    const toScreen = (p: Vec2) => {
+      const svg = svgRef.current
+      if (!svg) return null
+      const r = svg.getBoundingClientRect()
+      const m = mapRef.current
+      return { x: r.left + (p.x - m.vb.x) * m.k, y: r.top + (p.y - m.vb.y) * m.k }
+    }
+    viewFrame.toFloor = toFloor
+    viewFrame.toScreen = toScreen
+    return () => {
+      if (viewFrame.toFloor === toFloor) viewFrame.toFloor = null
+      if (viewFrame.toScreen === toScreen) viewFrame.toScreen = null
+    }
+  }, [])
+
   const store = useStore.getState
 
   /**
    * Pull a plan point onto walls seen by a visible scan (within ~12 px): onto both walls at a corner,
    * onto the one wall along a wall. Walls are found along the plan axes, so square the scan up first.
    */
-  const scanSnap = (p: Vec2, only?: ScanRef): Vec2 | null => {
+  const scanSnap = (p: Vec2, only?: ScanRef): Vec2 | null => scanMagnet(p, only)?.p ?? null
+
+  /**
+   * scanSnap, plus a corner magnet: within ~25 px, a corner of the scan's wall outline (or the end
+   * of a wall line) wins over the plain wall snap, so "wall to wall" taps reach the corners.
+   */
+  const scanMagnet = (p: Vec2, only?: ScanRef, anchor?: Vec2 | null): { p: Vec2; corner: boolean } | null => {
     const refs = (only ? [only] : visibleScans).flatMap((ref) => {
       const img = underlayOf(ref, 'walls')
       return img ? [{ ref, u: img.underlay }] : []
@@ -199,10 +364,24 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
       return m
     }
     const step = Math.max(0.005, Math.min(...refs.map(({ ref, u }) => u.pixel * ref.scale)))
+    const cornerRadius = Math.min(0.6, Math.max(0.08, 25 * px))
+    const corner = snapCorner(strength, p, cornerRadius, step)
     const hit = snapAxes(strength, p, Math.min(0.25, Math.max(0.06, 10 * px)), step)
-    if (hit.x == null && hit.y == null) return null
-    return v(hit.x ?? p.x, hit.y ?? p.y)
+    if (!corner && hit.x == null && hit.y == null) return null
+    const q = pickMeasureSnap({ tap: p, corner, wall: hit, anchor, cornerRadius })
+    return { p: q, corner: !!corner && q === corner }
   }
+  // The scan measure line (second end live at the cursor) and whether it runs off the wall axes.
+  const measureLive = mode === 'scan-measure' && scanDraft && !scanDraft.b && cursor && activeScan ? scanMagnet(cursor, activeScan, scanDraft.a) : null
+  const measureEnd = scanDraft ? (scanDraft.b ?? (mode === 'scan-measure' && cursor ? (measureLive?.p ?? cursor) : null)) : null
+  const measureSkew = mode === 'scan-measure' && !!scanDraft && measureSkewed(scanDraft.a, measureEnd)
+  useEffect(() => {
+    onMeasureSkew?.(measureSkew)
+  }, [measureSkew, onMeasureSkew])
+
+  /** A length label sits just above its line, or below it near the top edge (under the hint pill). */
+  const labelY = (y: number) => (y - vb.y < 64 * px ? y + 18 * px : y - 7 * px)
+  const cornerRing = (q: Vec2) => <circle cx={q.x} cy={q.y} r={9 * px} fill="none" stroke="#7a3fc2" strokeWidth={1.5 * px} opacity={0.85} pointerEvents="none" className="corner-ring" />
 
   /** Corner placement while tracing: walls from the scan first, then keep walls square to the previous corner. */
   const traceSnap = (last: Vec2 | null, w: Vec2, free: boolean): Vec2 => {
@@ -247,7 +426,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
       return
     }
     if (mode === 'scan-measure' && activeScan) {
-      const p = (!e.altKey && scanSnap(w, activeScan)) || w
+      const second = !!scanDraft && !scanDraft.b && scanDraft.scanId === activeScan.id
+      const p = (!e.altKey && scanMagnet(w, activeScan, second ? scanDraft!.a : null)?.p) || w
       const s = store()
       if (!scanDraft || scanDraft.b || scanDraft.scanId !== activeScan.id) s.setUI({ scanDraft: { scanId: activeScan.id, a: p } })
       else s.setUI({ scanDraft: { ...scanDraft, b: p } })
@@ -287,7 +467,36 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
       const pi = placementsWithItems.find((x) => x.p.id === drag.id)
       if (!pi) return
       const proposed = { ...pi.p, x: w.x - drag.grab.x, y: w.y - drag.grab.y }
-      const others = placementsWithItems.filter((x) => x.p.id !== drag.id)
+      if (isWallDecor(pi.item.category)) {
+        // Wall decor slides along the walls, snapping to the nearest wall face it fits on.
+        if (!drag.moved) {
+          s.beginGesture()
+          setDrag({ ...drag, moved: true })
+        }
+        const spot = snapToWall(s.doc, activeLayout(s.doc), pi.item, proposed, drag.id)
+        if (spot) s.updatePlacement(drag.id, { x: spot.x, y: spot.y, rotation: spot.rotation, mountY: spot.mountY })
+        return
+      }
+      if (pi.p.on && HOSTED.has(pi.item.category)) {
+        // A table lamp slides over tops and onto another one under the pointer (the side table to
+        // the desk); off every top it stays clamped to the one it's on.
+        if (!drag.moved) {
+          s.beginGesture()
+          setDrag({ ...drag, moved: true })
+        }
+        const layoutNow = activeLayout(s.doc)
+        const host =
+          hostAt(s.doc, layoutNow, proposed, pi.item, pi.p.on) ??
+          layoutNow.placements.flatMap((h) => {
+            const it = h.id === pi.p.on ? doc.items.find((i) => i.id === h.itemId) : undefined
+            return it ? [{ id: h.id, item: it, p: h }] : []
+          })[0]
+        if (!host) return
+        const c = clampOnHost(host, pi.item, proposed)
+        s.updatePlacement(drag.id, { x: c.x, y: c.y, rotation: host.p.rotation, on: host.id })
+        return
+      }
+      const others = placementsWithItems.filter((x) => x.p.id !== drag.id && !isWallDecor(x.item.category))
       const res = e.altKey ? { placement: proposed, guides: [] } : snapPlacement(pi.item, proposed, doc.rooms, others, snap)
       if (!drag.moved) {
         s.beginGesture()
@@ -452,6 +661,98 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
     return l
   }, [px, units])
 
+  // Wall decor badges sit just outside the wall stroke; a touch on decor checks these floor pieces first
+  // (lamps on tops before what they stand on).
+  const decorWallT = Math.max(0.05, ...doc.rooms.map((r) => r.wallThickness))
+  const touchFloor = placementsWithItems
+    .filter(({ item }) => !isWallDecor(item.category) && !item.floorLevel && item.category !== 'pendant')
+    .sort((a, b) => Number(!!b.p.on) - Number(!!a.p.on))
+  const pieceBoxes = placementsWithItems.map(({ p, item }) => bounds(footprint(item, p)))
+  // Wall decor badges (world boxes, a pixel of air around each): wall lengths step out past them.
+  const badgeR = decorBadgeR() * px
+  const badgeBoxes: Box[] = placementsWithItems
+    .filter(({ item }) => isWallDecor(item.category))
+    .map(({ p, item }) => {
+      const c = decorBadgeCenter(p, item.depth, decorWallT, px, badgeR)
+      const e = badgeR + 1.5 * px
+      return { minX: c.x - e, maxX: c.x + e, minY: c.y - e, maxY: c.y + e }
+    })
+  const dimsDone: { l: number; mid: Vec2 }[] = []
+  // Dimension labels already drawn (world boxes): a wall's length never lands on top of another's.
+  const labelBoxes: Box[] = []
+  const boxesHit = (b: Box) => labelBoxes.some((o) => o.maxX > b.minX && o.minX < b.maxX && o.maxY > b.minY && o.minY < b.maxY)
+  // The selected piece's width and depth, drawn beside it. Wall lengths near them step aside.
+  const selDims = (() => {
+    if (selection?.kind !== 'placement') return null
+    const pi = placementsWithItems.find((x) => x.p.id === selection.id)
+    if (!pi) return null
+    const [c0, c1, , c3] = footprint(pi.item, pi.p)
+    const wMid = scale(add(c0, c1), 0.5)
+    const dMid = scale(add(c0, c3), 0.5)
+    const t1 = add(wMid, scale(norm(sub(wMid, v(pi.p.x, pi.p.y))), 12 * px))
+    const t2 = add(dMid, scale(norm(sub(dMid, v(pi.p.x, pi.p.y))), 12 * px))
+    return { t1, t2, w: formatLength(pi.item.width, units), d: formatLength(pi.item.depth, units) }
+  })()
+  if (selDims)
+    for (const [t, text] of [
+      [selDims.t1, selDims.w],
+      [selDims.t2, selDims.d],
+    ] as const) {
+      const r = (text.length * fs * 0.9 * 0.58) / 2 + 20 * px
+      labelBoxes.push({ minX: t.x - r, maxX: t.x + r, minY: t.y - fs * 0.5 - 20 * px, maxY: t.y + fs * 0.5 + 20 * px })
+    }
+  // Wall lengths are placed first (outside the wall, past decor badges); the entrance tag and the room
+  // names then take spots clear of them, so no two labels ever sit on each other.
+  const wallDims: { key: string; roomId: string; m: Vec2; ang: number; text: string }[] = []
+  for (const room of doc.rooms)
+    wallSegments(room).forEach(([a, b], i) => {
+      const l = dist(a, b)
+      if (l * vs.k < 40) return
+      const mid = scale(add(a, b), 0.5)
+      // A wall two rooms share (the same length, just across the wall) is measured once.
+      if (dimsDone.some((o) => Math.abs(o.l - l) < 0.02 && dist(o.mid, mid) < Math.max(0.3, room.wallThickness * 3))) return
+      dimsDone.push({ l, mid })
+      // Outside the wall line; an inside wall takes whichever side is clear of furniture, or none.
+      const n = wallInwardNormal(room, i)
+      const u = norm(sub(b, a))
+      const half = v(Math.abs(u.x) * fs * 1.6 + Math.abs(u.y) * fs * 0.6, Math.abs(u.y) * fs * 1.6 + Math.abs(u.x) * fs * 0.6)
+      const clear = (q: Vec2) => pieceBoxes.every((o) => o.maxX < q.x - half.x || o.minX > q.x + half.x || o.maxY < q.y - half.y || o.minY > q.y + half.y)
+      const text = formatLength(l, units)
+      const along = (text.length * fs * 0.92 * 0.58) / 2 + 4 * px
+      const across = fs * 0.6
+      const hx = Math.abs(u.x) * along + Math.abs(u.y) * across
+      const hy = Math.abs(u.y) * along + Math.abs(u.x) * across
+      const boxAt = (q: Vec2): Box => ({ minX: q.x - hx, maxX: q.x + hx, minY: q.y - hy, maxY: q.y + hy })
+      const halfN = Math.abs(n.x) * hx + Math.abs(n.y) * hy
+      const m = wallLabelSpot({ mid, n, wallT: room.wallThickness, decorWallT, px, badgeR, halfN, badges: badgeBoxes, boxAt, ok: (q) => clear(q) && !boxesHit(boxAt(q)) })
+      if (!m) return
+      labelBoxes.push(boxAt(m))
+      let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI
+      if (ang > 90) ang -= 180
+      if (ang < -90) ang += 180
+      wallDims.push({ key: `${room.id}:${i}`, roomId: room.id, m, ang, text })
+    })
+  // The "Entrance" tag by the front door: off the doorway, clear of wall lengths and decor badges.
+  const entranceTags = new Map<string, Vec2>()
+  for (const room of doc.rooms)
+    for (const o of room.openings) {
+      if (!o.entrance || !doorSwing(room, o)) continue
+      const [a, b] = openingEndpoints(room, o)
+      const q = entranceLabelSpot({ a, b, n: wallInwardNormal(room, o.wall), fs, px, avoid: [...labelBoxes, ...badgeBoxes] })
+      entranceTags.set(o.id, q)
+      labelBoxes.push(entranceLabelBox(q, fs))
+    }
+  // Room names avoid pieces, wall lengths, the entrance tag and decor badges.
+  const nameAvoid = [...pieceBoxes, ...labelBoxes, ...badgeBoxes]
+  // Labels a piece doesn't need: a lamp on a table, a rug under the sofa or the table, a pendant over the table.
+  const solidBodies = placementsWithItems
+    .filter(({ item, p }) => !item.floorLevel && !p.on && item.category !== 'pendant' && !isWallDecor(item.category))
+    .map(({ item, p }) => ({ id: p.id, body: footprint(item, p) }))
+  const unlabelled = new Set(
+    placementsWithItems
+      .filter(({ p, item }) => !!p.on || isWallDecor(item.category) || ((item.floorLevel || item.category === 'pendant') && solidBodies.some((o) => convexOverlap(footprint(item, p), o.body, 0.01))))
+      .map(({ p }) => p.id),
+  )
   return (
     <div className="plan-wrap" ref={wrapRef} onContextMenu={(e) => e.preventDefault()}>
       {title && <div className="plan-title">{title}</div>}
@@ -467,7 +768,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
         onPointerLeave={() => setCursor(null)}
         onDoubleClick={() => mode === 'draw-room' && finishDraft()}
         xmlns="http://www.w3.org/2000/svg"
-        style={{ background: COLORS.paper }}
+        style={{ background: COLORS.paper, cursor: drag?.type === 'item' ? 'grabbing' : undefined }}
       >
         <rect x={vb.x} y={vb.y} width={vb.w} height={vb.h} fill={COLORS.paper} onPointerDown={onBackgroundDown} />
         <g pointerEvents="none">
@@ -494,7 +795,9 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
           const selected = selectedRoom?.id === room.id
           const outer = offsetPolygon(room.polygon, room.wallThickness)
           const d = `M${outer.map((p) => `${p.x},${p.y}`).join('L')}Z M${room.polygon.map((p) => `${p.x},${p.y}`).join('L')}Z`
-          const c = centroid(room.polygon)
+          const areaText = units === 'metric' ? `${polygonArea(room.polygon).toFixed(1)} m²` : `${Math.round(polygonArea(room.polygon) * 10.7639)} ft²`
+          // The name and area sit in a free spot of the room, or not at all: never under a piece or a label.
+          const c = roomLabelSpot(room.polygon, centroid(room.polygon), fs, Math.max(room.name.length, areaText.length) * fs * 0.58, nameAvoid)
           return (
             <g key={room.id}>
               <polygon
@@ -521,14 +824,16 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
                   begin({ type: 'room', roomId: room.id, last: toWorld(e) }, e)
                 }}
               />
-              <g pointerEvents="none" fill={COLORS.muted} fontSize={fs} textAnchor="middle" fontFamily="system-ui, sans-serif">
-                <text x={c.x} y={c.y - fs * 0.2} fontWeight={600} fill={COLORS.text} opacity={0.55}>
-                  {room.name}
-                </text>
-                <text x={c.x} y={c.y + fs * 1.1} opacity={0.55}>
-                  {units === 'metric' ? `${polygonArea(room.polygon).toFixed(1)} m²` : `${Math.round(polygonArea(room.polygon) * 10.7639)} ft²`}
-                </text>
-              </g>
+              {c && (
+                <g pointerEvents="none" fill={COLORS.muted} fontSize={fs} textAnchor="middle" fontFamily="system-ui, sans-serif">
+                  <text x={c.x} y={c.y - fs * 0.2} fontWeight={600} fill={COLORS.text} opacity={0.55}>
+                    {room.name}
+                  </text>
+                  <text x={c.x} y={c.y + fs * 1.1} opacity={0.55}>
+                    {areaText}
+                  </text>
+                </g>
+              )}
             </g>
           )
         })}
@@ -573,8 +878,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
                   <g pointerEvents="none" fill="none" stroke={selected ? COLORS.accent : COLORS.wall} strokeWidth={1.2 * px}>
                     <line x1={swing[0].x} y1={swing[0].y} x2={swing[swing.length - 1].x} y2={swing[swing.length - 1].y} strokeWidth={2.5 * px} />
                     <polyline points={swing.slice(1).map((p) => `${p.x},${p.y}`).join(' ')} strokeDasharray={`${4 * px} ${3 * px}`} />
-                    {o.entrance && (
-                      <text x={(a.x + b.x) / 2 - n.x * 0.45} y={(a.y + b.y) / 2 - n.y * 0.45 + fs * 0.35} fontSize={fs * 0.9} textAnchor="middle" stroke="none" fill={COLORS.muted} fontFamily="system-ui, sans-serif">
+                    {o.entrance && entranceTags.has(o.id) && (
+                      <text x={entranceTags.get(o.id)!.x} y={entranceTags.get(o.id)!.y + fs * 0.35} fontSize={fs * 0.9} textAnchor="middle" stroke="none" fill={COLORS.muted} fontFamily="system-ui, sans-serif">
                         Entrance
                       </text>
                     )}
@@ -587,22 +892,11 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
 
         {/* Wall dimensions */}
         <g pointerEvents="none" fontSize={fs * 0.92} fontFamily="system-ui, sans-serif" textAnchor="middle" fill={COLORS.text}>
-          {doc.rooms.map((room) =>
-            wallSegments(room).map(([a, b], i) => {
-              const l = dist(a, b)
-              if (l * vs.k < 40) return null
-              const n = wallInwardNormal(room, i)
-              const m = add(scale(add(a, b), 0.5), scale(n, 14 * px))
-              let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI
-              if (ang > 90) ang -= 180
-              if (ang < -90) ang += 180
-              return (
-                <text key={`${room.id}:${i}`} x={m.x} y={m.y} transform={`rotate(${ang} ${m.x} ${m.y})`} dominantBaseline="middle" opacity={selectedRoom?.id === room.id ? 1 : 0.7}>
-                  {formatLength(l, units)}
-                </text>
-              )
-            }),
-          )}
+          {wallDims.map((w) => (
+            <text key={w.key} x={w.m.x} y={w.m.y} transform={`rotate(${w.ang} ${w.m.x} ${w.m.y})`} dominantBaseline="middle" opacity={selectedRoom?.id === w.roomId ? 1 : 0.7}>
+              {w.text}
+            </text>
+          ))}
         </g>
 
         {/* Clearance zones */}
@@ -628,7 +922,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
 
         {/* Items, floor-level ones (rugs) first */}
         {[...placementsWithItems]
-          .sort((a, b) => Number(!!b.item.floorLevel) - Number(!!a.item.floorLevel))
+          // Rugs first, then furniture, lamps on tops, and wall decor last (its badges sit outside the walls).
+          .sort((a, b) => Number(!!b.item.floorLevel) - Number(!!a.item.floorLevel) || Number(isWallDecor(a.item.category)) - Number(isWallDecor(b.item.category)) || Number(!!a.p.on) - Number(!!b.p.on))
           .map(({ p, item }) => {
             const selected = selection?.kind === 'placement' && selection.id === p.id
             const flag = analysis.flagged.get(p.id)
@@ -636,21 +931,52 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
             const hw = item.width / 2
             const hd = item.depth / 2
             const deg = (p.rotation * 180) / Math.PI
-            const labelSize = Math.min(fs, (item.width / Math.max(4, item.name.length)) * 1.6)
+            // A pendant hangs over the table: a small disc, so the table's name stays readable under it.
+            const pendant = item.category === 'pendant'
+            const sk = pendant ? 0.6 : 1
+            if (isWallDecor(item.category)) {
+              // Wall decor: a thin strip on the wall face with a small badge just outside the wall, so
+              // it never sits over the sofa or its name.
+              const t = Math.max(item.category === 'curtains' ? 0.06 : 0.035, 4 * px)
+              const grab = (e: RPointerEvent) => {
+                if (readOnly || mode !== 'select') return onBackgroundDown(e)
+                const w = toWorld(e)
+                // A finger: the furniture under the touch wins unless it starts right on the wall line.
+                const id = e.pointerType === 'touch' || COARSE ? decorTouchTarget({ at: w, decor: { p, item }, floor: touchFloor, px }) : p.id
+                const target = id === p.id ? p : placementsWithItems.find((x) => x.p.id === id)?.p ?? p
+                store().select({ kind: 'placement', id: target.id })
+                begin({ type: 'item', id: target.id, grab: sub(w, v(target.x, target.y)), moved: false }, e)
+              }
+              const r = badgeR
+              const hit = r + (COARSE ? 8 : 3) * px
+              const by = -hd - decorWallT - 3 * px - r
+              const reach = (COARSE ? DECOR_TOUCH_PX : 4) * px
+              return (
+                <g key={p.id} transform={`translate(${p.x} ${p.y}) rotate(${deg})`} style={{ cursor: readOnly ? undefined : drag?.type === 'item' ? 'grabbing' : 'grab' }} onPointerDown={grab}>
+                  <rect x={-hw} y={by - r} width={item.width} height={-hd + reach - (by - r)} fill="transparent" />
+                  <rect x={-hw} y={-hd} width={item.width} height={t} rx={t / 2} fill={item.color} stroke={stroke} strokeWidth={(selected ? 2.5 : 1) * px} />
+                  <circle cx={0} cy={by} r={hit} fill="transparent" />
+                  <circle className="plan-decor-badge" cx={0} cy={by} r={r} fill="#fffaf1" stroke={stroke} strokeWidth={(selected ? 2 : 1) * px} />
+                  <text x={0} y={by} fontSize={(COARSE ? 10 : 7) * px} textAnchor="middle" dominantBaseline="central" fill="#4a4740" pointerEvents="none">
+                    {WALL_GLYPH[item.category] ?? '▣'}
+                  </text>
+                </g>
+              )
+            }
             return (
               <g key={p.id} transform={`translate(${p.x} ${p.y}) rotate(${deg})`}>
                 <rect
-                  x={-hw}
-                  y={-hd}
-                  width={item.width}
-                  height={item.depth}
-                  rx={item.category === 'rug' ? 0 : Math.min(0.03, hw / 4)}
+                  x={-hw * sk}
+                  y={-hd * sk}
+                  width={item.width * sk}
+                  height={item.depth * sk}
+                  rx={item.category === 'rug' ? 0 : pendant ? hw * sk : Math.min(0.03, hw / 4)}
                   fill={item.color}
-                  fillOpacity={item.floorLevel ? 0.45 : 0.85}
+                  fillOpacity={item.floorLevel ? 0.45 : pendant ? 0.6 : 0.85}
                   stroke={stroke}
                   strokeWidth={(selected || flag ? 2.5 : 1) * px}
                   strokeDasharray={item.floorLevel ? `${5 * px} ${3 * px}` : undefined}
-                  style={{ cursor: readOnly ? undefined : 'grab' }}
+                  style={{ cursor: readOnly ? undefined : drag?.type === 'item' ? 'grabbing' : 'grab' }}
                   onPointerDown={(e) => {
                     if (readOnly || mode !== 'select') return onBackgroundDown(e)
                     store().select({ kind: 'placement', id: p.id })
@@ -658,26 +984,8 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
                     begin({ type: 'item', id: p.id, grab: sub(w, v(p.x, p.y)), moved: false }, e)
                   }}
                 />
-                {!item.floorLevel && <line x1={-hw + 0.04} y1={hd - 0.04} x2={hw - 0.04} y2={hd - 0.04} stroke="#ffffff" strokeOpacity={0.8} strokeWidth={2 * px} pointerEvents="none" />}
+                {!item.floorLevel && !pendant && <line x1={-hw + 0.04} y1={hd - 0.04} x2={hw - 0.04} y2={hd - 0.04} stroke="#ffffff" strokeOpacity={0.8} strokeWidth={2 * px} pointerEvents="none" />}
                 <ItemGlyph category={item.category} hw={hw} hd={hd} px={px} />
-                <text
-                  pointerEvents="none"
-                  x={0}
-                  y={0}
-                  fontSize={labelSize}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fill="#ffffff"
-                  stroke="#000000"
-                  strokeOpacity={0.25}
-                  strokeWidth={labelSize * 0.12}
-                  paintOrder="stroke"
-                  fontFamily="system-ui, sans-serif"
-                  fontWeight={600}
-                  transform={Math.abs(Math.sin(p.rotation)) > 0.7 && item.depth > item.width ? `rotate(${p.rotation > Math.PI ? 90 : -90})` : Math.cos(p.rotation) < -0.7 ? 'rotate(180)' : undefined}
-                >
-                  {item.name}
-                </text>
                 {selected && !readOnly && (
                   <g>
                     <line x1={0} y1={hd} x2={0} y2={hd + 22 * px} stroke={COLORS.accent} strokeWidth={1.5 * px} pointerEvents="none" />
@@ -697,26 +1005,43 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
             )
           })}
 
+        {/* Item names, over every piece (a pendant over the table doesn't hide the table's name) */}
+        {placementsWithItems.map(({ p, item }) => {
+          if (unlabelled.has(p.id)) return null
+          const labelSize = Math.min(fs, (item.width / Math.max(4, item.name.length)) * 1.6)
+          // (Rotations can be negative or past a full turn: read the turn as 0 to 2π.)
+          const r = ((p.rotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)
+          return (
+            <g key={`label:${p.id}`} transform={`translate(${p.x} ${p.y}) rotate(${(p.rotation * 180) / Math.PI})`}>
+            <text
+              pointerEvents="none"
+              x={0}
+              y={0}
+              fontSize={labelSize}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill="#ffffff"
+              stroke="#000000"
+              strokeOpacity={0.25}
+              strokeWidth={labelSize * 0.12}
+              paintOrder="stroke"
+              fontFamily="system-ui, sans-serif"
+              fontWeight={600}
+              transform={Math.abs(Math.sin(r)) > 0.7 && item.depth > item.width ? `rotate(${r > Math.PI ? 90 : -90})` : Math.cos(r) < -0.7 ? 'rotate(180)' : undefined}
+            >
+              {item.name}
+            </text>
+            </g>
+          )
+        })}
+
         {/* Selected item dimensions */}
-        {selection?.kind === 'placement' &&
-          (() => {
-            const pi = placementsWithItems.find((x) => x.p.id === selection.id)
-            if (!pi) return null
-            const fp = footprint(pi.item, pi.p)
-            const [c0, c1, , c3] = fp
-            const wMid = scale(add(c0, c1), 0.5)
-            const dMid = scale(add(c0, c3), 0.5)
-            const out = norm(sub(wMid, v(pi.p.x, pi.p.y)))
-            const out2 = norm(sub(dMid, v(pi.p.x, pi.p.y)))
-            const t1 = add(wMid, scale(out, 12 * px))
-            const t2 = add(dMid, scale(out2, 12 * px))
-            return (
-              <g pointerEvents="none" fontSize={fs * 0.9} fill={COLORS.accent} fontFamily="system-ui, sans-serif" textAnchor="middle" dominantBaseline="middle" fontWeight={600}>
-                <text x={t1.x} y={t1.y}>{formatLength(pi.item.width, units)}</text>
-                <text x={t2.x} y={t2.y}>{formatLength(pi.item.depth, units)}</text>
-              </g>
-            )
-          })()}
+        {selDims && (
+          <g pointerEvents="none" fontSize={fs * 0.9} fill={COLORS.accent} fontFamily="system-ui, sans-serif" textAnchor="middle" dominantBaseline="middle" fontWeight={600}>
+            <text x={selDims.t1.x} y={selDims.t1.y}>{selDims.w}</text>
+            <text x={selDims.t2.x} y={selDims.t2.y}>{selDims.d}</text>
+          </g>
+        )}
 
         {/* Walking paths */}
         {showPath &&
@@ -783,9 +1108,10 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
           </g>
         )}
 
-        {/* Scan reference lengths and the one being drawn */}
+        {/* Scan reference lengths and the one being drawn: only while measuring, or while that scan is
+            selected (its inspector is open). Elsewhere, such as the onboarding room review, they'd be clutter. */}
         {scans
-          .filter((r) => r.visible && (r.id === activeScanId || mode === 'scan-measure'))
+          .filter((r) => r.visible && (mode === 'scan-measure' || (selection?.kind === 'scan' && selection.id === r.id)))
           .map((ref) => (
             <g key={ref.id} pointerEvents="none" fontFamily="system-ui, sans-serif" fontSize={fs * 0.9} fontWeight={600}>
               {ref.references.map((r) => {
@@ -800,7 +1126,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
                     <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={color} strokeWidth={2 * px} />
                     <circle cx={a.x} cy={a.y} r={3.5 * px} fill={color} />
                     <circle cx={b.x} cy={b.y} r={3.5 * px} fill={color} />
-                    <text x={m.x} y={m.y - 7 * px} textAnchor="middle" fill={color} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
+                    <text x={m.x} y={labelY(m.y)} textAnchor="middle" fill={color} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
                       {formatLength(r.length, units)}
                       {off > 0.005 ? ` (scan ${formatLength(measured, units)})` : ''}
                     </text>
@@ -812,14 +1138,16 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
         {scanDraft && (
           <g pointerEvents="none">
             {(() => {
-              const b = scanDraft.b ?? (mode === 'scan-measure' && cursor ? ((activeScan && scanSnap(cursor, activeScan)) || cursor) : null)
+              const live = measureLive
+              const b = measureEnd
               return (
                 <>
+                  {live?.corner && cornerRing(live.p)}
                   {b && <line x1={scanDraft.a.x} y1={scanDraft.a.y} x2={b.x} y2={b.y} stroke="#7a3fc2" strokeWidth={2 * px} strokeDasharray={`${5 * px} ${3 * px}`} />}
                   <circle cx={scanDraft.a.x} cy={scanDraft.a.y} r={4 * px} fill="#7a3fc2" />
                   {b && <circle cx={b.x} cy={b.y} r={4 * px} fill="#7a3fc2" />}
-                  {b && (
-                    <text x={(scanDraft.a.x + b.x) / 2} y={(scanDraft.a.y + b.y) / 2 - 7 * px} fontSize={fs * 0.9} textAnchor="middle" fill="#7a3fc2" fontFamily="system-ui, sans-serif" fontWeight={600} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
+                  {b && dist(scanDraft.a, b) > 0.05 && (
+                    <text x={(scanDraft.a.x + b.x) / 2} y={labelY((scanDraft.a.y + b.y) / 2)} fontSize={fs * 0.9} textAnchor="middle" fill="#7a3fc2" fontFamily="system-ui, sans-serif" fontWeight={600} stroke="#ffffff" strokeWidth={3 * px} paintOrder="stroke">
                       {formatLength(dist(scanDraft.a, b), units)} on the scan
                     </text>
                   )}
@@ -829,8 +1157,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
           </g>
         )}
         {mode === 'scan-measure' && !scanDraft && cursor && activeScan && (() => {
-          const p = scanSnap(cursor, activeScan)
-          return p ? <circle cx={p.x} cy={p.y} r={4 * px} fill="#7a3fc2" pointerEvents="none" /> : null
+          const hit = scanMagnet(cursor, activeScan)
+          return hit ? (
+            <>
+              <circle cx={hit.p.x} cy={hit.p.y} r={4 * px} fill="#7a3fc2" pointerEvents="none" />
+              {hit.corner && cornerRing(hit.p)}
+            </>
+          ) : null
         })()}
         {mode === 'scan-straighten' && straightenStart && cursor && (
           <g pointerEvents="none" stroke={COLORS.accent} strokeWidth={2 * px}>
@@ -881,13 +1214,13 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
             return <line x1={s.x} y1={s.y} x2={e.x} y2={e.y} stroke={COLORS.accent} strokeWidth={6 * px} strokeLinecap="round" pointerEvents="none" />
           })()}
 
-        {/* Scale bar */}
-        <g transform={`translate(${vb.x + 16 * px} ${vb.y + vb.h - 18 * px})`} pointerEvents="none" fontFamily="system-ui, sans-serif">
+        {/* Scale bar (not while sizing an unsized scan: its length would be a guess) */}
+        {!(mode === 'scan-measure' && activeScan && !activeScan.references.length) && <g transform={`translate(${vb.x + 16 * px} ${vb.y + vb.h - 18 * px})`} pointerEvents="none" fontFamily="system-ui, sans-serif">
           <rect x={0} y={-4 * px} width={scaleBar} height={4 * px} fill={COLORS.text} />
           <text x={scaleBar + 6 * px} y={0} fontSize={fs * 0.9} fill={COLORS.text}>
             {formatLength(scaleBar, units)}
           </text>
-        </g>
+        </g>}
       </svg>
 
       {!readOnly && mode === 'draw-room' && (
@@ -919,6 +1252,7 @@ export function PlanView({ layoutId, readOnly, svgRef: externalRef, title }: Pla
       {!readOnly && mode === 'scan-measure' && (
         <div className="draw-hint">
           {!scanDraft || scanDraft.b ? 'Click one end of something you measured with a tape (wall to wall works best).' : 'Click the other end.'}
+          {measureSkew && <strong> That line runs at a slant, not along a wall. Measure along a wall for the best fit.</strong>}
           <span className="muted"> Points snap to the scan’s walls; hold Alt to place freely. Esc when done.</span>
         </div>
       )}
@@ -973,6 +1307,7 @@ function ItemGlyph({ category, hw, hd, px }: { category: string; hw: number; hd:
       )
     case 'plant':
     case 'floor-lamp':
+    case 'table-lamp':
       return (
         <g {...s}>
           <circle cx={0} cy={0} r={Math.min(hw, hd) * 0.6} />
@@ -993,3 +1328,50 @@ function insideScan(ref: ScanRef, p: Vec2) {
 }
 
 export type { Doc, Layout }
+
+export type Box = { minX: number; minY: number; maxX: number; maxY: number }
+
+/** The "Entrance" tag's box (world) when centred at `q`. */
+export function entranceLabelBox(q: Vec2, fs: number): Box {
+  const hw = ('Entrance'.length * fs * 0.9 * 0.58) / 2 + fs * 0.2
+  const hh = fs * 0.55
+  return { minX: q.x - hw, maxX: q.x + hw, minY: q.y - hh, maxY: q.y + hh }
+}
+
+/**
+ * Where the "Entrance" tag goes: outside the front door (`a`–`b`, `n` the room's inward normal); if a
+ * wall length or decor badge (`avoid`) is there, slid along the wall either way, then further out.
+ */
+export function entranceLabelSpot(o: { a: Vec2; b: Vec2; n: Vec2; fs: number; px: number; avoid: Box[] }): Vec2 {
+  const { a, b, n, fs, px, avoid } = o
+  const mid = scale(add(a, b), 0.5)
+  const u = norm(sub(b, a))
+  const hits = (q: Vec2) => {
+    const bx = entranceLabelBox(q, fs)
+    return avoid.some((o) => o.maxX > bx.minX && o.minX < bx.maxX && o.maxY > bx.minY && o.minY < bx.maxY)
+  }
+  const tries: Vec2[] = []
+  for (const out of [0.45, 0.45 + fs, 0.45 + 2 * fs, 0.45 + 4 * fs])
+    for (const s of [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]) tries.push(add(add(mid, scale(n, -out)), scale(u, s * 6 * px)))
+  return tries.find((q) => !hits(q)) ?? tries[0]
+}
+
+
+/**
+ * Where a room's name and area go: its centre if that's free, else the free spot nearest it
+ * (inside the room, clear of every piece), or null when the room has no room for them.
+ */
+export function roomLabelSpot(poly: Vec2[], c: Vec2, fs: number, w: number, boxes: Box[]): Vec2 | null {
+  const free = (q: Vec2) => {
+    const b = { minX: q.x - w / 2, maxX: q.x + w / 2, minY: q.y - fs * 1.1, maxY: q.y + fs * 1.5 }
+    if (![v(b.minX, b.minY), v(b.maxX, b.minY), v(b.maxX, b.maxY), v(b.minX, b.maxY)].every((p) => pointInPolygon(p, poly))) return false
+    return boxes.every((o) => o.maxX < b.minX || o.minX > b.maxX || o.maxY < b.minY || o.minY > b.maxY)
+  }
+  if (free(c)) return c
+  const rb = bounds(poly)
+  const tries: Vec2[] = []
+  const N = 8
+  for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) tries.push(v(rb.minX + ((rb.maxX - rb.minX) * i) / N, rb.minY + ((rb.maxY - rb.minY) * j) / N))
+  tries.sort((p, q) => dist(p, c) - dist(q, c))
+  return tries.find(free) ?? null
+}
