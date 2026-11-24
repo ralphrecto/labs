@@ -114,6 +114,11 @@ export interface HomeScore {
   cap?: number
   /** A remix's own number (round 16), so its bonus goals come in an order of their own. */
   remixSeed?: number
+  /**
+   * A Less is more remix (round 18): pieces of furniture still allowed under its 10 (negative: over).
+   * Next then asks for decor that takes no floor first, and no more furniture once it's used up.
+   */
+  pieceBudget?: number
 }
 
 export const LEVELS = ['Empty shell', 'Moving in', 'Lived-in', 'Cozy', 'Designer home', 'Dream home'] as const
@@ -237,6 +242,15 @@ export const DREAM_BONUS_SPARE = 2
 export function dreamBonusGoals(count: number): number {
   return Math.max(0, Math.min(count - DREAM_BONUS_SPARE, Math.ceil(count * DREAM_BONUS_SHARE)))
 }
+/** The fewest core stars the level bar is built on (round 18: a one-room home had 14 and was done in six taps). */
+export const MIN_CORE_STARS = 20
+/** Pieces the player placed (not ones that came with a scan) each level from Cozy on asks for (round 18). */
+export const OWN_FOR_LEVEL = [0, 0, 0, 2, 4, 6]
+function ownLevelCap(own: number): number {
+  let i = 0
+  while (i + 1 < OWN_FOR_LEVEL.length && own >= OWN_FOR_LEVEL[i + 1]) i++
+  return i
+}
 /** The highest level a layout with warnings (a blocked clearance, say) can reach: Designer home. */
 export const WARNING_LEVEL_CAP = 4
 /** The highest level a layout with snags (errors, a tight walkway, a blocked door) can reach: Cozy. */
@@ -339,6 +353,10 @@ export function nextGoal(score: HomeScore, fits?: (category: string, near?: stri
       if (g && ((g.item && g.tab) || g.near)) return g
     }
   }
+  if (score.pieceBudget !== undefined) {
+    const g = budgetGoal(score, fits)
+    if (g !== null) return g
+  }
   const open = score.goals.filter((g) => !g.done && !g.locked)
   const urgent = open.find((g) => g.urgent && g.near)
   if (urgent) return urgent
@@ -382,6 +400,30 @@ export function nextGoal(score: HomeScore, fits?: (category: string, near?: stri
     if (mood) return mood
   }
   return remixShuffle(score, pool, pickFrom(pool, fits), fits)
+}
+
+/**
+ * Less is more (round 18): Next spends the remix's 10 pieces on what the level needs. Over the
+ * budget, the twist (put a piece away) leads; otherwise a bonus goal that adds furniture waits behind
+ * decor that takes no floor, and once the core goals' pieces would use up what's left, it's dropped.
+ * Null: no change to the usual order.
+ */
+function budgetGoal(score: HomeScore, fits?: (category: string, near?: string) => boolean): Goal | undefined | null {
+  const budget = score.pieceBudget!
+  const open = score.goals.filter((g) => !g.done && !g.locked)
+  const twist = open.find((g) => g.id === 'twist:less-is-more')
+  if (twist?.near && budget < 0) return twist
+  const adds = (g: Goal) => !!g.item && !!g.tab && addsFurniture(g.item)
+  const coreNeeds = open.filter((g) => !g.bonus && adds(g)).length
+  const spare = budget - coreNeeds
+  const keep = (g: Goal) => !g.bonus || !adds(g) || spare > 0
+  const goals = score.goals.filter((g) => g.done || g.locked || keep(g))
+  // Decor first among the bonus goals: what takes no floor is free.
+  const bonusFree = goals.filter((g) => !g.done && g.bonus && !adds(g))
+  const rest = goals.filter((g) => !bonusFree.includes(g))
+  const firstBonus = rest.findIndex((g) => !g.done && g.bonus)
+  const ordered = firstBonus < 0 ? [...rest, ...bonusFree] : [...rest.slice(0, firstBonus), ...bonusFree, ...rest.slice(firstBonus)]
+  return nextGoal({ ...score, goals: ordered, pieceBudget: undefined }, fits)
 }
 
 /**
@@ -1377,6 +1419,51 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
     })
   }
 
+  // A one-room home (round 18: a single scanned living room reached Dream home in six taps) gets a
+  // few more small touches where you sit: layered light, a side table by the sofa, a mirror.
+  const homeRooms = rooms.filter((r) => !UTILITY_ROOM.test(r.name) && !WET_ROOM.test(r.name))
+  const snugRoom = homeRooms.length === 1 ? homeRooms[0] : undefined
+  if (snugRoom) {
+    const where = snugRoom.name.toLowerCase()
+    const lamps = of('floor-lamp', 'table-lamp').filter((x) => x.room?.id === snugRoom.id).length
+    add({
+      id: `lamps3:${snugRoom.id}`,
+      title: 'Layers of light',
+      hint: lamps >= 3 ? 'Light in pools, not one glare.' : `${lamps ? 'Another' : 'A'} lamp in the ${where}, away from the others: three make light in layers.`,
+      ...(lamps >= 3 ? {} : { tab: 'decor', item: 'floor-lamp', placeIn: snugRoom.id }),
+      done: lamps >= 3,
+      progress: lamps / 3,
+      stars: 1,
+      category: 'comfort',
+      bonus: true,
+    })
+    const seat = of('sofa', 'armchair').find((x) => x.room?.id === snugRoom.id)
+    if (seat) {
+      const ok = of('side-table').some((x) => x.room?.id === snugRoom.id && of('sofa', 'armchair').some((s2) => polygonGap(s2.body, x.body) <= 0.5))
+      add({
+        id: `side-table:${snugRoom.id}`,
+        title: 'A side table by your seat',
+        hint: ok ? 'Somewhere for the tea.' : `Put a side table beside the ${seat.name.toLowerCase()}, for a cup and a book.`,
+        ...(ok ? {} : { tab: 'living', item: 'side-table', near: seat.id }),
+        done: ok,
+        stars: 1,
+        category: 'comfort',
+        bonus: true,
+      })
+    }
+    const mirrored = of('mirror').some((x) => x.room?.id === snugRoom.id)
+    add({
+      id: `mirror:${snugRoom.id}`,
+      title: 'A mirror to open it up',
+      hint: mirrored ? 'The room looks twice the size.' : `Hang a mirror in the ${where}: it bounces the light and opens the room up.`,
+      ...(mirrored ? {} : { tab: 'wall', item: 'mirror', placeIn: snugRoom.id }),
+      done: mirrored,
+      stars: 1,
+      category: 'style',
+      bonus: true,
+    })
+  }
+
   // Unpack your boxes: a bonus, and the cheapest first win on move-in day (ranked first by Next
   // while the home has fewer than UNPACK_URGENT_PIECES pieces besides the boxes).
   const boxes = doc.items.filter((i) => i.unpack?.length)
@@ -1474,7 +1561,11 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
   const stars = goals.reduce((a, g) => a + (g.done ? g.stars : 0), 0)
   const maxStars = goals.reduce((a, g) => a + g.stars, 0)
   const coreMax = goals.reduce((a, g) => a + (g.bonus ? 0 : g.stars), 0)
-  const thresholds = levelThresholds(coreMax)
+  // Round 18: a small home's few core goals mustn't make the climb a sprint; the level bar asks for
+  // at least MIN_CORE_STARS (bonus goals fill the gap).
+  // (Never past what the home's goals offer, the visitor's and perks' stars left out: they come and go.)
+  const steadyMax = goals.reduce((a, g) => a + (g.visit || g.perk ? 0 : g.stars), 0)
+  const thresholds = levelThresholds(Math.max(coreMax, Math.min(MIN_CORE_STARS, steadyMax - DREAM_BONUS_SPARE)))
   const errors = analysis.issues.filter((i) => i.severity === 'error').length
   // A layout with snags can't be more than Cozy, however many stars it has.
   const capped = errors > 0 || goals.some((g) => g.snag && CAPPING.has(g.id))
@@ -1501,7 +1592,12 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
     : warnings > 0 || goals.some((g) => g.snag) || bonusStars < Math.min(DREAM_BONUS_STARS, bonusMax) || coreOpen('basics', 'comfort', 'style') || extras < DREAM_EXTRA_GOALS || bonusDone < bonusNeed
       ? WARNING_LEVEL_CAP
       : LEVELS.length - 1
-  const level = uncapped.index > cap ? levelAt(stars, thresholds, cap) : uncapped
+  // Pieces that came with a scan (round 18) furnish the home but earn no more than Lived-in: each
+  // level above it asks for pieces the player placed (OWN_FOR_LEVEL).
+  const scannedIds = new Set(doc.items.filter((i) => i.scanId).map((i) => i.id))
+  const ownCap = scannedIds.size ? ownLevelCap(solidPieces.filter((x) => !scannedIds.has(layout.placements.find((p) => p.id === x.id)?.itemId ?? '')).length) : LEVELS.length - 1
+  const capAll = Math.min(cap, ownCap)
+  const level = uncapped.index > capAll ? levelAt(stars, thresholds, capAll) : uncapped
 
   const vibe = maxStars ? Math.round(Math.max(0, Math.min(100, (100 * stars) / maxStars - 8 * errors - 3 * warnings))) : 0
 
@@ -1528,7 +1624,8 @@ export function scoreHome(doc: Doc, layout: Layout, analysis: Analysis, visit?: 
 
   const livingFirst = !!rooms.length && !canSleep && livable.some((r) => LIVING.test(r.name) && !named(r))
   const remixSeed = layout.remix ? [...layout.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) : undefined
-  return { stars, maxStars, coreMax, thresholds, level, goals, vibe, errors, headline, livingFirst, cap, remixSeed }
+  const pieceBudget = layout.remix?.twist === 'less-is-more' ? LESS_IS_MORE - furnitureCount(solidPieces) : undefined
+  return { stars, maxStars, coreMax, thresholds, level, goals, vibe, errors, headline, livingFirst, cap: capAll, remixSeed, ...(pieceBudget !== undefined ? { pieceBudget } : {}) }
 }
 
 // ---- Remix: twists -------------------------------------------------------
@@ -1543,7 +1640,24 @@ export const TWISTS: Record<TwistId, { name: string; title: string; hint: string
   'window-seat': { name: 'Window seat', title: 'Sofa faces the window', hint: 'Turn the sofa to look out of a window in its room.' },
   'fresh-spots': { name: 'Fresh start', title: 'Everything in a new spot', hint: 'Give each big piece a whole new spot, a good step away from where it was.' },
   'bed-swap': { name: 'Bed swap', title: 'Bed on a different wall', hint: 'Put the bed’s head against a different wall.' },
-  'less-is-more': { name: 'Less is more', title: 'Dream home in 10 pieces', hint: 'Reach Dream home with 10 pieces of furniture or fewer.' },
+  'less-is-more': { name: 'Less is more', title: 'Dream home in 10 pieces', hint: 'Reach Dream home with 10 pieces of furniture or fewer (chairs at a table, plants and decor are free).' },
+}
+/** Less is more: the most pieces of furniture its Dream home may have. */
+export const LESS_IS_MORE = 10
+/** Kinds Less is more doesn't count as furniture (round 18): the chairs that go with a table or desk, a plant, a lamp on a table. */
+const NOT_FURNITURE = new Set(['dining-chair', 'office-chair', 'plant', 'table-lamp'])
+/** Pieces of furniture as Less is more counts them: a lamp standing on a table, a table's chairs and plants are none. */
+function furnitureCount(solid: { host?: string; category: string }[]): number {
+  return solid.filter((x) => !x.host && !NOT_FURNITURE.has(x.category)).length
+}
+/** Whether placing a piece of this kind adds a piece of furniture (a rug, wall art or a table lamp doesn't). */
+export function addsFurniture(category: string): boolean {
+  if (NOT_FURNITURE.has(category) || isWallDecor(category)) return false
+  try {
+    return !catalogEntry(category).floorLevel
+  } catch {
+    return true
+  }
 }
 /** Two seats this close (centre to centre, m) and facing each other make a conversation corner. */
 export const TALK_DIST = 3.0
@@ -1952,7 +2066,7 @@ function bestMove(
  */
 export function twistMove(doc: Doc, layout: Layout): ChipMove | null {
   const t = layout.remix?.twist
-  if (!t || (t !== 'open-floor' && t !== 'fresh-spots' && t !== 'talk-corner')) return null
+  if (!t || t === 'less-is-more') return null
   const a0 = analyze(doc, layout)
   const before = scoreHome(doc, layout, a0)
   const goal = before.goals.find((g) => g.id === `twist:${t}`)
@@ -1964,6 +2078,8 @@ export function twistMove(doc: Doc, layout: Layout): ChipMove | null {
     if (!g2) return { ok: false, done: false }
     return { ok: g2.done || (g2.near !== p.id && (g2.progress ?? 0) > (goal.progress ?? 0) + 1e-6), done: g2.done }
   }
+  if (t === 'bed-swap') return bedSwapMove(doc, layout, p, accept, before, a0)
+  if (t === 'window-seat') return windowSeatMove(doc, layout, p, accept, before, a0)
   if (t === 'talk-corner') {
     // The armchair goes where it faces the sofa (the spot a new armchair would take).
     const others = { ...layout, placements: layout.placements.filter((x) => x.id !== p.id) }
@@ -2027,6 +2143,85 @@ export function twistMove(doc: Doc, layout: Layout): ChipMove | null {
     return null
   }
   return bestMove(doc, layout, p.id, meets, accept, before, a0)
+}
+
+/**
+ * Window seat's move (round 18): the sofa (with its coffee table and rug) turned to look out of a
+ * window in its room, from a spot a step or two in front of it.
+ */
+function windowSeatMove(doc: Doc, layout: Layout, p: Placement, accept: (after: HomeScore) => { ok: boolean; done: boolean }, before: HomeScore, a0: Analysis): ChipMove | null {
+  const it = doc.items.find((i) => i.id === p.itemId)
+  const room = doc.rooms.find((r) => pointInPolygon(v(p.x, p.y), r.polygon))
+  if (!it || !room) return null
+  const windows = room.openings.filter((o) => o.kind === 'window').map((o) => lerp(...openingEndpoints(room, o), 0.5))
+  if (!windows.length) return null
+  const faces = (q: Spot) => windows.some((w) => dot(rot(v(0, 1), q.rotation), norm(sub(w, v(q.x, q.y)))) > 0.75)
+  // Spots across the room (nearest first), turned square to the walls when that still looks out, else straight at the window.
+  const extra: Spot[] = []
+  const xs = room.polygon.map((q) => q.x)
+  const ys = room.polygon.map((q) => q.y)
+  for (let x = Math.min(...xs) + 0.2; x < Math.max(...xs); x += 0.3)
+    for (let y = Math.min(...ys) + 0.2; y < Math.max(...ys); y += 0.3) {
+      const c = v(x, y)
+      if (!pointInPolygon(c, room.polygon)) continue
+      for (const w of windows) {
+        const dir = sub(w, c)
+        if (Math.hypot(dir.x, dir.y) < 1.2) continue
+        const exact = Math.atan2(-dir.x, dir.y)
+        const square = Math.round(exact / (Math.PI / 2)) * (Math.PI / 2)
+        const rotation = normalizeAngle(faces({ x, y, rotation: square }) ? square : exact)
+        extra.push({ x, y, rotation })
+      }
+    }
+  const body = (q: Spot) => orientedRect(v(q.x, q.y), it.width / 2, it.depth / 2, q.rotation)
+  // (Backed by a wall first, as a sofa stands: its back within 15 cm of one.)
+  const backed = (q: Spot) => wallSegments(room).some(([a, b]) => body(q).some((c) => closestPointOnSegment(c, a, b).distance < 0.15))
+  extra.sort((a, b) => Number(backed(b)) - Number(backed(a)) || Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))
+  return bestMove(doc, layout, p.id, () => true, accept, before, a0, { extra, spotOk: faces, stayHome: true })
+}
+
+/**
+ * Bed swap's move (round 18): the bed, head to another wall of its room, with its nightstands (and
+ * the lamps on them) carried along, clear of the doors and with a bedside free. Spots along each
+ * other wall come first; the drop search's and a quarter turn where it stands follow.
+ */
+function bedSwapMove(doc: Doc, layout: Layout, p: Placement, accept: (after: HomeScore) => { ok: boolean; done: boolean }, before: HomeScore, a0: Analysis): ChipMove | null {
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const it = items.get(p.itemId)
+  const room = doc.rooms.find((r) => pointInPolygon(v(p.x, p.y), r.polygon))
+  if (!it || !room) return null
+  const src = doc.layouts.find((l) => l.id === layout.remix!.from)?.placements.find((x) => x.itemId === p.itemId) ?? p
+  const turnOf = (a: number) => {
+    const d = normalizeAngle(a)
+    return Math.min(d, 2 * Math.PI - d)
+  }
+  const wallWas = nearestWall(doc, v(src.x, src.y))
+  const swapped = (q: Spot) => turnOf(q.rotation - src.rotation) >= Math.PI / 2 - 1e-3 || nearestWall(doc, v(q.x, q.y)) !== wallWas
+  // Nightstands at its head (and what stands on them) go with it.
+  const head = orientedRect(v(p.x, p.y), it.width / 2 + 0.7, it.depth / 2, p.rotation)
+  const carry = layout.placements
+    .filter((x) => !x.on && items.get(x.itemId)?.category === 'nightstand' && pointInPolygon(v(x.x, x.y), head))
+    .map((x) => x.id)
+  // A spot backed against each wall: the head at the wall, the foot into the room, along its length.
+  const extra: Spot[] = []
+  wallSegments(room).forEach(([a, b], i) => {
+    const len = dist(a, b)
+    if (len < it.width + 0.2) return
+    const n = wallInwardNormal(room, i)
+    const rotation = normalizeAngle(Math.atan2(-n.x, n.y))
+    for (const u of [0.5, 0.3, 0.7, 0.15, 0.85]) {
+      const c = add2(lerp(a, b, u), scale(n, it.depth / 2 + 0.03))
+      const q = { x: c.x, y: c.y, rotation }
+      if (swapped(q)) extra.push(q)
+    }
+  })
+  const seed = [...layout.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)
+  const drawn = extra
+    .map((q, i) => ({ q, h: Math.imul(seed ^ (i + 1), 2654435761) >>> 0 }))
+    .sort((x, y) => x.h - y.h)
+    .map((x) => x.q)
+  const opts: BestMoveOpts = { carry, extra: drawn, spotOk: swapped, stayHome: true, seed }
+  return bestMove(doc, layout, p.id, () => true, accept, before, a0, opts) ?? (carry.length ? bestMove(doc, layout, p.id, () => true, accept, before, a0, { ...opts, carry: [] }) : null)
 }
 
 /**
@@ -2368,7 +2563,8 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
         if (d > 0.7) done = true
       }
     }
-    near ??= of('sofa')[0]?.id
+    // (A sofa with its face to the wall is cramped and counts for nothing: still the one to turn.)
+    near ??= (of('sofa')[0] ?? placed.find((x) => x.category === 'sofa'))?.id
     const sofa = placed.find((x) => x.id === near)
     if (!done && sofa) hint = `Turn the ${sofa.name.toLowerCase()} to look out of a window in the ${sofa.room?.name.toLowerCase() ?? 'room'}.`
   } else if (t === 'fresh-spots') {
@@ -2386,7 +2582,7 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
       hint = `Give the ${stay.name.toLowerCase()} a new spot, a good step from where it was${left > 1 ? ` (${left === 2 ? 'one more big piece after it' : 'a few more big pieces after it'})` : ''}.`
     }
   } else if (t === 'bed-swap') {
-    near = of('bed')[0]?.id
+    near = (of('bed')[0] ?? placed.find((x) => x.category === 'bed'))?.id
     done = of('bed').some((b) => {
       const s = srcOf(b)
       if (!s) return true
@@ -2442,10 +2638,17 @@ function twistGoal(doc: Doc, layout: Layout, placed: P[], of: (...c: string[]) =
       }
     }
   } else if (t === 'less-is-more') {
-    const n = solidPieces.length
-    done = n <= 10
-    progress = n ? Math.min(1, 10 / n) : 1
-    hint = `${n} of 10 pieces. ${TWISTS[t].hint}`
+    // (A lamp standing on a desk or nightstand is no piece of furniture.)
+    const n = furnitureCount(solidPieces)
+    done = n <= LESS_IS_MORE
+    progress = n ? Math.min(1, LESS_IS_MORE / n) : 1
+    hint = `${n} of ${LESS_IS_MORE} pieces. ${TWISTS[t].hint}`
+    if (!done) {
+      // Over: the newest piece no goal needs most goes back to the drawer (the chip puts it away).
+      const extra = [...solidPieces].reverse().find((x) => !x.host && !NOT_FURNITURE.has(x.category) && !ANCHORS.has(x.category))
+      near = extra?.id
+      if (extra) hint = `${n} of ${LESS_IS_MORE} pieces. Put the ${extra.name.toLowerCase()} away to get back to ${LESS_IS_MORE}.`
+    }
   }
   return {
     id: `twist:${t}`,

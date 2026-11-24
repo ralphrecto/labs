@@ -14,13 +14,14 @@ import { activeLayout } from '../store'
 import { useGame, useHomeReached } from './gameStore'
 import { applicableTwists, finishedTwists, levelProgress, pickTwists, sameArrangement, TWIST_IDS, TWISTS, LEVELS } from './goals'
 import * as I from './icons'
-import { albumFor, removePhoto, restorePhoto, TWIST_EMOJI, useAlbum, watchRemixDreams } from './album'
+import { albumFor, removePhoto, restorePhoto, TWIST_EMOJI, useAlbum, watchRemixDreams, watchVisitPolaroids } from './album'
 import type { AlbumPhoto } from './album'
 import './designs.css'
 import './album.css'
 
 // A remix's first Dream home drops a polaroid into the album by itself.
 watchRemixDreams()
+watchVisitPolaroids()
 
 /** A tiny floor plan: room outlines plus a rectangle per piece, in the piece's own color. */
 export function DesignThumb({ doc, layout, size = 64 }: { doc: Doc; layout?: Layout; size?: number }) {

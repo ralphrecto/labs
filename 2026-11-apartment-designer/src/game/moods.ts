@@ -134,10 +134,22 @@ export function withMood(layout: Layout, roomId: string, mood: MoodId | undefine
  */
 export function changeMood(doc: Doc, layout: Layout, roomId: string, mood: MoodId | undefined, scored = true): Layout {
   const was = moodOf(layout, roomId)
+  if (was === mood) return withMood(layout, roomId, mood)
   const live = scored && was && moodGoals(doc, layout, piecesOf(doc, layout), { live: true }).find((g) => g.roomId === roomId)?.done
   const done = layout.moodsDone?.[roomId] ?? []
   const keep = live && !done.includes(was) ? { ...layout, moodsDone: { ...layout.moodsDone, [roomId]: [...done, was] } } : layout
-  return withMood(keep, roomId, mood)
+  // Round 18: what the room has now is the mood's starting point; its goal asks for something new.
+  const rest = Object.fromEntries(Object.entries(keep.moodBase ?? {}).filter(([k]) => k !== roomId))
+  const moodBase = mood ? { ...rest, [roomId]: roomKeys(doc, layout, roomId) } : rest
+  return withMood({ ...keep, moodBase: Object.keys(moodBase).length ? moodBase : undefined }, roomId, mood)
+}
+
+/** "itemId:color" for each piece standing in a room. */
+function roomKeys(doc: Doc, layout: Layout, roomId: string): string[] {
+  const items = new Map(doc.items.map((i) => [i.id, i]))
+  const room = doc.rooms.find((r) => r.id === roomId)
+  if (!room) return []
+  return layout.placements.filter((p) => pointInPolygon({ x: p.x, y: p.y }, room.polygon)).map((p) => `${p.itemId}:${items.get(p.itemId)?.color ?? ''}`)
 }
 
 /** The moods a room finished before its mood was changed (Layout.moodsDone). */
@@ -151,53 +163,80 @@ export const moodsDoneIn = (layout: Layout, roomId: string): MoodId[] => (layout
 export function moodGoals(doc: Doc, layout: Layout, pieces: MoodPiece[], opts: { live?: boolean } = {}): Goal[] {
   const out: Goal[] = []
   if (!layout.moods) return out
-  const items = new Map(doc.items.map((i) => [i.id, i.color]))
-  const colorOf = new Map(layout.placements.map((p) => [p.id, items.get(p.itemId)]))
+  const itemOf = new Map(doc.items.map((i) => [i.id, i]))
+  const placementOf = new Map(layout.placements.map((p) => [p.id, p]))
+  const colorOf = (pid: string | undefined) => itemOf.get(placementOf.get(pid ?? '')?.itemId ?? '')?.color
+  const keyOf = (pid: string | undefined) => {
+    const p = placementOf.get(pid ?? '')
+    return p ? `${p.itemId}:${itemOf.get(p.itemId)?.color ?? ''}` : ''
+  }
+  // Two rooms with a mood (round 18): each goal names its room, so two Snug rooms read apart.
+  const named = Object.keys(layout.moods).filter((r) => doc.rooms.some((x) => x.id === r)).length > 1
   for (const [roomId, id] of Object.entries(layout.moods)) {
     const mood = MOODS[id]
     const room = doc.rooms.find((r) => r.id === roomId)
     if (!mood || !room) continue
     const here = pieces.filter((p) => p.room?.id === roomId)
-    const toned = (p: MoodPiece) => inTone(id, colorOf.get(p.id ?? ''))
-    const have = mood.goal.needs.map((n) => here.some((p) => n.cats.includes(p.category) && (!n.tone || toned(p))))
-    const missing = mood.goal.needs.find((_, i) => !have[i])
+    const toned = (p: MoodPiece) => inTone(id, colorOf(p.id))
+    const meets = (n: (typeof mood.goal.needs)[number], p: MoodPiece) => n.cats.includes(p.category) && (!n.tone || toned(p))
+    const have = mood.goal.needs.map((n) => here.some((p) => meets(n, p)))
+    // Round 18: at least one of the pieces must come (or be repainted) after the mood was chosen, so
+    // choosing a mood always asks for a step; when the room had it all, the small one is asked again.
+    const base = layout.moodBase?.[roomId]
+    const fresh = base ? here.filter((p) => !base.includes(keyOf(p.id))) : here
+    const stepped = !base || mood.goal.needs.some((n) => fresh.some((p) => meets(n, p)))
+    const again = [...mood.goal.needs].reverse().find((n) => !n.tone) ?? mood.goal.needs[0]
+    const missing = mood.goal.needs.find((_, i) => !have[i]) ?? (stepped ? undefined : again)
+    const refresh = !stepped && mood.goal.needs.every((_, i) => have[i])
+    if (!stepped) have.push(false)
+    else if (base) have.push(true)
     const where = room.name.toLowerCase()
-    // A mood this room finished before (round 18) keeps its star: the goal stays done while the
-    // new mood's pieces come in (the card still opens the drawer on them), never a second star.
-    const kept = !opts.live && !!missing && moodsDoneIn(layout, roomId).length > 0
-    if (kept) {
-      const was = MOODS[moodsDoneIn(layout, roomId).slice(-1)[0]]
-      out.push({
-        id: moodGoalId(roomId),
-        title: mood.goal.title,
-        hint: `Your ${where} keeps its ★ from feeling ${was.short.toLowerCase()}. For the full ${mood.short.toLowerCase()} look: ${mood.adds}.`,
-        done: true,
-        progress: 1,
-        stars: 1,
-        roomId,
-        category: 'style',
-        bonus: true,
-        perk: 'mood',
-      })
+    const title = named ? `${room.name} · ${mood.goal.title}` : mood.goal.title
+    const finished = moodsDoneIn(layout, roomId)
+    // A mood this room finished before (round 18) keeps its star apart (`mood-kept:`), and the new
+    // mood's own goal is open, for its look, worth no second star (one star per room). A mood
+    // finished before and chosen again is simply done.
+    const kept = !opts.live && finished.length > 0
+    if (kept && finished.includes(id)) {
+      out.push({ id: moodGoalId(roomId), title, hint: `Your ${where} feels ${mood.short.toLowerCase()}. Select the room to change its mood.`, done: true, progress: 1, stars: 1, roomId, category: 'style', bonus: true, perk: 'mood' })
       continue
     }
     const done = !missing
     // A rug already down in another colour (round 17 review): the goal asks to paint it, not to
     // squeeze a second rug in; the chip paints it (Goals.showGoal).
     const repaint = missing?.tone && missing.paint ? here.find((p) => p.id && missing.cats.includes(p.category)) : undefined
+    const was = kept ? MOODS[finished[finished.length - 1]] : undefined
     out.push({
       id: moodGoalId(roomId),
-      title: mood.goal.title,
-      hint: done ? `Your ${where} feels ${mood.short.toLowerCase()}. Select the room to change its mood.` : repaint ? `Paint the ${where}'s ${repaint.category.replace(/-/g, ' ')} ${missing.paintName ?? 'a bold colour'} (tap Next, or Color on its bar).` : `${mood.goal.hint} In the ${where}.`,
+      title,
+      hint: done
+        ? `Your ${where} feels ${mood.short.toLowerCase()}. Select the room to change its mood.`
+        : repaint
+          ? `Paint the ${where}'s ${repaint.category.replace(/-/g, ' ')} ${missing.paintName ?? 'a bold colour'} (tap Next, or Color on its bar).`
+          : refresh
+            ? `The ${where} has the pieces already: make it ${mood.short.toLowerCase()} with a new ${again.cats[0].replace(/-/g, ' ')} (or paint one in the mood's colours).`
+            : `${was ? `The ${where} keeps its ★ from feeling ${was.short.toLowerCase()}. For the ${mood.short.toLowerCase()} look: ` : ''}${mood.goal.hint} In the ${where}.`,
       done,
       progress: have.filter(Boolean).length / have.length,
-      stars: 1,
+      stars: kept ? 0 : 1,
       roomId,
       category: 'style',
       bonus: true,
       perk: 'mood',
       ...(repaint ? { near: repaint.id } : missing ? { item: missing.cats[0], tab: MOOD_TAB[missing.cats[0]] ?? 'decor', placeIn: roomId } : {}),
     })
+    if (kept)
+      out.push({
+        id: `mood-kept:${roomId}`,
+        title: `${room.name}: ${was!.short} ★ kept`,
+        hint: `Your ${where} felt ${was!.short.toLowerCase()}: its star stays whatever its mood.`,
+        done: true,
+        progress: 1,
+        stars: 1,
+        category: 'style',
+        bonus: true,
+        perk: 'mood',
+      })
   }
   return out
 }

@@ -149,6 +149,48 @@ function dreamPolaroid(layoutId: string, twist: string) {
   }
 }
 
+/**
+ * Today's visitor loved the room (round 18): a polaroid of it goes into the album by itself, with
+ * their sticker in the corner, so the album grows with the days and not only with Dream homes.
+ */
+function visitPolaroid(visitId: string) {
+  try {
+    const { doc } = useStore.getState()
+    const layout = doc.layouts.find((l) => l.id === doc.activeLayoutId)
+    const who = VISIT_BY_ID[visitId]
+    if (!layout || !who) return
+    let level = ''
+    let stars = 0
+    try {
+      const g = useGame.getState()
+      const s = scoreHome(doc, layout, analyze(doc, layout), { id: visitId, done: true }, g.dragStar === doc.apartment.id ? { drag: true } : null)
+      level = `Level ${s.level.index + 1} · ${s.level.name}`
+      stars = s.stars
+    } catch {
+      /* the caption just shows no level */
+    }
+    const canvas = typeof document === 'undefined' ? null : document.querySelector<HTMLCanvasElement>('.hud-stage canvas')
+    if (canvas) renderForCapture()
+    const src = (canvas ? shotDataURL(canvas) : null) ?? paperCard(who.emoji)
+    if (keepPhoto(src, { level, stars, evening: useGame.getState().evening })) useStore.getState().notify(`${who.emoji} ${who.who} loved it! A polaroid went into your album.`)
+  } catch {
+    /* a keepsake is a bonus: never break the game over it */
+  }
+}
+
+let watchingVisits = false
+/** Watch for today's visitor being pleased (VisitState.done turning true). */
+export function watchVisitPolaroids() {
+  if (watchingVisits) return
+  watchingVisits = true
+  useGame.subscribe((s, prev) => {
+    if (!s.visit.done || prev.visit.done || s.visit.visitId !== prev.visit.visitId || !s.visit.visitId) return
+    const id = s.visit.visitId
+    // After the banner's frame, and after the loved-it toast has had its moment.
+    setTimeout(() => visitPolaroid(id), 2800)
+  })
+}
+
 // Watch for a remix's first Dream home (markRemixDream sets `remix.dreamAt` once), in the same home.
 let watching = false
 export function watchRemixDreams() {

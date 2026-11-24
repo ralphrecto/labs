@@ -247,16 +247,23 @@ export function applicableVisits(doc: Doc): Visit[] {
   return VISITS.filter((x) => !x.applies || x.applies(doc))
 }
 
+/** Stickers after which visitors bring bigger wishes (two steps or more) when they can (round 18). */
+export const TWO_STEP_AFTER = 3
+
 /**
- * Today's visitor: picked by the date among the visits that suit this home, preferring ones whose
- * sticker isn't collected yet and that the home doesn't already please (`met`). The same day and
- * home always give the same visitor.
+ * Today's visitor: picked by the date among the visits that suit this home, preferring a wish the
+ * home doesn't already grant (`met`: round 18, ahead of a new sticker, so a visitor never arrives
+ * already happy when another would have something to ask), then one whose sticker isn't collected
+ * yet. Once more than TWO_STEP_AFTER stickers are in, a wish two steps or more away (`far`) comes
+ * first. The same day and home always give the same visitor.
  */
-export function todayVisit(doc: Doc, date: string | Date = new Date(), stickers: string[] = [], met?: (id: string) => boolean): Visit {
+export function todayVisit(doc: Doc, date: string | Date = new Date(), stickers: string[] = [], met?: (id: string) => boolean, far?: (id: string) => boolean): Visit {
   const day = typeof date === 'string' ? date : localDay(date)
   const ok = applicableVisits(doc)
-  // Prefer a new sticker, and a wish the home doesn't already grant (something to do today).
-  const tiers = [ok.filter((x) => !stickers.includes(x.id) && !met?.(x.id)), ok.filter((x) => !stickers.includes(x.id)), ok.filter((x) => !met?.(x.id)), ok, VISITS]
+  const open = ok.filter((x) => !met?.(x.id))
+  const fresh = (xs: Visit[]) => xs.filter((x) => !stickers.includes(x.id))
+  const big = (xs: Visit[]) => (far && stickers.length > TWO_STEP_AFTER ? xs.filter((x) => far(x.id)) : [])
+  const tiers = [big(fresh(open)), fresh(open), big(open), open, fresh(ok), ok, VISITS]
   const pool = tiers.find((t) => t.length)!
   return pool[hash(day) % pool.length]
 }

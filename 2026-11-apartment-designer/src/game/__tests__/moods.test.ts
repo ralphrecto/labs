@@ -345,13 +345,24 @@ describe('Mood goals by the Next chip (round 17 review)', () => {
     change(d, living.id, 'airy')
     expect(layoutOf(d).moods?.[living.id]).toBe('airy')
     expect(layoutOf(d).moodsDone?.[living.id]).toEqual(['snug'])
+    // Round 18: the star is kept apart; the new mood's own goal is open (for its look, no second star).
     const g = score(d).goals.find((x) => x.id === moodGoalId(living.id))!
-    expect(g).toMatchObject({ done: true, stars: 1 })
+    expect(g).toMatchObject({ done: false, stars: 0, item: 'mirror' })
     expect(g.hint).toMatch(/keeps its ★/)
+    expect(score(d).goals.find((x) => x.id === `mood-kept:${living.id}`)).toMatchObject({ done: true, stars: 1 })
     expect(score(d).stars).toBe(finished)
     // Taking the snug lamp away later doesn't cost it either: the finished mood is remembered.
     layoutOf(d).placements = layoutOf(d).placements.filter((p) => d.items.find((i) => i.id === p.itemId)?.category !== 'floor-lamp')
-    expect(score(d).goals.find((x) => x.id === moodGoalId(living.id))?.done).toBe(true)
+    expect(score(d).goals.find((x) => x.id === `mood-kept:${living.id}`)?.done).toBe(true)
+    // The new look's pieces finish its goal, worth no extra star.
+    for (const c of ['mirror', 'plant']) {
+      const it = itemFromCatalog(catalogEntry(c), `r18k-${c}`)
+      const r = pickSpot(d, it, { category: c, roomId: living.id, goalId: moodGoalId(living.id) })
+      const spot = r.spot ?? (findDrop(d, layoutOf(d), it) as { spot: { x: number; y: number; rotation: number } }).spot
+      d.items.push(it)
+      layoutOf(d).placements.push({ id: `r18kp-${c}`, itemId: it.id, x: spot.x, y: spot.y, rotation: spot.rotation })
+    }
+    expect(score(d).goals.find((x) => x.id === moodGoalId(living.id))).toMatchObject({ done: true, stars: 0 })
   })
 
   it("switching moods back and forth can't add stars (one per room)", () => {
@@ -434,4 +445,36 @@ describe('Mood goals by the Next chip (round 17 review)', () => {
       expect(nextGoal(s, fits)?.id).toBe(g.id)
     }
   }, 120000)
+})
+
+describe('a mood always asks for a step (round 18)', () => {
+  const layoutOf = (d: Doc) => d.layouts.find((l) => l.id === d.activeLayoutId)!
+  const score = (d: Doc) => scoreHome(d, layoutOf(d), analyze(d, layoutOf(d)))
+  it('a room that has a rug and a lamp already is not snug the moment Snug is chosen', () => {
+    const d = sampleDoc({ settled: true })
+    const living = d.rooms.find((r) => r.name === 'Living room')!
+    const lamp = itemFromCatalog(catalogEntry('floor-lamp'), 'r18lamp')
+    d.items.push(lamp)
+    layoutOf(d).placements.push({ id: 'r18lampp', itemId: lamp.id, x: 0.4, y: 3.8, rotation: 0 })
+    const before = score(d).stars
+    d.layouts = d.layouts.map((l) => (l.id === d.activeLayoutId ? changeMood(d, l, living.id, 'snug', false) : l))
+    const g = score(d).goals.find((x) => x.id === moodGoalId(living.id))!
+    expect(g.done).toBe(false)
+    expect(g.item).toBe('floor-lamp')
+    expect(score(d).stars).toBe(before)
+    const lamp2 = itemFromCatalog(catalogEntry('floor-lamp'), 'r18lamp2')
+    const at = pickSpot(d, lamp2, { category: 'floor-lamp', roomId: living.id, goalId: g.id }).spot!
+    d.items.push(lamp2)
+    layoutOf(d).placements.push({ id: 'r18lamp2p', itemId: lamp2.id, x: at.x, y: at.y, rotation: at.rotation, on: at.on })
+    expect(score(d).goals.find((x) => x.id === moodGoalId(living.id))!.done).toBe(true)
+  })
+
+  it('two rooms with a mood name their room in the goal title', () => {
+    const d = sampleDoc({ settled: true })
+    for (const r of d.rooms.filter((x) => /Living|Bed/.test(x.name))) d.layouts = d.layouts.map((l) => (l.id === d.activeLayoutId ? changeMood(d, l, r.id, 'snug', false) : l))
+    const titles = score(d).goals.filter((x) => x.id.startsWith('mood:')).map((x) => x.title)
+    expect(titles).toHaveLength(2)
+    expect(new Set(titles).size).toBe(2)
+    expect(titles.some((t) => t.startsWith('Living room'))).toBe(true)
+  })
 })
